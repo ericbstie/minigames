@@ -9,8 +9,7 @@ const fmt = (t) => (t == null || !isFinite(t)) ? '--' : t.toFixed(2);
 const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const ordinal = (n) => n + (['th', 'st', 'nd', 'rd'][(n % 100 - 20) % 10] || ['th', 'st', 'nd', 'rd'][n % 100] || 'th');
 const isTouch = () => matchMedia('(pointer: coarse)').matches || 'ontouchstart' in window;
-// Step 4 of the plan (live multiplayer) switches multiplayer on. Its code is drafted below but not finished.
-const FEATURES = { garage: true, multiplayer: false };
+const FEATURES = { garage: true, multiplayer: true };
 // ?autopilot lets the computer rider drive your bike (used by the browser tests)
 const AUTOPILOT = /[?&]autopilot\b/.test(location.search);
 // The game is made for phones held sideways. On a computer it shows a "play on your phone" screen, unless the
@@ -333,7 +332,7 @@ function onEvent(sess, me, e) {
     if (sess.mode === 'solo') soloFinished(sess);
     else if (sess.mode === 'cpu') { sess.finishTimer = 1.3; center(`${ordinal(cpuPlace(sess))}!`, 'big'); }
     else if (sess.mode === 'online') {
-      if (!sess.finishedSent) { Net.send({ t: 'finish', time: me.finishTime }); sess.finishedSent = true; }
+      if (!sess.finishedSent) { Net.send({ t: 'finish', time: me.finishTime }); sess.finishedSent = true; }   // resent after a reconnect until the server echoes it
       center(`${fmt(me.finishTime)}s`, 'big'); setTimeout(() => { if (S === sess && !sess.results) center('Waiting for the others…', 'small'); }, 1600);
     }
   }
@@ -372,7 +371,7 @@ function sessionTimers(sess, dt) {
     if (sess.sendTimer <= 0) {
       sess.sendTimer = 1 / C.POSE_HZ;
       const p = me.pose();
-      Net.send({ t: 'state', p: [+p[0].toFixed(2), +p[1].toFixed(2), +p[2].toFixed(3), +p[3].toFixed(2), +p[4].toFixed(2), p[5]] });
+      Net.send({ t: 'state', p: [+p[0].toFixed(2), +p[1].toFixed(2), +p[2].toFixed(3), +p[3].toFixed(2), +p[4].toFixed(2), p[5]], c: +me.time.toFixed(3) });
     }
   }
 }
@@ -403,19 +402,22 @@ function draw(sess) {
   }
   // computer riders and other players
   for (const cpu of sess.cpus) drawSimBike(cpu.bike, cpu.look, 0.85);
-  const now = performance.now() / 1000;
-  for (const [id, r] of sess.remote) {
-    const p = remotePose(r, now - 0.12);
+  const now = performance.now() / 1000, poses = [];
+  for (const [, r] of sess.remote) {
+    if (r.gone) continue;
+    const p = remotePose(r, now);
     if (!p) continue;
-    if (p.crashed) { r.wasCrashed = true; continue; }
-    A.drawBike(g, cam, p, r.look, { alpha: 0.85 });
+    // a crashed rider's bike lies there riderless until they are back at a checkpoint; a quiet one fades
+    const quiet = now - r.seen > 3;
+    A.drawBike(g, cam, p.crashed ? { ...p, noRider: true } : p, r.look, { alpha: p.crashed || quiet ? 0.45 : 0.85 });
+    if (!p.crashed) poses.push([p, r]);
   }
   drawSimBike(sess.me, sess.me.look, 1);
   particles.draw(g, cam);
   // name tags
   if (sess.mode === 'cpu' || sess.mode === 'online') {
     for (const cpu of sess.cpus) if (!cpu.bike.crashed) A.drawTag(g, cam, cpu.bike.c.x, cpu.bike.c.y, cpu.look.name, cpu.look.paint.body);
-    for (const [, r] of sess.remote) { const p = remotePose(r, now - 0.12); if (p && !p.crashed) A.drawTag(g, cam, p.x, p.y, r.look.name, r.look.paint.body); }
+    for (const [p, r] of poses) A.drawTag(g, cam, p.x, p.y, r.look.name, r.look.paint.body);
   }
 }
 const GHOST_PAINT = { body: '#ffffff', dark: '#d9d4e4', suit: '#e8e3f2', helmet: '#ffffff' };
@@ -430,9 +432,13 @@ function ghostPose(frames, t) {
   const x = a[0] + (b[0] - a[0]) * k;
   return { x, y: a[1] + (b[1] - a[1]) * k, a: a[2] + C.wrapAngle(b[2] - a[2]) * k, phi: -x / C.BASE.radius, lean: 0 };
 }
-function remotePose(r, t) {
+// Another rider's pose a moment ago. Poses carry the sender's race clock, which r.off maps onto ours, and are drawn
+// REMOTE_LAG behind so there is nearly always a newer one to blend towards.
+const REMOTE_LAG = 0.1;
+function remotePose(r, now) {
   const buf = r.buf;
   if (!buf.length) return null;
+  const t = now - REMOTE_LAG - (r.off == null ? 0 : r.off);
   let i = buf.length - 1;
   while (i > 0 && buf[i - 1].t > t) i--;
   const b = buf[i], a = buf[Math.max(0, i - 1)];
@@ -449,6 +455,9 @@ function hud() {
   const s = S, me = s.me;
   const t = me.finished ? me.finishTime : me.clock;
   setText(ui.time, 'time', fmt(t));
+  const left = s.endsAt && !me.finished ? Math.max(0, Math.ceil(s.endsAt - performance.now() / 1000)) : -1;
+  setText(ui.sub, 'sub', left >= 0 ? `Race ends in ${left}s` : s.subText || '');
+  ui.sub.classList.toggle('hurry', left >= 0);
   // progress dots
   const L = s.level.finishX, pct = (x) => Math.max(0, Math.min(100, x / L * 100)).toFixed(1) + '%';
   ui.dotMe.style.left = pct(me.c.x);
@@ -457,7 +466,7 @@ function hud() {
   const others = [];
   for (const cpu of s.cpus) others.push({ x: cpu.bike.c.x, color: cpu.look.paint.body, fin: cpu.bike.finished, ft: cpu.bike.finishTime });
   const now = performance.now() / 1000;
-  for (const [, r] of s.remote) { const p = remotePose(r, now); if (p) others.push({ x: p.x, color: r.look.paint.body, fin: r.finishTime != null, ft: r.finishTime }); }
+  for (const [, r] of s.remote) { const p = !r.gone && remotePose(r, now); if (p) others.push({ x: p.x, color: r.look.paint.body, fin: r.finishTime != null, ft: r.finishTime }); }
   while (ui.dotsOthers.children.length < others.length) { const d = document.createElement('span'); d.className = 'br-dot'; ui.dotsOthers.appendChild(d); }
   while (ui.dotsOthers.children.length > others.length) ui.dotsOthers.lastChild.remove();
   others.forEach((o, i) => { const d = ui.dotsOthers.children[i]; d.style.left = pct(o.x); d.style.background = o.color; });
@@ -497,7 +506,7 @@ function startSolo(levelId) {
   const tip = isPhone() && save.tilt && tilt.state !== 'denied' && tilt.state !== 'insecure' && tilt.state !== 'nosensor' && Object.keys(save.best).length < 3
     ? 'Turn your phone like a steering wheel to lean the bike.' : '';
   center(`<span class="br-lvl">${esc(S.world.name)} ${S.def.index + 1} · ${esc(S.def.name)}</span>${how}${best ? `<span class="br-best">Best ${fmt(best)}s</span>` : ''}`, 'ready', tip);
-  ui.sub.textContent = `${S.world.name} ${S.def.index + 1}`;
+  S.subText = `${S.world.name} ${S.def.index + 1}`;
 }
 function restart() {
   if (!S) return;
@@ -562,7 +571,7 @@ function startCpuRace(levelId, n) {
     S.cpus.push({ bike, look, cfg: skills[(3 - n + i) % 3], respawnAt: 0 });
   }
   enterPlay();
-  ui.sub.textContent = `${S.world.name} ${S.def.index + 1} · ${n + 1} riders`;
+  S.subText = `${S.world.name} ${S.def.index + 1} · ${n + 1} riders`;
   beginCountdown(S);
 }
 function beginCountdown(sess) { sess.phase = 'countdown'; sess.countdown = 3; sess.lastCount = -1; }
@@ -586,7 +595,7 @@ function showStandings(rows, mode) {
   rows.sort((a, b) => (a.time == null) - (b.time == null) || (a.time || 0) - (b.time || 0));
   const myPlace = rows.findIndex(r => r.me) + 1;
   ui.rrTitle.textContent = myPlace === 1 ? 'You won!' : myPlace ? `${ordinal(myPlace)} place` : 'Race over';
-  ui.rrList.innerHTML = rows.map((r, i) => `<li class="${r.me ? 'me' : ''}"><span class="pl">${i + 1}</span><span class="sw" style="background:${esc(r.color)}"></span><span class="nm">${esc(r.name)}</span><span class="tm">${r.time == null ? 'DNF' : fmt(r.time) + 's'}</span></li>`).join('');
+  ui.rrList.innerHTML = standingRows(rows);
   const host = mode === 'online' && roomState && roomState.host === Net.id;
   ui.rrAgain.hidden = mode === 'online' && !host;
   ui.rrAgain.textContent = 'Race again';
@@ -597,76 +606,142 @@ function showStandings(rows, mode) {
 }
 
 // ------------------------------------------------------------------------------------------------
-// Live races through the race server
-let roomState = null, roomsList = [], pendingJoin = null, listTimer = 0;
+// Live races through the race server (tools/serve.py). The server keeps the rooms and passes messages on; every
+// phone runs its own bike and sends its pose 20 times a second, and draws the others from their poses.
+let roomState = null, roomsList = [], pendingJoin = null, listTimer = 0, lastResults = null;
+const inRace = () => !!(S && S.mode === 'online' && view === 'play');
 Net.on((m) => {
   switch (m.t) {
     case 'status':
-      renderMpStatus();
-      if (m.status === 'online') { sendProfile(); Net.send({ t: 'list' }); }
-      if (m.status === 'offline') {
+      if (m.status === 'online') sendProfile();
+      else if (m.status === 'connecting' && Net.retrying && inRace() && !S.reconnecting) { S.reconnecting = true; toast('Connection lost. Reconnecting…', 3000, 'small'); }
+      else if (m.status === 'offline') {
         roomState = null;
-        if (S && S.mode === 'online' && view === 'play') { toast('Lost the race server'); setTimeout(() => { if (S && S.mode === 'online') { exitPlay(); showView('mp'); } }, 1500); }
+        if (inRace()) lostRace('Lost the race server');
       }
-      renderMp();
+      if (view === 'mp') renderMp();
       break;
     case 'welcome':
-      sendProfile();
+      // a fresh start on the server (it restarted, or we were away too long): the room and race are gone
+      if (!m.resumed && (roomState || inRace())) {
+        roomState = null;
+        if (inRace()) lostRace('Lost your place in the race');
+        else if (view === 'mp') toast('Lost your place in the room', 2600, 'small');
+      }
+      if (m.resumed && S && S.reconnecting) { S.reconnecting = false; toast('Back online', 1200, 'small'); }
+      // we crossed the line while the connection was down: tell the server now (it ignores a second one)
+      if (m.resumed && inRace() && S.me.finished && !S.finishHeard) Net.send({ t: 'finish', time: S.me.finishTime });
       if (pendingJoin) { Net.send({ t: 'join', code: pendingJoin }); pendingJoin = null; }
-      else Net.send({ t: 'list' });
-      break;
-    case 'rooms': roomsList = Array.isArray(m.rooms) ? m.rooms : []; renderMp(); break;
-    case 'room': {
-      const wasState = roomState && roomState.state;
-      roomState = m;
+      else if (!roomState) Net.send({ t: 'list' });
       if (view === 'mp') renderMp();
-      if (S && S.mode === 'online') syncRemoteLooks(S);
-      if (wasState === 'results' && m.state === 'lobby' && view === 'play' && S && S.mode === 'online' && ui.raceResult.hidden) { /* stays until the player leaves the results */ }
+      break;
+    case 'replaced': toast('Bike Race was opened in another tab', 2600, 'small'); break;
+    case 'rooms': roomsList = Array.isArray(m.rooms) ? m.rooms : []; if (view === 'mp') renderMp(); break;
+    case 'room': {
+      // back from a dropped connection into a room we meant to leave
+      if (view !== 'mp' && !inRace()) { roomState = null; Net.send({ t: 'leave' }); break; }
+      roomState = m;
+      if (Array.isArray(m.last)) lastResults = { code: m.code, rows: resultRows(m.last) };
+      if (S && S.mode === 'online') syncRemote(S);
+      // the race ended while our connection was down, so the results never came: show the room's copy
+      if (m.state === 'lobby' && inRace() && !S.results && S.phase !== 'countdown' && lastResults) showOnlineResults(lastResults.rows);
+      // the server still counts us in a race we no longer have (we reloaded mid-race): give that place up
+      if (m.state !== 'lobby' && (m.racers || []).includes(Net.id) && !inRace()) Net.send({ t: 'retire' });
+      if (view === 'mp') renderMp();
       break;
     }
-    case 'left': roomState = null; if (view === 'play' && S && S.mode === 'online') { exitPlay(); } showView('mp'); break;
-    case 'error': toast(m.msg || 'Something went wrong'); if (view === 'mp') renderMp(); break;
+    case 'left': roomState = null; if (view === 'mp') renderMp(); break;
+    case 'error': toast(m.msg || 'Something went wrong', 2600, 'small'); if (view === 'mp') renderMp(); break;
     case 'countdown': startOnlineRace(m); break;
     case 'state': {
-      if (!S || S.mode !== 'online' || !S.remote.has(m.id) || !Array.isArray(m.p)) break;
-      const r = S.remote.get(m.id), now = performance.now() / 1000;
-      r.buf.push({ t: now, p: m.p });
-      while (r.buf.length > 30) r.buf.shift();
+      if (!S || S.mode !== 'online' || !Array.isArray(m.p)) break;
+      const r = S.remote.get(m.id);
+      if (!r) break;
+      const now = performance.now() / 1000, c = typeof m.c === 'number' ? m.c : null;
+      // map the sender's race clock onto ours by the quickest delivery seen; slower ones only add delay. The slow
+      // creep upwards follows a sender whose game stalled for a moment (a phone pausing a page in the background).
+      if (c != null) r.off = r.off == null ? now - c : Math.min(now - c, r.off + 0.02);
+      const t = c != null ? c : now - (r.off || 0);
+      if (r.buf.length && t <= r.buf[r.buf.length - 1].t) break;
+      r.buf.push({ t, p: m.p });
+      if (r.buf.length > 40) r.buf.shift();
+      r.seen = now;
+      const crashed = !!(m.p[5] & 1);
+      if (crashed && !r.crashed && view === 'play') particles.burst(m.p[0], m.p[1] + 1, ['#ffd43b', '#ffffff'], 10, 4, 'star');
+      r.crashed = crashed;
       break;
     }
     case 'finished': {
       if (!S || S.mode !== 'online') break;
+      if (m.id === Net.id) { S.finishHeard = true; break; }
       const r = S.remote.get(m.id);
-      if (r) { r.finishTime = m.time; toast(`${r.look.name} finished · ${fmt(m.time)}s`); }
+      if (r) { r.finishTime = m.time; if (inRace()) toast(`${r.look.name} finished · ${fmt(m.time)}s`, 2000, 'small'); }
       break;
     }
+    case 'ending':
+      if (S && S.mode === 'online' && typeof m.seconds === 'number') S.endsAt = performance.now() / 1000 + m.seconds;
+      break;
     case 'results': {
-      if (!S || S.mode !== 'online') break;
-      S.results = m.results;
-      const rows = (m.results || []).map(r => ({ name: r.name, color: A.paintAt(r.paint).body, time: r.time, me: r.id === Net.id }));
-      setTimeout(() => { if (S && S.mode === 'online') { center(''); showStandings(rows, 'online'); } }, S.me.finished ? 600 : 0);
+      const rows = resultRows(m.results);
+      lastResults = { code: roomState && roomState.code, rows };
+      if (view === 'mp') renderMp();
+      if (inRace()) showOnlineResults(rows);
       break;
     }
   }
 });
-function sendProfile() { Net.send({ t: 'hello', name: (save.name || '').trim() || 'Rider', paint: save.paint, bike: save.bike }); }
+const resultRows = (list) => (Array.isArray(list) ? list : []).map(r => ({ name: String(r.name), color: A.paintAt(r.paint).body, time: typeof r.time === 'number' ? r.time : null, me: r.id === Net.id }));
+function showOnlineResults(rows) {
+  const sess = S;
+  sess.results = rows; sess.endsAt = 0;
+  setTimeout(() => { if (S === sess && view === 'play') { center(''); closeModals(); showStandings(rows.map(r => ({ ...r })), 'online'); } }, sess.me.finished ? 700 : 0);
+}
+function sendProfile() { Net.send({ t: 'hello', name: (save.name || '').trim() || 'Rider', paint: save.paint, bike: save.bike, key: Net.key }); }
+function lostRace(text) {
+  const sess = S;
+  toast(text, 2600, 'small');
+  setTimeout(() => { if (S === sess && view === 'play') { exitPlay(); showView('mp'); } }, 1800);
+}
 function startOnlineRace(m) {
   if (!roomState || !Array.isArray(m.racers) || !m.racers.includes(Net.id) || !C.levelById(m.level)) return;
+  if (view !== 'mp' && !inRace()) return;
   closeModals();
   S = makeSession('online', m.level);
-  for (const id of m.racers) if (id !== Net.id) S.remote.set(id, { buf: [], look: { bike: 'scout', paint: A.paintAt(0), name: '?' }, finishTime: null });
-  syncRemoteLooks(S);
+  // everyone starts on the line with us, until their own poses arrive
+  const start = S.me.pose(), now = performance.now() / 1000;
+  for (const id of m.racers) if (id !== Net.id) S.remote.set(id, { buf: [{ t: 0, p: start }], off: null, seen: now, look: { bike: 'scout', paint: A.paintAt(0), name: '?' }, finishTime: null, crashed: false, gone: false });
+  syncRemote(S);
   enterPlay();
-  ui.sub.textContent = `${S.world.name} ${S.def.index + 1} · Room ${roomState.code}`;
+  S.subText = `${S.world.name} ${S.def.index + 1} · Room ${roomState.code}`;
   beginCountdown(S);
-  S.countdown = Math.max(1, (m.seconds || 3));
+  S.countdown = Math.max(1, +m.seconds || 3);
 }
-function syncRemoteLooks(sess) {
+// names, bikes and paints from the room; riders who left the room drop out of the race
+function syncRemote(sess) {
   if (!roomState) return;
+  const here = new Set();
   for (const p of roomState.players || []) {
+    here.add(p.id);
     const r = sess.remote.get(p.id);
     if (r) r.look = { bike: C.bikeById(p.bike).id, paint: A.paintAt(p.paint), name: p.name };
   }
+  for (const [id, r] of sess.remote) if (!here.has(id)) r.gone = true;
+}
+const canShare = () => isPhone() && typeof navigator.share === 'function';
+// The link that joins the room. A page opened on this computer as localhost would hand out a link nobody else can
+// open, so when the server is reachable on the network it uses the server's network address instead.
+function inviteLink() {
+  const local = /^(localhost|127\.0\.0\.1|\[::1\])$/.test(location.hostname);
+  const base = local && Net.share ? Net.share + '/' : location.origin + location.pathname;
+  return `${base}#bike-race/${roomState ? roomState.code : ''}`;
+}
+async function invite() {
+  if (!roomState) return;
+  const link = inviteLink();
+  if (canShare()) {
+    try { await navigator.share({ title: 'Bike Race', text: `Race me in Bike Race! Room ${roomState.code}`, url: link }); return; } catch (e) { if (e && e.name === 'AbortError') return; }
+  }
+  try { await navigator.clipboard.writeText(link); toast('Invite link copied', 1800, 'small'); } catch (e) { prompt('Copy this link', link); }
 }
 
 // ------------------------------------------------------------------------------------------------
@@ -963,17 +1038,22 @@ function levelOptions(sel, selected) {
   sel.innerHTML = C.WORLDS.map(w => `<optgroup label="${esc(w.name)}">${w.levels.map((L, i) => `<option value="${L.id}"${L.id === selected ? ' selected' : ''}>${i + 1}. ${esc(L.name)}</option>`).join('')}</optgroup>`).join('');
 }
 function renderMpStatus() {
-  const s = Net.status;
-  ui.mpStatus.dataset.state = s;
-  ui.mpStatusText.textContent = s === 'online' ? 'Connected to the race server' : s === 'connecting' ? 'Looking for the race server…' : 'No race server found';
+  const st = Net.status;
+  ui.mpStatus.dataset.state = st === 'idle' ? 'connecting' : st;
+  ui.mpStatusText.textContent = st === 'online' ? 'Connected to the race server' : st === 'offline' ? 'No race server found'
+    : Net.retrying ? 'Reconnecting…' : 'Looking for the race server…';
 }
+const standingRows = (rows) => rows.map((r, i) => `<li class="${r.me ? 'me' : ''}"><span class="pl">${i + 1}</span><span class="sw" style="background:${esc(r.color)}"></span><span class="nm">${esc(r.name)}</span><span class="tm">${r.time == null ? 'DNF' : fmt(r.time) + 's'}</span></li>`).join('');
 function renderMp() {
   if (!ui.mpLobby) return;
   renderMpStatus();
   const online = Net.status === 'online';
   ui.mpLobby.hidden = !online || !!roomState;
   ui.mpRoom.hidden = !online || !roomState;
+  ui.mpCpu.hidden = online && !!roomState;
+  ui.mpNamePanel.hidden = online && !!roomState;      // in a room the name is on the riders list, and the garage changes it
   ui.mpOffline.hidden = Net.status !== 'offline';
+  ui.mpOfflineWhy.textContent = pendingJoin ? `Room ${pendingJoin} is on a race server that this page can't reach.` : 'Live races need the race server.';
   ui.mpName.value = document.activeElement === ui.mpName ? ui.mpName.value : (save.name || '');
   if (!ui.cpuLevel.options.length) levelOptions(ui.cpuLevel, C.LEVELS.find(levelUnlocked).id);
   [...ui.cpuCount.children].forEach(b => b.setAttribute('aria-pressed', String(+b.dataset.n === save.cpu)));
@@ -984,18 +1064,26 @@ function renderMp() {
       const L = C.levelById(r.level), w = L && C.worldOf(r.level);
       return `<li><span class="code">${esc(r.code)}</span><span class="who"><b>${esc(r.host)}</b><small>${w ? esc(w.name + ' ' + (L.index + 1)) : ''} · ${r.count} rider${r.count > 1 ? 's' : ''}</small></span><button class="b sky outlined" type="button" data-code="${esc(r.code)}">Join</button></li>`;
     }).join('') : '<li class="empty">No open rooms yet. Start one and share the code.</li>';
-    ui.mpRooms.querySelectorAll('button[data-code]').forEach(b => b.onclick = () => Net.send({ t: 'join', code: b.dataset.code }));
+    ui.mpRooms.querySelectorAll('button[data-code]').forEach(b => b.onclick = () => { sendProfile(); Net.send({ t: 'join', code: b.dataset.code }); });
   }
   if (online && roomState) {
-    const r = roomState, host = r.host === Net.id;
+    const r = roomState, host = r.host === Net.id, players = r.players || [], racing = r.state !== 'lobby';
     ui.roomCode.textContent = r.code;
+    ui.roomLink.textContent = inviteLink().replace(/^https?:\/\//, '');
+    ui.roomCopy.textContent = canShare() ? 'Invite' : 'Copy invite link';
     const L = C.levelById(r.level), w = L && C.worldOf(r.level);
-    ui.roomLevel.hidden = !host; ui.roomLevelText.hidden = host;
+    ui.roomLevel.hidden = !host || racing; ui.roomLevelText.hidden = host && !racing;
     if (host) { if (ui.roomLevel.dataset.for !== r.code || ui.roomLevel.value !== r.level) { levelOptions(ui.roomLevel, r.level); ui.roomLevel.dataset.for = r.code; } }
     ui.roomLevelText.textContent = L ? `${w.name} ${L.index + 1} · ${L.name}` : r.level;
-    ui.roomPlayers.innerHTML = (r.players || []).map(p => `<li><span class="sw" style="background:${A.paintAt(p.paint).body}"></span><span class="nm">${esc(p.name)}${p.id === Net.id ? ' <small>(you)</small>' : ''}${p.id === r.host ? ' <small>host</small>' : ''}</span><span class="bk">${esc(C.bikeById(p.bike).name)}</span><span class="wn">${p.wins || 0} win${p.wins === 1 ? '' : 's'}</span></li>`).join('');
-    ui.roomStart.hidden = !host;
-    ui.roomNote.textContent = r.state === 'race' || r.state === 'countdown' ? 'A race is on. You will join the next one.' : host ? ((r.players || []).length > 1 ? 'Everyone is here? Start the race.' : 'Share the code or link. You can also start alone to warm up.') : 'Waiting for the host to start the race.';
+    ui.roomPlayers.innerHTML = players.map(p => `<li class="${p.away ? 'away' : ''}"><span class="sw" style="background:${A.paintAt(p.paint).body}"></span><span class="nm">${esc(p.name)}${p.id === Net.id ? ' <small>(you)</small>' : ''}${p.id === r.host ? ' <small>host</small>' : ''}${p.away ? ' <small>away</small>' : ''}</span><span class="bk">${esc(C.bikeById(p.bike).name)}</span><span class="wn">${p.wins || 0} win${p.wins === 1 ? '' : 's'}</span></li>`).join('');
+    ui.roomStart.hidden = !host || racing;
+    const hostName = (players.find(p => p.id === r.host) || {}).name || 'the host';
+    ui.roomNote.textContent = racing ? 'A race is on. You will be in the next one.'
+      : host ? (players.length > 1 ? 'Everyone here? Start the race.' : 'Share the code or the link. You can also start alone to warm up.')
+      : `Waiting for ${hostName} to start the race.`;
+    const last = lastResults && lastResults.code === r.code ? lastResults : null;
+    ui.roomLast.hidden = !last;
+    if (last) ui.roomLastList.innerHTML = standingRows(last.rows);
   }
 }
 
@@ -1045,9 +1133,9 @@ function setup() {
     result: $('br-result'), resStars: [...document.querySelectorAll('#br-result .br-rstar')], resTitle: $('br-res-title'), resTime: $('br-res-time'), resBest: $('br-res-best'), resNew: $('br-res-new'), resHint: $('br-res-hint'), resNext: $('br-res-next'),
     resUnlock: $('br-res-unlock'), resUnlockTitle: $('br-res-unlock-title'), resUnlockSub: $('br-res-unlock-sub'), resUnlockMeter: $('br-res-unlock-meter'), resGarage: $('br-res-garage'),
     raceResult: $('br-raceresult'), rrTitle: $('br-rr-title'), rrList: $('br-rr-list'), rrAgain: $('br-rr-again'), rrRoom: $('br-rr-room'), rrWait: $('br-rr-wait'),
-    mpStatus: $('br-mp-status'), mpStatusText: $('br-mp-status-text'), mpName: $('br-mp-name'), mpLobby: $('br-mp-lobby'), mpRoom: $('br-mp-room'), mpOffline: $('br-mp-offline'),
+    mpStatus: $('br-mp-status'), mpStatusText: $('br-mp-status-text'), mpName: $('br-mp-name'), mpLobby: $('br-mp-lobby'), mpRoom: $('br-mp-room'), mpOffline: $('br-mp-offline'), mpOfflineWhy: $('br-mp-offline-why'), mpCpu: $('br-mp-cpu'), mpNamePanel: $('br-mp-name-panel'),
     mpLevel: $('br-mp-level'), mpRooms: $('br-mp-rooms'), mpCode: $('br-mp-code'),
-    roomCode: $('br-room-code'), roomLevel: $('br-room-level'), roomLevelText: $('br-room-level-text'), roomPlayers: $('br-room-players'), roomStart: $('br-room-start'), roomNote: $('br-room-note'),
+    roomCode: $('br-room-code'), roomLink: $('br-room-link'), roomCopy: $('br-room-copy'), roomLevel: $('br-room-level'), roomLevelText: $('br-room-level-text'), roomPlayers: $('br-room-players'), roomStart: $('br-room-start'), roomNote: $('br-room-note'), roomLast: $('br-room-last'), roomLastList: $('br-room-last-list'),
     cpuLevel: $('br-cpu-level'), cpuCount: $('br-cpu-count'), deskUrl: $('br-desk-url'),
   };
   app.classList.toggle('touch', isPhone());
@@ -1080,7 +1168,7 @@ function setup() {
   // pause menu
   $('br-p-resume').onclick = () => resume();
   ui.pRestart.onclick = () => restart();
-  ui.pLevels.onclick = () => { if (S && S.mode === 'online') Net.send({ t: 'leave' }); leaveToMenu(); };
+  ui.pLevels.onclick = () => { if (S && S.mode === 'online') Net.send({ t: 'retire' }); leaveToMenu(); };
   ui.tGhost.onclick = () => { save.ghost = !save.ghost; persist(); if (S && S.mode === 'solo') S.ghost = save.ghost ? loadGhost(S.levelId) : null; syncToggles(); };
   ui.tSound.onclick = () => { save.sound = !save.sound; persist(); Sound.init(); Sound.setOn(save.sound); syncToggles(); };
   ui.pTilt.onclick = () => setTilt(!save.tilt);
@@ -1105,14 +1193,11 @@ function setup() {
   const joinCode = () => { const c = ui.mpCode.value.trim().toUpperCase(); if (c) { sendProfile(); Net.send({ t: 'join', code: c }); } };
   $('br-mp-join').onclick = joinCode;
   ui.mpCode.onkeydown = (e) => { if (e.key === 'Enter') joinCode(); };
-  $('br-mp-retry').onclick = () => { Net.close(); Net.connect(); };
+  $('br-mp-retry').onclick = () => { Net.close(); Net.connect(); renderMp(); };
   ui.roomLevel.onchange = () => Net.send({ t: 'level', level: ui.roomLevel.value });
   ui.roomStart.onclick = () => Net.send({ t: 'start' });
   $('br-room-leave').onclick = () => { Net.send({ t: 'leave' }); roomState = null; renderMp(); };
-  $('br-room-copy').onclick = async () => {
-    const link = `${location.origin}${location.pathname}#bike-race/${roomState ? roomState.code : ''}`;
-    try { await navigator.clipboard.writeText(link); toastMenu('Invite link copied'); } catch (e) { prompt('Copy this link', link); }
-  };
+  ui.roomCopy.onclick = () => invite();
   ui.cpuCount.querySelectorAll('button').forEach(b => b.onclick = () => { save.cpu = +b.dataset.n; persist(); renderMp(); });
   $('br-cpu-start').onclick = go(() => startCpuRace(ui.cpuLevel.value, save.cpu));
   // keyboard
@@ -1129,7 +1214,11 @@ function setup() {
   });
   window.addEventListener('keyup', (e) => keys.delete(e.code));
   window.addEventListener('blur', () => { keys.clear(); for (const k in touchCtl) touchCtl[k] = false; if (view === 'play' && S && S.mode === 'solo' && S.phase === 'run') pause(); });
-  document.addEventListener('visibilitychange', () => { if (document.hidden) { keys.clear(); if (view === 'play' && S && S.mode === 'solo' && S.phase === 'run') pause(); } });
+  document.addEventListener('visibilitychange', () => {
+    if (document.hidden) { keys.clear(); if (view === 'play' && S && S.mode === 'solo' && S.phase === 'run') pause(); }
+    else if (running) Net.wake();     // phones stop pages in the background, and the connection may have died
+  });
+  window.addEventListener('pageshow', () => { if (running) Net.wake(); });
   // touch controls
   for (const [id, k] of [['br-tgas', 'gas'], ['br-tbrake', 'brake'], ['br-tback', 'back'], ['br-tfwd', 'fwd']]) {
     const el = $(id);
@@ -1149,8 +1238,6 @@ function setup() {
   if (isPhone() && save.tilt && !(typeof DeviceOrientationEvent !== 'undefined' && typeof DeviceOrientationEvent.requestPermission === 'function')) startTilt();
   started = true;
 }
-let menuToastTimer = 0;
-function toastMenu(text) { toast(text); ui.toast.hidden = false; }
 
 // Android: play fullscreen and locked sideways. (iPhones can't do either from a web page.)
 function goFullscreen() {
@@ -1179,10 +1266,15 @@ function show() {
   } else showView(view === 'play' ? 'home' : view);
 }
 function hide() {
+  // leaving Bike Race for the games menu leaves any room too
+  if (roomState) Net.send({ t: 'leave' });
+  roomState = null;
+  if (S && S.mode === 'online') { exitPlay(); view = 'mp'; }
+  Net.close();
   running = false; cancelAnimationFrame(raf);
   leaveFullscreen();
   Sound.engineOff();
   if (S && S.mode === 'solo' && S.phase === 'run') { S.paused = true; }
 }
-window.BikeRace = { show, hide, _debug: () => ({ S, attract, save, cam, C, Net, startSolo, startCpuRace, readInput, touchCtl, keys, tilt, tiltAngle, refreshControls }) };
+window.BikeRace = { show, hide, _debug: () => ({ S, attract, save, cam, C, Net, startSolo, startCpuRace, readInput, touchCtl, keys, tilt, tiltAngle, refreshControls, remotePose, roomState, inviteLink }) };
 })();

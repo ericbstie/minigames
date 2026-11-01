@@ -262,7 +262,7 @@
     <div class="br-col">
       <h1 class="outlined">Multiplayer</h1>
       <div class="br-status" id="br-mp-status" data-state="idle"><span class="dot"></span><span id="br-mp-status-text">Looking for the race server…</span></div>
-      <div class="br-panel"><label class="br-field"><span>Your name</span><input id="br-mp-name" type="text" maxlength="16" autocomplete="nickname" placeholder="Rider" spellcheck="false"></label></div>
+      <div class="br-panel" id="br-mp-name-panel"><label class="br-field"><span>Your name</span><input id="br-mp-name" type="text" maxlength="16" autocomplete="nickname" placeholder="Rider" spellcheck="false"></label></div>
 
       <div id="br-mp-lobby" hidden>
         <div class="br-panel">
@@ -283,28 +283,30 @@
       <div id="br-mp-room" hidden>
         <div class="br-panel br-room-head">
           <div class="br-code">Room <b class="outlined" id="br-room-code">----</b></div>
-          <button class="b plain outlined" id="br-room-copy" type="button">Copy invite link</button>
+          <button class="b sky outlined" id="br-room-copy" type="button">Copy invite link</button>
+          <p class="br-link">Friends on the same Wi-Fi open <span id="br-room-link"></span>, or go to Multiplayer and type the code.</p>
         </div>
-        <div class="br-panel">
+        <div class="br-panel br-half">
           <h3>Track</h3>
           <select id="br-room-level" aria-label="Track"></select>
           <p class="br-big" id="br-room-level-text"></p>
         </div>
-        <div class="br-panel"><h3>Riders</h3><ul class="br-players" id="br-room-players"></ul></div>
+        <div class="br-panel br-half"><h3>Riders</h3><ul class="br-players" id="br-room-players"></ul></div>
         <p class="br-note" id="br-room-note"></p>
         <div class="btns br-room-btns">
           <button class="b go outlined" id="br-room-start" type="button">Start race</button>
           <button class="b plain outlined" id="br-room-leave" type="button">Leave room</button>
         </div>
+        <div class="br-panel" id="br-room-last" hidden><h3>Last race</h3><ol class="br-standings" id="br-room-last-list"></ol></div>
       </div>
 
       <div class="br-panel br-offline" id="br-mp-offline" hidden>
         <h3>No race server here</h3>
-        <p>Live races need the site started with <code>mise run app</code>, which runs the race server next to the pages. Friends on the same network can then open the same address and join your room.</p>
+        <p><span id="br-mp-offline-why">Live races need the race server.</span> Start the site with <code>mise run phone</code> on a computer, and everyone on the same Wi-Fi opens the address it prints. Until then, race the computer.</p>
         <button class="b plain outlined" id="br-mp-retry" type="button">Try again</button>
       </div>
 
-      <div class="br-panel">
+      <div class="br-panel" id="br-mp-cpu">
         <h3>Race the computer</h3>
         <p class="br-small">Works anywhere, no server needed. Crash and you restart from the last checkpoint flag.</p>
         <label class="br-field"><span>Track</span><select id="br-cpu-level"></select></label>
