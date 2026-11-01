@@ -1,15 +1,18 @@
 // Castle Defender: ride the king around, collect the coins fallen enemies drop
 // and spend them on pads to grow an army, towers, walls, cannons and weapons.
-// Building further from the castle opens new roads with tougher enemies.
+// The world has no edge: outposts on the border push it out, enemy camps the
+// border reaches are cleared, and the enemy falls back further out, tougher.
 import * as THREE from 'three';
-import { BIOME, HOME, biomeWeights, biomeAt, cliffEdge, cliffEdge2, CLIFF, MESAS, fbm, cellSeed, smoothstep } from './castle-defender-world.js';
+import {
+  BIOME, BIOME_NAMES, HOME, biomeWeights, biomeAt, cliffEdge, cliffEdge2, cliffMinX, CLIFF, MESAS, fbm, cellSeed, smoothstep,
+  CLAIM_HOME, CLAIM_OUTPOST, CAMP_REACHED, borderDist, clampToClaims, pointAlong, roadCrossing, nextCamp, campRoad, pushOutOfMesas,
+} from './castle-defender-world.js';
 
 // ---------------------------------------------------------------- tuning ----
 const HX = 14, HZ = 12;                       // walled base: x in [-HX,HX], z in [-HZ,HZ]
 // a gate in every side: the king walks through, enemies have to break it down
 const GATES = [{ side: 'E', lo: -2, hi: 2 }, { side: 'N', lo: -2, hi: 2 }, { side: 'S', lo: 4, hi: 8 }, { side: 'W', lo: -9, hi: -5 }];
 const KING_SPEED = 10.2, KING_R = 0.7;
-const BOUNDS = { x0: -15.6, x1: 74, z0: -66, z1: 62 };
 const FOLLOWER_CAP = 60;                       // people in the troop, counting everyone merged into stronger ones
 // Past SQUAD_MAX followers, new recruits join the weakest follower instead and
 // make it stronger (damage x rank). Ranks show as a bigger body and a new tunic.
@@ -41,13 +44,15 @@ const TOWER_UP_PADS = [[10.4, -4.5], [10.4, 4.5], [10.6, -9.4], [10.6, 9.4], [-1
 const TOWER_COSTS = [30, 45, 70, 110, 170, 260];
 const TOWER_UP = [50, 150, 400, 1000];         // to levels 2..5
 const TOWER_LV = [{ h: 3.45, archers: 3 }, { h: 4.06, archers: 3 }, { h: 4.67, archers: 4 }, { h: 5.3, archers: 4 }, { h: 5.92, archers: 5 }];
-// outposts further out: same towers, no walls
-const OUTER_SPOTS = [[37, -24], [46, 8], [23, 33]], OUTER_UP_PADS = [[33, -22.4], [42, 9], [19, 31.4]], OUTER_COSTS = [700, 1000, 1400];
+// Outposts: the same towers, without walls, on the border where an enemy road crosses it. Each one built pushes
+// the border out. The first needs two cannons; each costs more than the last. A field cannon spot comes with it.
+const OUTPOST_COST = 700, OUTPOST_GROW = 1.4, OUTPOST_UP = 2.5, FIELD_CANNON_COST = 500, FIELD_CANNON_GROW = 1.3;
+const PAD_IN = 8, SITE_SIDE = 4.6;             // outpost pads stand this far inside the border, beside the road
 const BARRACKS = [-11, 1.5], RECRUIT_PAD = [-6.8, 5.0], FORGE = [0, 8], FORGE_PAD = [-5.0, 9.6];
 const BARRACKS_STEPS = [0, 3, 6, 10];          // recruit purchases before each barracks level
 const CANNON_SPOTS = [[24, -14], [25, 10], [0, -30]], CANNON_PADS = [[19.8, -12.4], [20.8, 11.8], [0.4, -25.6]];
 const CANNON_COSTS = [250, 400, 650], CANNON_MAX = 5, CANNON_TOP = [0.82, 0.95, 1.42, 1.42, 1.42];
-const GOLD_HUT = [52, -26], GOLD_PAD = [46.4, -23.6], GOLD_PLOT = [52.5, -20.2], GOLD_COSTS = [1500, 3000, 6000];
+const GOLD_HUT = [-6, 31], GOLD_PAD = [-11.6, 33.4], GOLD_PLOT = [-5.5, 36.8], GOLD_COSTS = [1500, 3000, 6000];
 const GOLD_BOYS = [{ n: 1, speed: 7.5, cap: 40 }, { n: 2, speed: 8.5, cap: 80 }, { n: 3, speed: 9.5, cap: 150 }];
 const RECRUIT = [[6, 1], [14, 3], [28, 3], [45, 3], [70, 4], [100, 4], [140, 5], [190, 5], [250, 6]];
 
@@ -56,19 +61,22 @@ const CASTLE = { x: -5.5, z: -4.5, r: 3.1 };
 const P0 = [[56, -2], [46, -6], [36, -3], [27, -7], [20, -1], [15.4, 0], [3, 0], [CASTLE.x, CASTLE.z]];
 const P1 = [[30, -52], [31, -42], [26, -33], [18, -25], [10, -19.5], [3, -13.2], [-1, -9], [CASTLE.x, CASTLE.z]];
 const P2 = [[46, 44], [38, 37], [30, 30], [21, 23], [12, 18], [7, 13.5], [6, 6], [3, 0], [CASTLE.x, CASTLE.z]];
-// three outer roads join them; each opens the first time you build in its ring
-const PATHS = [P0, P1, P2,
-  [[4, -88], [8, -76], [16, -66], [24, -59], ...P1],
-  [[84, 66], [74, 60], [64, 58], [54, 50], ...P2],
-  [[96, 6], [86, -6], [76, -10], [66, -4], ...P0]];
-const PATH_OPEN = [0, 8, 20];   // seconds after the start that each of the first three roads opens
-const THEMES = [
-  { name: 'Canyon', hp: 1, value: 1, speed: 1 },
-  { name: 'Frozen Pass', ring: 1, path: 3, hp: 1.7, value: 1.5, speed: 1.08 },
-  { name: 'Mire', ring: 2, path: 4, hp: 2.6, value: 2.1, speed: 0.95 },
-  { name: 'Ashlands', ring: 3, path: 5, hp: 3.8, value: 2.8, speed: 1.05 },
+const PATHS = [P0, P1, P2];
+// The enemy marches from camps past the border, one per front, each down its own road to the castle. The first
+// three fronts are there from the start and open after `open` seconds; the north road opens with the first
+// cannon and the south road with the first outpost. `own` is how many points at the start of a road are its own
+// (the rest is a road it joins).
+const FRONTS = [
+  { id: 'E', road: P0, open: 0 },
+  { id: 'NE', road: P1, open: 8 },
+  { id: 'SE', road: P2, open: 20 },
+  { id: 'N', road: [[4, -88], [8, -76], [16, -66], [24, -59], ...P1], own: 5, open: 'cannon' },
+  { id: 'S', road: [[16, 92], [10, 78], [16, 64], [13, 52], [19, 38], ...P2.slice(3)], own: 6, open: 'outpost' },
 ];
-const PATH_THEME = [0, 0, 0, 1, 2, 3];
+// enemies get tougher and richer the further out their camp is; their biome sets their colours and pace
+const campTier = (c) => Math.max(0, (Math.hypot(c.x - HOME.x, c.z - HOME.z) - 62) / 32);
+const tierHp = (t) => 1 + 0.6 * t + 0.1 * t * t, tierValue = (t) => 1 + 0.45 * t + 0.05 * t * t;
+const BIOME_SPEED = [1, 1.08, 0.95, 1.05];
 // enemy sizes; `cost` is how much of a group's budget one of them uses
 const UNIT = {
   knight: { hp: 1, dmg: 1, value: 1, speed: 2.4, r: 0.5, scale: 1.15, cost: 1, bar: 2.1, barW: 1.1, atk: 1.2, shadow: 1.25 },
@@ -534,6 +542,9 @@ const ICONS = {
     g.fillStyle = INK; g.beginPath(); g.roundRect(-6, 2, 12, 22, 6); g.fill(); },
   goldboy(g) { g.fillStyle = '#fff'; g.strokeStyle = INK; g.lineWidth = 7; g.beginPath(); g.arc(-12, -22, 22, 0, Math.PI * 2); g.fill(); g.stroke(); g.beginPath(); g.moveTo(-50, 46); g.quadraticCurveTo(-48, 4, -12, 4); g.quadraticCurveTo(24, 4, 26, 46); g.closePath(); g.fill(); g.stroke();
     iconPath(g, ICONS.coin, 30, 26, 0.5); },
+  // a tower with a flag on it: an outpost that moves the border
+  outpost(g) { iconPath(g, ICONS.tower, -10, 14, 0.8); g.strokeStyle = INK; g.lineWidth = 6; g.beginPath(); g.moveTo(14, -24); g.lineTo(14, -62); g.stroke();
+    g.fillStyle = '#3d7be0'; g.beginPath(); g.moveTo(14, -62); g.lineTo(52, -50); g.lineTo(14, -38); g.closePath(); g.fill(); g.stroke(); },
   up(g) { g.fillStyle = '#7dff6a'; g.strokeStyle = INK; g.lineWidth = 6; g.beginPath(); g.moveTo(0, -30); g.lineTo(26, 0); g.lineTo(10, 0); g.lineTo(10, 28); g.lineTo(-10, 28); g.lineTo(-10, 0); g.lineTo(-26, 0); g.closePath(); g.fill(); g.stroke(); },
   weapon(g, tier) {
     g.fillStyle = '#fff'; g.strokeStyle = INK; g.lineWidth = 7;
@@ -599,7 +610,7 @@ const LOOKS = [
     top: '#f4f8fb', side: '#7f93a6', decor: [['pine', 0.5], ['iceRock', 0.3], ['drift', 0.2]], decorN: 5.5 },
   { base: '#62743a', a: 'rgba(52,72,30,0.5)', b: 'rgba(132,156,72,0.4)', road: [107, 85, 55, 1], road2: [125, 100, 67, 1], dust: '#9ab05a',
     top: '#7c8e45', side: '#4f4632', decor: [['swampTree', 0.35], ['reeds', 0.35], ['mushrooms', 0.15], ['log', 0.15]], decorN: 6 },
-  { base: '#3e393a', a: 'rgba(22,19,21,0.55)', b: 'rgba(96,88,84,0.4)', road: [94, 86, 83, 1], road2: [108, 100, 96, 1], dust: '#5a5050',
+  { base: '#3e393a', a: 'rgba(22,19,21,0.55)', b: 'rgba(96,88,84,0.4)', road: [112, 103, 98, 1], road2: [126, 117, 112, 1], dust: '#5a5050',
     top: '#4c4446', side: '#2a2527', decor: [['obsidian', 0.42], ['charred', 0.22], ['lava', 0.18], ['vent', 0.18]], decorN: 5 },
 ];
 LOOKS.forEach(L => {
@@ -1025,6 +1036,7 @@ function buildWorld() {
   W.textCache = new Map();
   world = W;
   initTerrain();
+  initBorder();
 }
 
 // ------------------------------------------------------------------- pads ----
@@ -1117,14 +1129,16 @@ function newGame() {
     king: { x: 4, z: 2, yaw: Math.PI * 0.75, cd: 0, bob: 0 },
     castle: { ...CASTLE, hp: 0, max: 0, hitT: 0, fall: 0 },
     followers: [], joiners: [], enemies: [], projectiles: [], coinsOnGround: [], flying: [], texts: [],
-    tier: 0, extraDmg: 0, recruitIdx: 0, barracksLv: 1, forge: null, ring: 0, wallsUp: false, wallsAnim: false, shake: 0,
-    towers: [...TOWER_SPOTS.map((s, i) => tower(s, TOWER_UP_PADS[i], false, i)), ...OUTER_SPOTS.map((s, i) => tower(s, OUTER_UP_PADS[i], true, i))],
-    cannons: CANNON_SPOTS.map(([x, z], i) => ({ x, z, side: CANNON_PADS[i], built: false, level: 0, b: null, turret: null, cd: 0, yaw: 2.4 })),
+    tier: 0, extraDmg: 0, recruitIdx: 0, barracksLv: 1, forge: null, wallsUp: false, wallsAnim: false, shake: 0,
+    towers: TOWER_SPOTS.map((s, i) => tower(s, TOWER_UP_PADS[i], false, i)),
+    cannons: CANNON_SPOTS.map(([x, z], i) => ({ x, z, side: CANNON_PADS[i], cost0: CANNON_COSTS[i], built: false, level: 0, b: null, turret: null, cd: 0, yaw: 2.4 })),
     gold: { built: false, lv: 0, b: null, boys: [], plot: { x: GOLD_PLOT[0], z: GOLD_PLOT[1], value: 0, acc: 0 } },
-    trails: PATHS.map((_, i) => ({ openAt: i < 3 ? PATH_OPEN[i] : null, timer: 2 })),
     segs: [], spawnT: 0.2, spawnQueue: [], nextPath: 0, kills: 0,
     input: { x: 0, z: 0 }, padIn: null, spendAcc: 0, spentFlash: 0, gainFlash: 0,
     stats: { maxEnemies: 0 },
+    // the open world: the land claimed, the enemy fronts, and spots kept clear of decor
+    claims: [{ x: HOME.x, z: HOME.z, r: CLAIM_HOME, shown: CLAIM_HOME }], fronts: [], clear: [], outposts: 0, fieldCannons: 0, siteSeq: 0,
+    rand: mulberry((Math.random() * 2147483647) | 0), reach: CLAIM_HOME, posts: [],
   };
   // the barracks stands from the start
   const bk = makeBuilding(BARRACKS[0], BARRACKS[1], Math.PI / 4, barracksGeo, 1, 0, 3.5);
@@ -1139,7 +1153,11 @@ function newGame() {
   for (const w of W.wallMeshes) w.count = 0;
   W.grass.visible = false; for (const gt of W.gates) { gt.group.visible = false; gt.open = 0; }
   W.castle.scale.set(1, 1, 1); W.castle.position.y = 0; W.castle.rotation.z = 0;
-  for (let i = 1; i < THEMES.length; i++) removeRoad('theme' + i);
+  resetWorld();
+  G.clear.push({ x: GOLD_HUT[0], z: GOLD_HUT[1], r: 4 }, { x: GOLD_PLOT[0], z: GOLD_PLOT[1], r: 3.6 }, { x: GOLD_PAD[0], z: GOLD_PAD[1], r: 3 });
+  initFronts();
+  refreshPosts();
+  world.borderU.count.value = 0;
   G.castle.max = G.castle.hp = castleMaxHp();
   refreshObstacles();
   setKingWeapon();
@@ -1209,11 +1227,11 @@ function makePads() {
     visible: () => people() < FOLLOWER_CAP,
     cost: () => recruitStep()[0], buy: () => recruit() }));
   for (const t of G.towers) {
-    const list = G.towers.filter(o => o.outer === t.outer), prev = t.idx ? list[t.idx - 1] : null;
-    pads.push(createPad({ id: (t.outer ? 'outer' : 'tower') + t.idx, x: t.x, z: t.z, posFn: () => t.built ? t.up : [t.x, t.z],
-      visible: () => t.level < 5 && (t.built || (prev ? prev.built : (t.outer ? built(G.cannons) >= 2 : G.recruitIdx >= 1))),
-      cost: () => t.built ? Math.round(TOWER_UP[t.level - 1] * (t.outer ? 2.5 : 1)) : (t.outer ? OUTER_COSTS[t.idx] : TOWER_COSTS[t.idx]),
-      iconFn: () => t.built ? (c) => { ICONS.tower(c); iconPath(c, ICONS.up, 40, 30, 0.6); } : (t.outer ? ICONS.tower : ICONS.bow),
+    const prev = t.idx ? G.towers[t.idx - 1] : null;
+    pads.push(createPad({ id: 'tower' + t.idx, x: t.x, z: t.z, posFn: () => t.built ? t.up : [t.x, t.z],
+      visible: () => t.level < 5 && (t.built || (prev ? prev.built : G.recruitIdx >= 1)),
+      cost: () => t.built ? TOWER_UP[t.level - 1] : TOWER_COSTS[t.idx],
+      iconFn: () => t.built ? (c) => { ICONS.tower(c); iconPath(c, ICONS.up, 40, 30, 0.6); } : ICONS.bow,
       lv: () => t.level, buy: () => t.built ? upgradeTower(t) : buildTower(t) }));
   }
   pads.push(createPad({ id: 'forgebuild', x: FORGE[0], z: FORGE[1], icon: anvilIcon,
@@ -1224,21 +1242,24 @@ function makePads() {
     cost: () => G.tier < FORGE_COSTS.length ? FORGE_COSTS[G.tier] : Math.round(9000 * Math.pow(1.6, G.extraDmg + 1)),
     iconFn: () => (c) => { ICONS.weapon(c, Math.min(G.tier + 1, 6)); if (G.tier >= FORGE_COSTS.length) iconPath(c, ICONS.up, 42, 32, 0.6); },
     lv: () => G.tier * 100 + G.extraDmg, buy: () => upgradeWeapon() }));
-  G.cannons.forEach((cn, i) => {
-    pads.push(createPad({ id: 'cannon' + i, x: cn.x, z: cn.z, icon: null, posFn: () => cn.built ? cn.side : [cn.x, cn.z],
-      visible: () => cn.level < CANNON_MAX && (cn.built || (built(G.towers.filter(t => !t.outer)) >= 4 && (i === 0 || G.cannons[i - 1].built))),
-      cost: () => cn.built ? Math.round(CANNON_COSTS[i] * Math.pow(1.9, cn.level)) : CANNON_COSTS[i],
-      iconFn: () => (c) => { ICONS.cannon(c); if (cn.built) iconPath(c, ICONS.up, 40, -32, 0.55); },
-      lv: () => cn.level, buy: () => buildCannon(i) }));
-  });
+  G.cannons.forEach((cn, i) => pads.push(cannonPad(cn, () => built(G.towers.filter(t => !t.outer)) >= 4 && (i === 0 || G.cannons[i - 1].built))));
   const gd = G.gold;
   pads.push(createPad({ id: 'gold', x: GOLD_HUT[0], z: GOLD_HUT[1], posFn: () => gd.built ? GOLD_PAD : GOLD_HUT,
-    visible: () => gd.lv < GOLD_COSTS.length && (gd.built || G.towers.some(t => t.outer && t.built)),
+    visible: () => gd.lv < GOLD_COSTS.length && (gd.built || G.outposts > 0),
     cost: () => GOLD_COSTS[gd.lv],
     iconFn: () => gd.built ? (c) => { ICONS.goldboy(c); iconPath(c, ICONS.up, 40, -30, 0.55); } : ICONS.goldboy,
     lv: () => gd.lv, buy: () => buildGold() }));
   for (const p of pads) { p.cost = p.price(); p.key = ''; }
   return pads;
+}
+// a cannon spot; `ready` says when it shows up for building
+function cannonPad(cn, ready) {
+  const i = G.cannons.indexOf(cn);
+  return createPad({ id: 'cannon' + i, x: cn.x, z: cn.z, icon: null, posFn: () => cn.built ? cn.side : [cn.x, cn.z],
+    visible: () => cn.level < CANNON_MAX && (cn.built || ready()),
+    cost: () => cn.built ? Math.round(cn.cost0 * Math.pow(1.9, cn.level)) : cn.cost0,
+    iconFn: () => (c) => { ICONS.cannon(c); if (cn.built) iconPath(c, ICONS.up, 40, -32, 0.55); },
+    lv: () => cn.level, buy: () => buildCannon(i) });
 }
 function recruitStep() {
   const i = G.recruitIdx;
@@ -1284,25 +1305,237 @@ function weapon(forTower) {
   const w = WEAPONS[t];
   return { ...w, dmg: w.dmg * Math.pow(1.25, G.extraDmg), tier: t };
 }
-function reachRing(r) {
-  for (let i = G.ring + 1; i <= r && i < THEMES.length; i++) revealTheme(i);
-  G.ring = Math.max(G.ring, r);
-}
-function revealTheme(i) {
-  const info = THEMES[i], road = PATHS[info.path].slice(0, 5);   // the new part, up to where it joins an old road
-  addRoad('theme' + i, road);
-  G.trails[info.path].openAt = G.t + 4;
-  toast(`A new road has opened: ${info.name}`);
-  // a gust along the new road
-  const dust = LOOKS[biomeAt(road[0][0], road[0][1])].dust;
-  for (let j = 0; j < road.length - 1; j++) for (let s = 0; s < 1; s += 0.34) puff(road[j][0] + (road[j + 1][0] - road[j][0]) * s, 0.6, road[j][1] + (road[j + 1][1] - road[j][1]) * s, dust, 2);
-}
 function buildTower(t) {
   t.built = true; t.level = 1; t.cd = [];
   t.b = makeBuilding(t.x, t.z, 0, towerGeo, 1, t.outer ? 5 : 0, TOWER_LV[0].h);
   celebrate(t.x, t.z, TOWER_LV[0].h, false);
-  if (t.outer) reachRing(2); else setTowerWalls(t);
+  if (t.outer) buildOutpost(t); else setTowerWalls(t);
   refreshObstacles();
+}
+
+// --------------------------------------------------------------- frontier ----
+// Each front is an enemy camp past the border and the road from it to the castle. Outposts are built where a
+// front's road crosses the border; each claims a round of land around it. When the border reaches a camp, the
+// camp is cleared (it falls into a ruin) and the enemy makes a new one further out, with a new stretch of road
+// back to the old one, so its march gets longer, through land the king now holds.
+function initFronts() {
+  G.fronts = FRONTS.map((def) => {
+    const startsOpen = typeof def.open === 'number';
+    const f = { id: def.id, road: def.road, segs: def.own ? [def.road.slice(0, def.own)] : [], adv: 0, open: startsOpen, openAt: startsOpen ? def.open : Infinity,
+      shared: startsOpen, timer: 3, restAt: 0, camp: null };
+    f.camp = makeCamp(def.road[0][0], def.road[0][1], startsOpen);
+    return f;
+  });
+  refreshFrontier();
+}
+const frontOpen = (f) => f.open && G.t >= f.openAt;
+const placeName = (b) => (b === BIOME.canyon ? 'the canyon' : 'the ' + BIOME_NAMES[b]);
+function openFront(id) {
+  const f = G.fronts.find(o => o.id === id);
+  if (!f || f.open) return;
+  f.open = true; f.openAt = G.t + 4; f.timer = 2;
+  f.segs.forEach((seg, i) => addRoad(`front-${f.id}-${i}`, seg));
+  f.camp.group.visible = true; f.camp.state = 'rise'; f.camp.t = 0;
+  toast(`A new road has opened: ${BIOME_NAMES[f.camp.theme]}`);
+  gust(f.segs[f.segs.length - 1], f.camp.theme);
+  refreshFrontier();
+}
+function gust(road, theme) {
+  const dust = LOOKS[theme].dust;
+  for (let j = 0; j < road.length - 1; j++) for (let s = 0; s < 1; s += 0.34) puff(road[j][0] + (road[j + 1][0] - road[j][0]) * s, 0.6, road[j][1] + (road[j + 1][1] - road[j][1]) * s, dust, 2);
+}
+// take in a round of land; camps it reaches fall back, and the outpost spots move out to the new border
+function claim(x, z, r) {
+  G.claims.push({ x, z, r, shown: 0 });
+  G.reach = Math.max(G.reach, ...G.claims.map(c => Math.hypot(c.x - HOME.x, c.z - HOME.z) + c.r));
+  for (const f of G.fronts) for (let n = 0; n < 4 && borderDist(G.claims, f.camp.x, f.camp.z) < CAMP_REACHED; n++) fallBack(f);
+  refreshFrontier();
+  refreshPosts();
+  world.borderU.count.value = 0;   // send the claims to the border again
+}
+function fallBack(f) {
+  const old = f.camp;
+  const p = nextCamp(old, G.claims, G.fronts.filter(o => o !== f).map(o => o.camp), G.rand);
+  const seg = campRoad(p, old, G.rand);
+  f.road = [...seg.slice(0, -1), ...f.road];
+  f.segs.push(seg);
+  f.camp = makeCamp(p.x, p.z, f.open);
+  if (!f.open) { scene.remove(old.group); unkeepClear(old.x, old.z); return; }
+  addRoad(`front-${f.id}-${f.segs.length - 1}`, seg);
+  clearCamp(old);
+  f.restAt = G.t + 4;
+  toast(`The enemy fell back to ${placeName(f.camp.theme)}`);
+  gust(seg, f.camp.theme);
+}
+// ----- camps: tents in the colours of the enemy that lives there, a banner, stakes and a fire
+const campGeos = new Map();
+function campGeo(theme, ruin) {
+  const key = theme + (ruin ? 'r' : '');
+  let g = campGeos.get(key);
+  if (g) return g;
+  const K = PAL[theme].knight, p = [];
+  if (!ruin) {
+    p.push(vc(Co(1.9, 2.9, 6), K.body, T(0, 1.45, 0)), vc(Co(0.62, 0.5, 6), K.belt, T(0, 2.95, 0)), vc(B(0.9, 1.3, 0.1), K.visor, T(0, 0.65, 1.42, -0.33, 0, 0)));
+    p.push(vc(Co(1.0, 1.6, 6), K.light, T(2.4, 0.8, -1.3)), vc(Co(1.0, 1.6, 6), K.belt, T(-2.2, 0.8, -1.6)));
+    p.push(vc(Cy(0.07, 0.07, 4.0, 6), '#4a3428', T(-1.7, 2.0, 1.6)), vc(B(1.1, 1.5, 0.06), K.body, T(-1.12, 3.1, 1.6)), vc(B(1.1, 0.22, 0.07), K.plume, T(-1.12, 2.4, 1.6)), vc(S(0.12, 6, 5), K.plume, T(-1.7, 4.05, 1.6)));
+    p.push(vc(Cy(0.1, 0.1, 1.1, 6), '#4a3428', T(1.9, 0.12, 1.9, 0, 0.6, Math.PI / 2)), vc(Cy(0.1, 0.1, 1.1, 6), '#4a3428', T(1.9, 0.12, 1.9, 0, -0.6, Math.PI / 2)),
+      vc(Co(0.34, 0.75, 6), '#ff9a2a', T(1.9, 0.48, 1.9)), vc(Co(0.18, 0.45, 5), '#ffe36a', T(1.9, 0.4, 1.9)));
+  } else {
+    p.push(vc(Co(2.0, 0.55, 6), '#3a2f2b', T(0, 0.27, 0)), vc(Co(1.1, 0.4, 6), K.body, T(0.4, 0.3, 0.3, 0.2, 0.5, 0.1)), vc(Co(0.9, 0.3, 6), '#2e2725', T(2.3, 0.15, -1.3)));
+    p.push(vc(Cy(0.07, 0.07, 3.6, 6), '#4a3428', T(-1.4, 0.15, 1.2, 0, 0.7, Math.PI / 2 - 0.08)), vc(B(1.0, 0.05, 1.3), K.body, T(-0.5, 0.06, 1.8, 0, 0.5, 0)));
+    p.push(vc(Cy(0.1, 0.1, 1.1, 6), '#2a2220', T(1.9, 0.1, 1.9, 0, 0.6, Math.PI / 2)), vc(Cy(0.1, 0.1, 1.1, 6), '#2a2220', T(1.9, 0.1, 1.9, 0, -0.6, Math.PI / 2)));
+  }
+  for (let i = 0; i < 12; i++) {
+    const a = i / 12 * Math.PI * 2 + 0.2, r = 3.6, broken = ruin && i % 3 !== 0, lean = broken ? 1.2 : 0.3, h = broken ? 0.7 : 1.3;
+    p.push(vc(Cy(0.08, 0.1, h, 5), C.stake, T(Math.sin(a) * r, h / 2 * Math.cos(lean), Math.cos(a) * r, Math.cos(a) * lean, 0, -Math.sin(a) * lean)));
+    if (!broken) p.push(vc(Co(0.09, 0.22, 5), C.stakeTip, T(Math.sin(a) * (r + 0.2), h + 0.08, Math.cos(a) * (r + 0.2), Math.cos(a) * lean, 0, -Math.sin(a) * lean)));
+  }
+  g = merge(p);
+  campGeos.set(key, g);
+  return g;
+}
+function makeCamp(x, z, shown) {
+  const theme = biomeAt(x, z), group = new THREE.Group(), mesh = new THREE.Mesh(campGeo(theme, false), world.vmat);
+  mesh.castShadow = true; mesh.rotation.y = Math.atan2(HOME.x - x, HOME.z - z);   // the tent door faces the castle
+  group.add(mesh); group.position.set(x, 0, z); group.visible = shown; scene.add(group); G.dispose.push(group);
+  const c = { x, z, theme, group, mesh, state: shown ? 'rise' : 'hidden', t: G.t > 0 ? 0 : 1, smokeT: Math.random() };
+  if (c.t >= 1) c.state = 'up';
+  group.scale.setScalar(c.t >= 1 ? 1 : 0.01);
+  keepClear(x, z, 5);
+  return c;
+}
+function clearCamp(c) {
+  c.state = 'fall'; c.t = 0; G.ruins.push(c);
+  bigText('Camp cleared!', c.x, 5, c.z);
+  puff(c.x, 1.2, c.z, '#d8d0c4', 16); dust(c.x, c.z, 2.6, 12); shockwave(c.x, c.z, 6, '#ffffff');
+}
+function updateCamps(dt) {
+  const k = G.king;
+  for (const f of G.fronts) {
+    const c = f.camp;
+    animCamp(c, dt);
+    // smoke from the camp fire
+    if (c.state !== 'up' || !c.group.visible || (c.smokeT -= dt) > 0 || world.fx.length >= 200 || Math.hypot(c.x - k.x, c.z - k.z) > 60) continue;
+    c.smokeT = 0.5;
+    const a = c.mesh.rotation.y;
+    smoke(c.x + 1.9 * Math.cos(a) + 1.9 * Math.sin(a), 1.1, c.z - 1.9 * Math.sin(a) + 1.9 * Math.cos(a), '#8d8682', 0.9);
+  }
+  for (const c of G.ruins) animCamp(c, dt);
+}
+function animCamp(c, dt) {
+  if (c.state === 'rise') {
+    c.t = Math.min(1, c.t + dt / 0.8);
+    c.group.scale.set(1, Math.max(0.01, easeOutBack(c.t)), 1);
+    if (c.t >= 1) c.state = 'up';
+    if (c.t < 0.05 && !c.dusted) { c.dusted = true; dust(c.x, c.z, 2.4, 10); }
+  } else if (c.state === 'fall') {
+    c.t = Math.min(1, c.t + dt / 0.7);
+    c.group.scale.set(1 + c.t * 0.15, Math.max(0.05, 1 - easeOut(c.t) * 0.9), 1 + c.t * 0.15);
+    if (c.t >= 1) { c.state = 'ruin'; c.mesh.geometry = campGeo(c.theme, true); c.group.scale.set(1, 1, 1); }
+  }
+}
+// ----- outposts: a spot beside each open front's road, just inside the border
+function refreshFrontier() {
+  const want = [];
+  for (const f of G.fronts) {
+    if (!f.open) continue;
+    const s = findSite(f.road, 1);
+    if (s && !want.some(o => Math.hypot(o.x - s.x, o.z - s.z) < 10)) want.push(s);
+  }
+  for (const t of G.towers.filter(o => o.outer && !o.built)) {
+    const i = want.findIndex(o => Math.hypot(o.x - t.x, o.z - t.z) < 3);
+    if (i >= 0) want.splice(i, 1); else dropSite(t);
+  }
+  for (const s of want) addSite(s);
+}
+// a free spot SITE_SIDE beside a road, starting where it first gets PAD_IN inside the border and moving in
+// until one is free; `side` 1 or -1 is the side to try first (0: whichever has more room)
+function findSite(road, side = 0, from = null) {
+  const c = from || roadCrossing(road, G.claims, PAD_IN);
+  if (!c) return null;
+  for (let k = 0; k < 10; k++) {
+    const p = pointAlong(road, c.at + k * 2.5);
+    const opts = side ? [side, -side] : [1, -1];
+    for (const sd of opts) {
+      const x = p.x - p.dz * sd * SITE_SIDE, z = p.z + p.dx * sd * SITE_SIDE;
+      if (siteFree(x, z)) return { x, z, rx: p.x, rz: p.z, dx: p.dx, dz: p.dz, side: sd, at: p.at, road };
+    }
+  }
+  return null;
+}
+function siteFree(x, z) {
+  if (borderDist(G.claims, x, z) > -3 || x < cliffMinX(z) + 2.5 || (Math.abs(x) < HX + 4 && Math.abs(z) < HZ + 4)) return false;
+  if (pushOutOfMesas(x, z, 3)[0] !== x) return false;
+  if (world.terrain.roads.some(r => pathDist(x, z, r.pts) < 3.6) || G.fronts.some(f => f.open && pathDist(x, z, f.road) < 3.6)) return false;
+  if ((G.obs || []).some(([ox, oz, r]) => Math.hypot(ox - x, oz - z) < r + 3)) return false;
+  // (spots not built on yet don't count: refreshFrontier is deciding where they go)
+  if (G.towers.some(t => (t.built || !t.outer) && Math.hypot(t.x - x, t.z - z) < 7) || G.cannons.some(c => Math.hypot(c.x - x, c.z - z) < 7)) return false;
+  if (G.pads && G.pads.some(p => !(p.site && !p.site.built) && Math.hypot(p.x - x, p.z - z) < 5.5)) return false;
+  if (G.fronts.some(f => Math.hypot(f.camp.x - x, f.camp.z - z) < 7) || G.ruins.some(c => Math.hypot(c.x - x, c.z - z) < 6)) return false;
+  return Math.hypot(GOLD_HUT[0] - x, GOLD_HUT[1] - z) > 8 && Math.hypot(GOLD_PLOT[0] - x, GOLD_PLOT[1] - z) > 7;
+}
+const outpostCost = () => Math.round(OUTPOST_COST * Math.pow(OUTPOST_GROW, G.outposts));
+function addSite(s) {
+  // the upgrade pad goes on the castle side of the tower
+  const hx = HOME.x - s.x, hz = HOME.z - s.z, hl = Math.hypot(hx, hz) || 1;
+  const t = { x: s.x, z: s.z, up: [s.x + hx / hl * 4.4, s.z + hz / hl * 4.4], outer: true, idx: G.siteSeq++, site: s, built: false, level: 0, b: null, cd: [], aim: undefined };
+  G.towers.push(t);
+  const pad = createPad({ id: 'outpost' + t.idx, x: t.x, z: t.z, posFn: () => t.built ? t.up : [t.x, t.z],
+    visible: () => t.level < 5 && (t.built || G.cannons.filter(c => c.built).length >= 2),
+    cost: () => t.built ? Math.round(TOWER_UP[t.level - 1] * OUTPOST_UP) : outpostCost(),
+    iconFn: () => t.built ? (c) => { ICONS.tower(c); iconPath(c, ICONS.up, 40, 30, 0.6); } : ICONS.outpost,
+    lv: () => t.level, buy: () => (t.built ? upgradeTower(t) : buildTower(t)) });
+  pad.cost = pad.price(); t.pad = pad; pad.site = t;
+  G.pads.push(pad);
+  keepClear(t.x, t.z, 4);
+}
+function dropSite(t) {
+  G.towers.splice(G.towers.indexOf(t), 1);
+  const i = G.pads.indexOf(t.pad);
+  if (i >= 0) { G.pads.splice(i, 1); scene.remove(t.pad.mesh); t.pad.tex.dispose(); }
+  unkeepClear(t.x, t.z);
+}
+function buildOutpost(t) {
+  G.outposts++;
+  claim(t.x, t.z, CLAIM_OUTPOST);
+  bigText('The border moves out', t.x, 6, t.z);
+  // a field cannon spot across the road
+  const s = t.site, x = s.rx + s.dz * s.side * 5.4, z = s.rz - s.dx * s.side * 5.4;
+  if (siteFreeFor(x, z, t)) {
+    const hx = HOME.x - x, hz = HOME.z - z, hl = Math.hypot(hx, hz) || 1;
+    const cn = { x, z, side: [x + hx / hl * 4.4, z + hz / hl * 4.4], cost0: Math.round(FIELD_CANNON_COST * Math.pow(FIELD_CANNON_GROW, G.fieldCannons++)), built: false, level: 0, b: null, turret: null, cd: 0, yaw: Math.atan2(-s.dx, -s.dz), field: true };
+    G.cannons.push(cn);
+    const pad = cannonPad(cn, () => t.built); pad.cost = pad.price(); G.pads.push(pad);
+    keepClear(x, z, 4);
+  }
+  refreshFrontier();   // a spot the field cannon took moves along
+  if (G.outposts === 1) { openFront('S'); toast('The border moved out. Outposts on the border push it further.'); }
+}
+// the field cannon may stand closer to its own outpost than spots usually may
+function siteFreeFor(x, z, t) {
+  const saved = G.towers.indexOf(t);
+  G.towers.splice(saved, 1);
+  const ok = siteFree(x, z);
+  G.towers.splice(saved, 0, t);
+  return ok;
+}
+// spots kept clear of trees and rocks
+function keepClear(x, z, r) {
+  G.clear.push({ x, z, r });
+  dirtyArea(x - r, z - r, x + r, z + r);
+  for (const m of world.terrain.homeDecor) if (Math.hypot(m.position.x - x, m.position.z - z) < r + 1) m.visible = false;
+}
+function unkeepClear(x, z) {
+  const i = G.clear.findIndex(c => c.x === x && c.z === z);
+  if (i >= 0) { const [c] = G.clear.splice(i, 1); dirtyArea(c.x - c.r, c.z - c.r, c.x + c.r, c.z + c.r); }
+}
+// a new game: only the first roads, every chunk redecorated, the hand-placed decor back
+function resetWorld() {
+  const TR = world.terrain;
+  for (const r of TR.roads.slice()) if (r.id.startsWith('front-')) removeRoad(r.id);
+  for (const ch of TR.chunks.values()) ch.dirty = true;
+  for (const m of TR.homeDecor) m.visible = !TR.roads.some(r => pathDist(m.position.x, m.position.z, r.pts) < 3.2);
+  G.ruins = [];
 }
 function upgradeTower(t) {
   t.level++;
@@ -1339,7 +1572,7 @@ function buildCannon(i) {
     c.b.body.add(tur); c.turret = tur;
     c.b.onSwap = (lv) => { tur.geometry = geoFor(cannonTurretGeo, lv); tur.position.y = CANNON_TOP[lv - 1]; };
     celebrate(c.x, c.z, 2.2, false);
-    reachRing(1);
+    if (!c.field) openFront('N');
   } else { c.level++; upgradeBuilding(c.b, c.level); }
   refreshObstacles();
 }
@@ -1350,7 +1583,6 @@ function buildGold() {
     gd.b = makeBuilding(GOLD_HUT[0], GOLD_HUT[1], Math.PI / 4, goldHutGeo, 1, 7, 3.6);
     gd.plotB = makeBuilding(GOLD_PLOT[0], GOLD_PLOT[1], 0, plotGeo, 1, 0, 0.6);
     celebrate(GOLD_HUT[0], GOLD_HUT[1], 3.6, false);
-    reachRing(3);
   } else { gd.lv++; upgradeBuilding(gd.b, gd.lv); }
   while (gd.boys.length < GOLD_BOYS[gd.lv - 1].n) gd.boys.push({ x: GOLD_HUT[0] + 1.6, z: GOLD_HUT[1] + 2.2, yaw: 0.8, bob: Math.random() * 6, load: 0, state: 'idle', target: null, retarget: 0.8 + gd.boys.length * 0.4, moving: false });
   bigText(gd.lv === 1 ? 'Gold boy' : '+1 gold boy', GOLD_HUT[0], 5, GOLD_HUT[1]);
@@ -1370,59 +1602,124 @@ function refreshObstacles() {
   G.obs = o;
 }
 
+// ----------------------------------------------------------------- border ----
+// The border is drawn on the ground by one big plane that follows the king: a dashed white line along the edge
+// of the claimed land and a dusky veil over the land past it. Small blue flags stand along the line. A new claim
+// grows out from its outpost (`shown` eases up to `r`).
+const MAX_CLAIMS = 64, BORDER_SIZE = 320, POST_STEP = 9, POST_CAP = 600;
+function initBorder() {
+  const W = world;
+  W.borderU = { claims: { value: Array.from({ length: MAX_CLAIMS }, () => new THREE.Vector4()) }, count: { value: 0 } };
+  const mat = new THREE.ShaderMaterial({
+    uniforms: W.borderU, transparent: true, depthWrite: false,
+    vertexShader: 'varying vec2 vP; void main() { vec4 w = modelMatrix * vec4(position, 1.0); vP = w.xz; gl_Position = projectionMatrix * viewMatrix * w; }',
+    fragmentShader: `
+      uniform vec4 claims[${MAX_CLAIMS}]; uniform int count; varying vec2 vP;
+      void main() {
+        float d = 1e9; vec4 best = vec4(0.0);
+        for (int i = 0; i < ${MAX_CLAIMS}; i++) { if (i >= count) break; float v = length(vP - claims[i].xy) - claims[i].z; if (v < d) { d = v; best = claims[i]; } }
+        // dashes go round each claim's circle a whole number of times, so they meet up
+        float n = max(6.0, floor(6.2832 * best.w / 2.6)), s = (atan(vP.y - best.y, vP.x - best.x) / 6.2832 + 0.5) * n;
+        float fs = fwidth(s), dash = smoothstep(0.62 + fs, 0.62 - fs, fract(s)) * smoothstep(-fs, fs, fract(s));
+        float fd = fwidth(d), line = (1.0 - smoothstep(0.2 - fd, 0.2 + fd, abs(d - 0.1))) * dash;
+        float veil = smoothstep(0.3, 1.5, d) * 0.1 + smoothstep(0.0, 14.0, d) * 0.16;
+        gl_FragColor = vec4(mix(vec3(0.17, 0.12, 0.22), vec3(1.0), line), max(veil, line * 0.92));
+      }`,
+  });
+  const m = new THREE.Mesh(new THREE.PlaneGeometry(BORDER_SIZE, BORDER_SIZE), mat);
+  m.rotation.x = -Math.PI / 2; m.position.y = 0.03; m.frustumCulled = false; scene.add(m);
+  W.border = m;
+  W.posts = inst(merge(flag(0, 0, 0, '#3d7be0', 1.4)), W.vmat, POST_CAP);
+  W.posts.count = 0;
+}
+// flags every POST_STEP paces along the border, not on roads, the canyon wall or the mesas
+function refreshPosts() {
+  const P = [], old = G.posts || [];
+  for (const c of G.claims) {
+    const n = Math.max(6, Math.round(2 * Math.PI * c.r / POST_STEP));
+    for (let i = 0; i < n && P.length < POST_CAP; i++) {
+      const a = (i + 0.5) / n * Math.PI * 2, x = c.x + Math.cos(a) * c.r, z = c.z + Math.sin(a) * c.r;
+      if (G.claims.some(o => o !== c && Math.hypot(x - o.x, z - o.z) < o.r - 0.5)) continue;
+      if (x < cliffMinX(z) + 1 || pushOutOfMesas(x, z, 1)[0] !== x) continue;
+      if (world.terrain.roads.some(r => pathDist(x, z, r.pts) < 2.6) || G.fronts.some(f => pathDist(x, z, f.road) < 2.6)) continue;
+      const was = old.find(q => Math.hypot(q.x - x, q.z - z) < 0.5);
+      P.push({ x, z, t: was ? was.t : c.shown >= c.r - 0.1 ? 1 : -0.9 });   // new ones rise once the border gets there
+    }
+  }
+  G.posts = P;
+}
+function updateBorder(dt) {
+  const W = world, k = G.king;
+  let moving = false;
+  for (const c of G.claims) if (c.shown !== c.r) { c.shown += (c.r - c.shown) * Math.min(1, dt * 2.4); if (Math.abs(c.r - c.shown) < 0.05) c.shown = c.r; moving = true; }
+  if (moving || !W.borderU.count.value) {
+    const list = G.claims.length <= MAX_CLAIMS ? G.claims : G.claims.slice().sort((a, b) => (Math.hypot(a.x - k.x, a.z - k.z) - a.r) - (Math.hypot(b.x - k.x, b.z - k.z) - b.r)).slice(0, MAX_CLAIMS);
+    list.forEach((c, i) => W.borderU.claims.value[i].set(c.x, c.z, c.shown, c.r));
+    W.borderU.count.value = list.length;
+  }
+  W.border.position.set(Math.round(k.x), 0.03, Math.round(k.z));
+  let n = 0;
+  for (const p of G.posts) {
+    if (p.t < 1) p.t = Math.min(1, p.t + dt / 0.6);
+    const s = p.t <= 0 ? 0.001 : Math.max(0.001, easeOutBack(p.t));
+    tmpM.compose(tmpV.set(p.x, 0, p.z), tmpQ.setFromEuler(tmpE.set(0, Math.sin(G.t * 2.2 + p.x * 0.3) * 0.18, 0)), tmpS.set(1, s, 1));
+    W.posts.setMatrixAt(n++, tmpM);
+  }
+  W.posts.count = n; W.posts.instanceMatrix.needsUpdate = true;
+}
+
 // ---------------------------------------------------------------- enemies ----
 // Difficulty rises smoothly with time; there are no waves. Groups are bought
 // from a budget that grows over time, and the mix shifts from many small
 // knights toward fewer, bigger brutes and giants.
 const level = () => G.t / 13;
-function spawnEnemy(kind, pathIdx) {
-  const L = level(), theme = PATH_THEME[pathIdx], th = THEMES[theme], u = UNIT[kind];
-  const path = PATHS[pathIdx];
+function spawnEnemy(kind, f) {
+  const L = level(), u = UNIT[kind], camp = f.camp, theme = camp.theme, tier = campTier(camp), hpK = tierHp(tier), road = f.road;
   const e = {
-    kind, theme, x: path[0][0] + (Math.random() - 0.5) * 1.2, z: path[0][1] + (Math.random() - 0.5) * 1.2, path: pathIdx, wp: 1,
+    kind, theme, x: road[0][0] + (Math.random() - 0.5) * 1.2, z: road[0][1] + (Math.random() - 0.5) * 1.2, route: road, wp: 1,
     hp: 0, max: 0, speed: 0, dmg: 0, r: u.r, atk: 0, yaw: 0, bob: Math.random() * 6, state: 'path', seg: null, lunge: 0,
     value: 1, hitFlash: 0, side: (Math.random() - 0.5) * (kind === 'knight' ? 1.4 : 0.8), scale: u.scale,
   };
-  e.max = 22 * Math.pow(1.10, L) * th.hp * u.hp;
-  e.dmg = 8 * Math.pow(1.06, L) * u.dmg * (1 + (th.hp - 1) * 0.5);
-  e.value = Math.max(1, Math.round((2 + L / 2) * u.value * th.value));
-  e.speed = (kind === 'knight' ? 2.4 + Math.min(1.2, L * 0.03) : u.speed) * th.speed;
+  e.max = 22 * Math.pow(1.10, L) * hpK * u.hp;
+  e.dmg = 8 * Math.pow(1.06, L) * u.dmg * (1 + (hpK - 1) * 0.5);
+  e.value = Math.max(1, Math.round((2 + L / 2) * u.value * tierValue(tier)));
+  e.speed = (kind === 'knight' ? 2.4 + Math.min(1.2, L * 0.03) : u.speed) * BIOME_SPEED[theme];
   const v = kind === 'knight' ? (Math.random() < 0.35 ? 'S' : '') : (kind === 'giant' && PAL[theme].giants[1] && Math.random() < 0.5 ? 'R' : '');
   e.mkey = kind + v + theme;
   e.hp = e.max;
   G.enemies.push(e);
   return e;
 }
-function queueGroup(p, L) {
+function queueGroup(f, L) {
   let budget = 5 + L * 0.7, t = 0, n = 0;
   const ws = Math.max(0.25, 1 - L * 0.03), wb = L < 3 ? 0 : Math.min(1.2, (L - 3) * 0.07), wg = L < 10 ? 0 : Math.min(0.8, (L - 10) * 0.04);
   while (budget >= 1 && n < 14) {
     const b = budget >= 4 ? wb : 0, g = budget >= 12 ? wg : 0, r = Math.random() * (ws + b + g);
     const kind = r < ws ? 'knight' : r < ws + b ? 'brute' : 'giant';
     budget -= UNIT[kind].cost; n++;
-    G.spawnQueue.push({ p, kind, t }); t += kind === 'knight' ? 0.35 : 0.8;
+    G.spawnQueue.push({ f, kind, t }); t += kind === 'knight' ? 0.35 : 0.8;
   }
 }
-const trailOpen = (i) => G.trails[i].openAt !== null && G.t >= G.trails[i].openAt;
+// The three first fronts take turns on one timer; the fronts that open later each send groups on top of that.
+// A camp that has just fallen back rests a few seconds while it goes up.
 function updateSpawns(dt) {
   const L = level();
   if (G.enemies.length < 300) {
     G.spawnT -= dt;
     if (G.spawnT <= 0) {
-      const open = [0, 1, 2].filter(trailOpen);
+      const open = G.fronts.filter(f => f.shared && frontOpen(f) && G.t >= f.restAt);
       if (open.length) queueGroup(open[G.nextPath++ % open.length], L);
       G.spawnT = Math.max(1.0, 3 * Math.pow(0.955, L));
     }
-    // every outer road sends its own groups on top of that
-    for (let i = 3; i < PATHS.length; i++) {
-      if (!trailOpen(i)) continue;
-      const tr = G.trails[i]; tr.timer -= dt;
-      if (tr.timer <= 0) { queueGroup(i, L); tr.timer = Math.max(2.4, 5.5 * Math.pow(0.96, L)); }
+    for (const f of G.fronts) {
+      if (f.shared || !frontOpen(f) || G.t < f.restAt) continue;
+      f.timer -= dt;
+      if (f.timer <= 0) { queueGroup(f, L); f.timer = Math.max(2.4, 5.5 * Math.pow(0.96, L)); }
     }
   }
   for (let i = G.spawnQueue.length - 1; i >= 0; i--) {
     const q = G.spawnQueue[i]; q.t -= dt;
-    if (q.t <= 0) { spawnEnemy(q.kind, q.p); G.spawnQueue.splice(i, 1); }
+    if (q.t <= 0) { spawnEnemy(q.kind, q.f); G.spawnQueue.splice(i, 1); }
   }
 }
 
@@ -1483,7 +1780,7 @@ function updateEnemies(dt) {
       if (e.atk <= 0 && cs.hp > 0) { e.atk = UNIT[e.kind].atk; e.lunge = 1; hitCastle(e.dmg, e.x, e.z); }
       continue;
     }
-    const path = PATHS[e.path], last = e.wp >= path.length - 1;
+    const path = e.route, last = e.wp >= path.length - 1;
     const p = path[Math.min(e.wp, path.length - 1)];
     // walk a little to one side of the trail so a column reads as a column, not a single file of clones
     const pp = path[Math.max(0, e.wp - 1)], sx = -(p[1] - pp[1]), sz = p[0] - pp[0], sl = Math.hypot(sx, sz) || 1;
@@ -1774,7 +2071,8 @@ function updateTroop(dt) {
   if (len > 1) { ix /= len; iz /= len; }
   const moving = len > 0.05;
   let nx = k.x + ix * KING_SPEED * dt, nz = k.z + iz * KING_SPEED * dt;
-  if (!G.free) { nx = Math.max(BOUNDS.x0, Math.min(BOUNDS.x1, nx)); nz = Math.max(BOUNDS.z0, Math.min(BOUNDS.z1, nz)); }
+  // the king stays inside the border, off the canyon wall and off the mesas
+  if (!G.free) { [nx, nz] = clampToClaims(G.claims, nx, nz, 1.2); nx = Math.max(cliffMinX(nz), nx); [nx, nz] = pushOutOfMesas(nx, nz, 0.8); }
   [nx, nz] = collideWalls(k.x, k.z, nx, nz);
   for (const [ox, oz, r] of G.obs) {
     const dx = nx - ox, dz = nz - oz, d = Math.hypot(dx, dz);
@@ -1981,6 +2279,8 @@ function syncScene(dt) {
   if (G.wallsAnim) rebuildWalls(dt);
   updateTerrain(k.x, k.z);
   updateVents(dt);
+  updateCamps(dt);
+  updateBorder(dt);
   // king
   W.king.position.set(k.x, Math.abs(Math.sin(k.bob)) * 0.08, k.z);
   W.king.rotation.y = k.yaw;
@@ -2124,9 +2424,12 @@ function updateVents(dt) {
   for (const ch of TR.chunks.values()) for (const v of ch.vents) if (Math.hypot(v[0] - k.x, v[1] - k.z) < 40) near.push(v);
   if (!near.length) return;
   const [x, z] = near[(Math.random() * near.length) | 0];
-  const sp = new THREE.Sprite(new THREE.SpriteMaterial({ map: world.puffTex, color: '#6a6262', transparent: true, depthWrite: false }));
-  sp.position.set(x, 1.0, z); scene.add(sp);
-  world.fx.push({ o: sp, t: 0, dur: 2.2, kind: 'smoke', s0: 1.1 });
+  smoke(x, 1.0, z, '#6a6262', 1.1);
+}
+function smoke(x, y, z, hex, s0) {
+  const sp = new THREE.Sprite(new THREE.SpriteMaterial({ map: world.puffTex, color: hex, transparent: true, depthWrite: false }));
+  sp.position.set(x, y, z); scene.add(sp);
+  world.fx.push({ o: sp, t: 0, dur: 2.2, kind: 'smoke', s0 });
 }
 function bar(i, x, y, z, w, frac, hex, q) {
   const W = world;
@@ -2157,7 +2460,8 @@ function gameOver() {
   for (let i = 0; i < 4; i++) puff(cs.x + (Math.random() - 0.5) * 3, 2 + i, cs.z + (Math.random() - 0.5) * 3, '#d8d0c4', 8);
   let best = 0;
   try { best = +(localStorage.getItem('castle.bestTime') || 0); if (G.t > best) localStorage.setItem('castle.bestTime', String(Math.floor(G.t))); } catch (e) {}
-  ui.overText.textContent = G.t > best ? `You held out for ${clock(G.t)}, your longest yet.` : `You held out for ${clock(G.t)}. Your longest is ${clock(best)}.`;
+  const held = G.t > best ? `You held out for ${clock(G.t)}, your longest yet.` : `You held out for ${clock(G.t)}. Your longest is ${clock(best)}.`;
+  ui.overText.textContent = G.outposts ? `${held} Your border reached ${Math.round(G.reach)} paces out, with ${G.outposts} outpost${G.outposts > 1 ? 's' : ''}.` : held;
   setTimeout(() => { if (G.over) ui.over.hidden = false; }, 1400);
 }
 
@@ -2286,7 +2590,15 @@ function debug() {
     teleport(x, z) { G.free = true; G.king.x = x; G.king.z = z; updateTerrain(x, z, true); },
     // run the game for `sec` seconds of game time as fast as possible
     advance(sec, dt = 1 / 30) { for (let t = 0; t < sec && !G.over; t += dt) { step(dt); syncScene(dt); } },
-    reachRing, rich(n = 1e6) { G.coins = n; },
+    rich(n = 1e6) { G.coins = n; },
+    openFront,
+    // buy what a pad sells without walking over to it
+    buy(id) { const p = G.pads.find(q => q.id === id); if (!p || !p.visible()) return false; p.buy(); p.paid = 0; return true; },
+    pads: () => G.pads.filter(p => p.visible()).map(p => ({ id: p.id, x: p.x, z: p.z, cost: p.price() })),
+    sites: () => G.towers.filter(t => t.outer && !t.built).map(t => ({ id: 'outpost' + t.idx, x: t.x, z: t.z, border: borderDist(G.claims, t.x, t.z) })),
+    fronts: () => G.fronts.map(f => ({ id: f.id, open: f.open, x: f.camp.x, z: f.camp.z, theme: f.camp.theme, tier: campTier(f.camp), roadLen: f.road.length, segs: f.segs.length })),
+    claims: () => G.claims.map(c => ({ x: c.x, z: c.z, r: c.r })),
+    borderDist: (x, z) => borderDist(G.claims, x, z),
     terrain: () => ({ chunks: world.terrain.chunks.size, strips: world.terrain.strips.size, made: world.terrain.made, ms: world.terrain.ms, roads: world.terrain.roads.map(r => r.id) }),
     biomeAt,
   };

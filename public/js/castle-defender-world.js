@@ -1,5 +1,5 @@
 // Castle Defender's endless world, as plain functions of a ground position (x, z): which biome is where, where
-// the canyon wall runs, and the noise behind both. No three.js and no DOM here, so tools/check-castle-world.js
+// the canyon wall runs, and the noise behind both. No three.js and no DOM here, so tools/check-castle-world.mjs
 // can test it in Node. North is -z, east is +x.
 //
 // Biomes: the sandy canyon around the castle, then three outer biomes that each own a wedge of compass
@@ -95,3 +95,87 @@ export const MESAS = [
   [[-24, -42], [-10, -46], [-4, -56], [-16, -66], [-30, -58]],
   [[-24, 44], [-10, 48], [-6, 60], [-20, 68], [-30, 58]],
 ];
+
+// ------------------------------------------------------------- territory ----
+// The king's land is a union of round claims: one around home and one around each outpost built. The border is
+// the edge of that union. Enemy camps stand out past it, one per front, at the start of the front's road.
+export const CLAIM_HOME = 44, CLAIM_OUTPOST = 34;
+export const CAMP_STEP = 20;     // how far a camp falls back when the border reaches it, at least
+export const CAMP_CLEAR = 14;    // a new camp stands at least this far outside the border (and not much more, so
+                                 // the next outpost on its road reaches it)
+export const CAMP_REACHED = 4;   // a camp the border comes this close to (or covers) is cleared
+
+// how far (x, z) is outside the border: negative inside
+export function borderDist(claims, x, z) {
+  let d = Infinity;
+  for (const c of claims) { const v = Math.hypot(x - c.x, z - c.z) - c.r; if (v < d) d = v; }
+  return d;
+}
+// (x, z) moved back inside the border, at least `margin` in, if it had strayed out
+export function clampToClaims(claims, x, z, margin = 0) {
+  let best = null, bd = Infinity;
+  for (const c of claims) { const v = Math.hypot(x - c.x, z - c.z) - c.r; if (v < bd) { bd = v; best = c; } }
+  if (!best || bd <= -margin) return [x, z];
+  const dx = x - best.x, dz = z - best.z, d = Math.hypot(dx, dz) || 1, r = Math.max(0, best.r - margin);
+  return [best.x + dx / d * r, best.z + dz / d * r];
+}
+// the point `dist` paces along a road from its start, with the road's direction there
+export function pointAlong(road, dist) {
+  let left = Math.max(0, dist);
+  for (let i = 0; i < road.length - 1; i++) {
+    const [ax, az] = road[i], [bx, bz] = road[i + 1], L = Math.hypot(bx - ax, bz - az);
+    if (left <= L || i === road.length - 2) { const t = L ? Math.min(1, left / L) : 0; return { x: ax + (bx - ax) * t, z: az + (bz - az) * t, dx: (bx - ax) / (L || 1), dz: (bz - az) / (L || 1), at: dist }; }
+    left -= L;
+  }
+  return null;
+}
+export const roadLength = (road) => { let s = 0; for (let i = 0; i < road.length - 1; i++) s += Math.hypot(road[i + 1][0] - road[i][0], road[i + 1][1] - road[i][1]); return s; };
+// walking a road in from its camp, the first point at least `depth` inside the border
+export function roadCrossing(road, claims, depth) {
+  const total = roadLength(road);
+  for (let s = 0; s <= total; s += 1) { const p = pointAlong(road, s); if (borderDist(claims, p.x, p.z) <= -depth) return p; }
+  return null;
+}
+// Where a camp falls back to when the border reaches it: on outward from home in about the same direction, at
+// least CAMP_STEP further and just CAMP_CLEAR past the border, clear of the canyon wall and the other camps.
+// `rand` gives numbers in [0, 1).
+export function nextCamp(from, claims, others, rand) {
+  let a = Math.atan2(from.z - HOME.z, from.x - HOME.x) + (rand() - 0.5) * 0.4, d = CAMP_STEP, x = from.x, z = from.z;
+  for (let tries = 0; tries < 80; tries++) {
+    x = from.x + Math.cos(a) * d; z = from.z + Math.sin(a) * d;
+    if (x < cliffMinX(z) + 10) { a += Math.sin(a) < 0 ? 0.25 : -0.25; continue; }   // turn east, away from the wall
+    const near = others.find(o => Math.hypot(o.x - x, o.z - z) < 26);
+    if (near) { a += angleDiff(a, Math.atan2(near.z - from.z, near.x - from.x)) > 0 ? 0.2 : -0.2; continue; }
+    if (borderDist(claims, x, z) < CAMP_CLEAR) { d += 3; continue; }
+    break;
+  }
+  return { x, z };
+}
+// a road from a new camp back to the old one, wandering a little
+export function campRoad(from, to, rand) {
+  const dx = to.x - from.x, dz = to.z - from.z, L = Math.hypot(dx, dz) || 1, px = -dz / L, pz = dx / L, n = Math.max(2, Math.round(L / 9));
+  const pts = [[from.x, from.z]];
+  for (let i = 1; i < n; i++) { const t = i / n, w = (rand() - 0.5) * 8 * Math.sin(t * Math.PI); pts.push([from.x + dx * t + px * w, from.z + dz * t + pz * w]); }
+  pts.push([to.x, to.z]);
+  return pts;
+}
+// (x, z) pushed out of the mesas, keeping `pad` from their walls
+export function pushOutOfMesas(x, z, pad) {
+  for (const m of MESAS) {
+    let inside = false, best = Infinity, bx = 0, bz = 0;
+    for (let i = 0, j = m.length - 1; i < m.length; j = i++) {
+      const [ax, az] = m[j], [cx, cz] = m[i];
+      if ((cz > z) !== (az > z) && x < (ax - cx) * (z - cz) / (az - cz) + cx) inside = !inside;
+      const ex = cx - ax, ez = cz - az, L = ex * ex + ez * ez, t = Math.max(0, Math.min(1, ((x - ax) * ex + (z - az) * ez) / L));
+      const qx = ax + ex * t, qz = az + ez * t, d = Math.hypot(x - qx, z - qz);
+      if (d < best) { best = d; bx = qx; bz = qz; }
+    }
+    if (!inside && best >= pad) continue;
+    // out through the nearest wall, `pad` beyond it
+    let nx = x - bx, nz = z - bz, nl = Math.hypot(nx, nz);
+    if (nl < 1e-6) { const cx = m.reduce((s, p) => s + p[0], 0) / m.length, cz = m.reduce((s, p) => s + p[1], 0) / m.length; nx = bx - cx; nz = bz - cz; nl = Math.hypot(nx, nz) || 1; }
+    const s = inside ? -1 : 1;
+    x = bx + s * nx / nl * pad; z = bz + s * nz / nl * pad;
+  }
+  return [x, z];
+}

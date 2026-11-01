@@ -1,5 +1,6 @@
 // Browser checks for Castle Defender's open world: the ground is made around the king wherever he goes and
-// thrown away behind him, each biome shows where it should, the roads are painted, and the game still runs.
+// thrown away behind him, each biome shows where it should, the roads are painted, outposts push the border out
+// and the enemy camps back, the king stays inside his land, and the game still runs.
 // It plays the real page in headless Chromium through Playwright.
 //
 // Usage: node tools/test-castle-defender-browser.js [--keep]   (needs Playwright: npm i -g playwright, or NODE_PATH)
@@ -80,6 +81,7 @@ async function run(browser) {
     ['far Ashlands', [900, 60], (c) => c[0] < 110 && c[1] < 100],
     ['far Mire', [300, 900], (c) => c[1] > c[0] && c[1] > c[2]],
   ];
+  await dbg(page, d => { d.world.border.visible = false; });   // the land past the border is veiled; look at the bare ground
   for (const [name, [x, z], looks] of spots) {
     await dbg(page, (d, [x, z]) => d.teleport(x, z), [x, z]);
     const b = await dbg(page, (d, [x, z]) => d.biomeAt(x, z), [x, z]);
@@ -116,9 +118,11 @@ async function run(browser) {
 
   console.log('New roads');
   page = await reopen(page, browser);
-  await dbg(page, d => d.reachRing(3));
   t = await dbg(page, d => d.terrain());
-  ok(['theme1', 'theme2', 'theme3'].every(r => t.roads.includes(r)), 'the three outer roads are painted once they open', t.roads);
+  ok(!t.roads.some(r => r.startsWith('front-')), 'at the start only the first roads are painted', t.roads);
+  await dbg(page, d => { d.G.recruitIdx = 1; d.buy('tower0'); d.buy('tower1'); d.buy('tower2'); d.buy('tower3'); d.buy('cannon0'); });
+  t = await dbg(page, d => d.terrain());
+  ok(t.roads.includes('front-N-0'), 'the first cannon opens the north road', t.roads);
   await dbg(page, d => d.teleport(10, -78));
   await shot(page, 'frozen-road');
   // read the painted ground on the north road and beside it
@@ -127,10 +131,55 @@ async function run(browser) {
     return { on: at(6, -82), off: at(13, -84) };
   });
   ok(road.on[2] > 150 && road.off[2] > 200 && road.off[0] - road.on[0] > 25, 'the north road is painted through the snow, darker than the snow beside it', road);
+
+  console.log('The border moves out');
+  await dbg(page, d => { d.teleport(4, 2); d.G.free = false; d.buy('cannon1'); d.advance(0.5); });
+  let sites = await dbg(page, d => { const vis = d.pads().map(p => p.id); return d.sites().filter(s => vis.includes(s.id)); });
+  ok(sites.length >= 3 && sites.every(s => s.border < -3 && s.border > -16), 'with two cannons up, outpost spots show where the roads cross the border', sites);
+  const east = sites.reduce((a, b) => (b.x > a.x ? b : a));
+  const before = await dbg(page, d => d.fronts().find(f => f.id === 'E'));
+  await dbg(page, (d, id) => { d.teleport(30, 2); d.G.free = false; d.buy(id); d.G.enemies.length = 0; d.G.spawnQueue.length = 0; d.advance(2); }, east.id);
+  await shot(page, 'outpost');
+  let st = await dbg(page, d => ({ claims: d.claims(), fronts: d.fronts(), roads: d.terrain().roads, ruins: d.G.ruins.length, posts: d.G.posts.map(p => d.borderDist(p.x, p.z)) }));
+  const E = st.fronts.find(f => f.id === 'E'), far = (f) => Math.hypot(f.x - 4, f.z);
+  ok(st.claims.length === 2, 'building an outpost claims more land', st.claims);
+  ok(far(E) >= far(before) + 18 && E.tier > 0 && st.ruins >= 1, 'the east camp the border reached is cleared and the enemy falls back further out, tougher', { before, E, ruins: st.ruins });
+  ok(st.roads.includes('front-E-0') && st.roads.includes('front-S-0'), 'a new road runs from the new camp to the old one, and the south road opens', st.roads);
+  ok(st.posts.length > 10 && st.posts.every(v => Math.abs(v) < 0.6), 'flags stand along the border', st.posts.length);
+  const after = await dbg(page, d => { d.advance(12); return d.G.enemies.map(e => [Math.round(e.route[0][0]), Math.round(e.route[0][1]), e.theme]); });
+  ok(after.length > 0 && !after.some(([x, z]) => x === 56 && z === -2), 'the cleared camp sends no one any more', after.length);
+  ok(after.some(([x, z, th]) => Math.hypot(x - E.x, z - E.z) < 1.5 && th === E.theme), 'the new camp sends its own enemies, in its biome\'s colours', { E, after: after.slice(0, 8) });
+  sites = await dbg(page, d => d.sites());
+  ok(sites.some(s => s.x > east.x + 20 && s.border < -3), 'the next outpost spot on the east road is out at the new border', sites);
+  // keep pushing east: each outpost on the east road clears its camp, the next one is further out and its enemies stronger
+  const push = await dbg(page, (d) => {
+    const out = [];
+    for (let n = 0; n < 4; n++) {
+      const pad = d.sites().reduce((a, b) => (b.x > a.x ? b : a));
+      d.buy(pad.id); d.advance(1);
+      const f = d.fronts().find(o => o.id === 'E');
+      out.push({ x: Math.round(f.x), z: Math.round(f.z), tier: +f.tier.toFixed(2), theme: f.theme });
+    }
+    d.G.enemies.length = 0; d.G.spawnQueue.length = 0; d.advance(10);
+    const hp = (sx, sz) => Math.max(0, ...d.G.enemies.filter(e => e.kind === 'knight' && Math.hypot(e.route[0][0] - sx, e.route[0][1] - sz) < 1.5).map(e => e.max));
+    const last = out[out.length - 1], ne = d.fronts().find(o => o.id === 'NE');
+    return { out, eastHp: hp(last.x, last.z), neHp: hp(ne.x, ne.z) };
+  });
+  ok(push.out.every((c, i) => i === 0 || Math.hypot(c.x - 4, c.z) > Math.hypot(push.out[i - 1].x - 4, push.out[i - 1].z)) && push.out.every(c => c.theme === 3), 'pushing east, every outpost clears the camp, and it falls back further into the Ashlands', push.out);
+  ok(push.eastHp > push.neHp * 2, 'enemies from the far camp are much stronger than from a camp near home', push);
+  await dbg(page, d => d.teleport(d.G.fronts[0].camp.x - 30, d.G.fronts[0].camp.z));
+  await shot(page, 'far-east');
+  const inside = await dbg(page, (d) => {
+    d.teleport(4, 2); d.G.free = false; let worst = -1e9;
+    for (const [ix, iz] of [[1, 0.1], [0.3, 1], [-1, -0.7], [0.2, -1]]) for (let i = 0; i < 240; i++) { d.G.input.x = ix; d.G.input.z = iz; d.advance(1 / 30); worst = Math.max(worst, d.borderDist(d.G.king.x, d.G.king.z)); }
+    d.G.input.x = d.G.input.z = 0;
+    return worst;
+  });
+  ok(inside <= -1.1, 'the king can ride anywhere in his land but not past the border', inside);
   await page.evaluate(() => document.getElementById('cd-pause-btn').click());
   await page.evaluate(() => document.getElementById('cd-restart').click());
-  t = await dbg(page, d => d.terrain());
-  ok(!t.roads.some(r => r.startsWith('theme')), 'a new game starts with only the first roads', t.roads);
+  st = await dbg(page, d => ({ claims: d.claims().length, roads: d.terrain().roads, fronts: d.fronts().map(f => [f.id, f.open, f.x, f.z]), ruins: d.G.ruins.length, sites: d.pads().filter(p => p.id.startsWith('outpost')).length }));
+  ok(st.claims === 1 && !st.roads.some(r => r.startsWith('front-')) && st.ruins === 0 && st.fronts[0][2] === 56 && !st.fronts[3][1], 'a new game starts with the home land, the first camps and only the first roads', st);
 
   console.log('Playing');
   const play = await dbg(page, (d) => { d.teleport(4, 2); d.G.free = false; d.advance(45); return { t: Math.round(d.G.t), enemies: d.G.enemies.length, kills: d.G.kills, over: d.G.over }; });
