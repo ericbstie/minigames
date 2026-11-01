@@ -1,0 +1,160 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"><meta name=viewport content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Pick a Game</title>
+<link rel="icon" href="data:,">
+<link rel="stylesheet" href="css/base.css">
+<link rel="stylesheet" href="css/styles.css">
+</head>
+<body>
+
+<section id="hub">
+  <h1 class="outlined">Pick a game</h1>
+  <div class="hub-cards">
+    <button class="hub-card" type="button" data-game="ant-sort">
+      <img alt="" src="assets/img/ant-sort.jpg">
+      <div class="nm outlined">Ant Sort</div>
+      <div class="ds">Send ants out to carry a picture away, block by block. 20 levels.</div>
+    </button>
+    <button class="hub-card" type="button" data-game="castle-defender">
+      <img alt="" src="assets/img/castle-defender.jpg">
+      <div class="nm outlined">Castle Defender</div>
+      <div class="ds">Ride the king, build towers and walls, and keep the enemy from reaching your castle.</div>
+    </button>
+    <button class="hub-card" type="button" data-game="water-sort">
+      <img alt="" src="assets/img/water-sort.jpg">
+      <div class="nm outlined">Water Sort</div>
+      <div class="ds">Pour the colours between tubes until each tube holds one colour. 20 levels.</div>
+    </button>
+  </div>
+</section>
+
+<div id="app">
+  <canvas id="c"></canvas>
+  <button id="speed" type="button" aria-pressed="false" aria-label="Double speed">
+    <svg viewBox="0 0 40 24" aria-hidden="true"><path d="M3 2 L19 12 L3 22 Z M19 2 L35 12 L19 22 Z" fill="#fff" stroke="#3b3b3b" stroke-width="3.2" stroke-linejoin="round" paint-order="stroke"/></svg>
+    <span class="outlined" style="-webkit-text-stroke-color:#3b3b3b">2x</span>
+  </button>
+  <button id="info" type="button" aria-label="Menu">
+    <svg viewBox="0 0 40 40" aria-hidden="true"><circle cx="20" cy="20" r="16.5" fill="none" stroke="#fbf1ec" stroke-width="3.4"/><circle cx="20" cy="12.6" r="2.6" fill="#fbf1ec"/><rect x="17.6" y="17" width="4.8" height="13" rx="2.4" fill="#fbf1ec"/></svg>
+  </button>
+
+  <section id="levels" class="screen">
+    <button class="hub-back outlined" id="toMenu" type="button" hidden>Menu</button>
+    <h1 class="outlined">Ant Sort</h1>
+    <p class="sub">Send the ants out to carry every block into the hole.</p>
+    <div class="tally outlined" id="tally" aria-live="polite"><svg viewBox="0 0 24 24" class="star-on" aria-hidden="true"><path d="M12.0 2.3 L14.9 8.8 L22.0 9.6 L16.8 14.3 L18.2 21.3 L12.0 17.8 L5.8 21.3 L7.2 14.3 L2.0 9.6 L9.1 8.8 Z"/></svg><span id="tallyN">0 / 20</span></div>
+    <div class="cards" id="cards"></div>
+  </section>
+
+  <div id="menu" class="modal" hidden>
+    <div class="sheet">
+      <h2 class="outlined">How to play</h2>
+      <p>Tap a block in the front row to put it in a free slot. Ants come out for every block of that colour they can reach. Fill all five slots with blocks they can't reach and you're out of space.</p>
+      <div class="btns">
+        <button class="b sky outlined" id="mClose" type="button">Keep playing</button>
+        <button class="b plain outlined" id="mRestart" type="button">Restart level</button>
+        <button class="b plain outlined" id="mLevels" type="button">Levels</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="result" class="modal" hidden>
+    <div class="sheet">
+      <div class="badge" aria-hidden="true">
+        <div class="rays"></div>
+        <svg viewBox="0 0 100 100" class="star-on"><path class="s" d="M50.0 10.0 L62.3 37.0 L91.8 40.4 L70.0 60.5 L75.9 89.6 L50.0 75.0 L24.1 89.6 L30.0 60.5 L8.2 40.4 L37.7 37.0 Z"/><path class="shine" d="M38 30 L44 18 L47 33 Z"/><path class="crack" d="M54 14 L47 34 L57 46 L45 62 L52 76"/></svg>
+      </div>
+      <h2 class="outlined" id="rTitle">Level complete</h2>
+      <p id="rText"></p>
+      <div class="btns">
+        <button class="b go outlined" id="rMain" type="button">Next level</button>
+        <button class="b plain outlined" id="rLevels" type="button">Levels</button>
+      </div>
+    </div>
+  </div>
+  <canvas id="fx"></canvas>
+  <svg width="0" height="0" style="position:absolute" aria-hidden="true"><defs><linearGradient id="gold-grad" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#ffe680"/><stop offset="0.55" stop-color="#ffd43b"/><stop offset="1" stop-color="#f5a623"/></linearGradient></defs></svg>
+</div>
+
+
+<div id="cd-app" hidden>
+  <canvas id="cd-canvas"></canvas>
+  <div class="cd-top">
+    <button class="cd-pausebtn" id="cd-pause-btn" type="button" aria-label="Pause"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="6" y="5" width="4.2" height="14" rx="1.6"/><rect x="13.8" y="5" width="4.2" height="14" rx="1.6"/></svg></button>
+  </div>
+  <div class="cd-coinbox">
+    <svg class="cd-coin-ic" viewBox="0 0 100 100" aria-hidden="true"><circle cx="50" cy="50" r="46" fill="#f3b31c"/><circle cx="50" cy="50" r="38" fill="#ffd34a" stroke="#d9940f" stroke-width="5"/><path d="M28 64 L26 36 L38 48 L50 30 L62 48 L74 36 L72 64 Z" fill="#c9840c" stroke="#a96b06" stroke-width="3" stroke-linejoin="round"/><rect x="28" y="64" width="44" height="7" rx="2" fill="#c9840c"/></svg>
+    <span class="outlined" id="cd-coins">0</span>
+  </div>
+  <div class="cd-toast outlined" id="cd-toast" aria-live="polite"></div>
+  <div class="cd-joy" id="cd-joy" hidden><div class="cd-knob"></div></div>
+
+  <div id="cd-pausemenu" class="modal" hidden>
+    <div class="sheet">
+      <h2 class="outlined">Paused</h2>
+      <p>Enemies march on the castle and keep getting stronger. Collect the coins they drop and spend them on the pads. Building further out opens new roads.</p>
+      <div class="btns">
+        <button class="b sky outlined" id="cd-resume" type="button">Keep playing</button>
+        <button class="b plain outlined" id="cd-restart" type="button">Restart</button>
+        <button class="b plain outlined" id="cd-menu1" type="button">Main menu</button>
+      </div>
+    </div>
+  </div>
+  <div id="cd-over" class="modal cd-over" hidden>
+    <div class="sheet">
+      <h2 class="outlined">The castle has fallen</h2>
+      <p id="cd-over-text"></p>
+      <div class="btns">
+        <button class="b sky outlined" id="cd-retry" type="button">Try again</button>
+        <button class="b plain outlined" id="cd-menu2" type="button">Main menu</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div id="ws-app" hidden>
+  <section class="ws-screen ws-picker" id="ws-picker">
+    <div class="ws-col">
+      <button class="ws-back" id="ws-pick-back" type="button" aria-label="Main menu"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M14.6 5.2 8 12l6.6 6.8"/></svg></button>
+      <div class="ws-heading"><span class="ws-pill">20 levels</span><h1 class="ws-title">Water Sort</h1></div>
+      <div class="ws-grid" id="ws-grid"></div>
+    </div>
+  </section>
+  <section class="ws-screen ws-play" id="ws-play" hidden>
+    <canvas id="ws-canvas"></canvas>
+    <div class="ws-col ws-head">
+      <button class="ws-back" id="ws-back" type="button" aria-label="Levels"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M14.6 5.2 8 12l6.6 6.8"/></svg></button>
+      <div class="ws-heading"><span class="ws-pill" id="ws-diff">Easy</span><h2 class="ws-title" id="ws-level">Level 1</h2></div>
+      <button class="ws-round ws-restart" id="ws-restart" type="button" aria-label="Restart level"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7.4 7.6A6.9 6.9 0 1 1 5.2 12.6"/><path class="fill" d="M3.4 4.4l6.4.4-2.6 5.8Z"/></svg></button>
+    </div>
+    <p class="ws-note" id="ws-note" aria-live="polite"></p>
+    <div class="ws-col ws-foot">
+      <button class="ws-tool ws-undo" id="ws-undo" type="button" disabled><span class="ws-round"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9.4 4.6 4.6 9.4l4.8 4.8"/><path d="M5.2 9.4h9a5 5 0 0 1 0 10H9.6"/></svg></span><span class="ws-lab">Undo</span></button>
+      <button class="ws-tool ws-hint" id="ws-hint" type="button"><span class="ws-round"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 7.2a4.6 4.6 0 0 0-2.7 8.3c.5.4.8 1 .8 1.6v.7h3.8v-.7c0-.6.3-1.2.8-1.6A4.6 4.6 0 0 0 12 7.2Z"/><path d="M10.4 20.3h3.2M12 2.6v1.8M5.2 5.4l1.3 1.3M18.8 5.4l-1.3 1.3M2.9 11.6h1.8M19.3 11.6h1.8"/></svg></span><span class="ws-badge" id="ws-hints">3</span><span class="ws-lab">Hint</span></button>
+    </div>
+    <div class="ws-win" id="ws-win" hidden>
+      <div class="ws-card">
+        <span class="ws-pill" id="ws-win-pill">Level 1</span>
+        <h3 class="ws-title">Level complete</h3>
+        <div class="ws-star" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="m12 2.6 2.8 5.9 6.4.8-4.7 4.4 1.2 6.4L12 17l-5.7 3.1 1.2-6.4-4.7-4.4 6.4-.8Z"/></svg></div>
+        <button class="ws-btn ws-gold" id="ws-next" type="button">Next level</button>
+        <button class="ws-btn ws-grey" id="ws-levels" type="button">Levels</button>
+      </div>
+    </div>
+  </section>
+</div>
+
+
+
+<script src="js/hub.js"></script>
+<script type="importmap">{"imports": {"three": "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js", "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/"}}</script>
+<script src="js/ant-sort-logic.js"></script>
+<script src="js/ant-sort-levels.js"></script>
+<script type="module" src="js/ant-sort.js"></script>
+<script type="module" src="js/castle-defender.js"></script>
+<script src="js/water-sort.js"></script>
+<script type="module" src="js/main.js"></script>
+</body>
+</html>
