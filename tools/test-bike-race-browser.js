@@ -27,7 +27,7 @@ const SAVE_18 = { stars: stars(18), best: bestFor(stars(18)), name: 'Eric' };
 const SAVE_8 = { stars: { 'clover-2': 3, 'clover-3': 3, 'clover-4': 2 }, best: { 'clover-2': 17, 'clover-3': 17, 'clover-4': 22 } };
 
 async function main() {
-  const server = spawn('python3', ['-m', 'http.server', String(PORT), '--bind', '127.0.0.1', '--directory', ROOT], { stdio: 'ignore' });
+  const server = spawn('python3', [path.join(__dirname, 'serve.py')], { env: { ...process.env, PORT: String(PORT), HOST: '127.0.0.1' }, stdio: 'ignore' });
   try {
     for (let i = 0; i < 50; i++) { try { await fetch(BASE); break; } catch (e) { await wait(100); } }
     const browser = await chromium.launch();

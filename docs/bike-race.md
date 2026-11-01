@@ -31,32 +31,59 @@ either from a web page.
 On a computer the game shows a "Made for phones" screen with the page address. Its "Try it here with the
 keyboard" button is for testing: ↑ ride, ↓ brake, ← lean back, → lean forward, R restart, Esc pause.
 
+## Racing other people
+
+Multiplayer on the home menu races other phones live, on the same track at the same time. One phone creates a
+room on a track and gets a 4-letter code. The others type the code, tap the room in the "Open rooms" list, or
+open the invite link (the Invite button shares it on phones; elsewhere it copies it). Links look like
+`https://192.168.1.20:8443/#bike-race/BKTZ`. Up to six riders fit in a room.
+
+- The host picks the track and starts the race. Everyone gets 3, 2, 1, GO at the same moment.
+- Each rider rides their own garage bike. The others show up as see-through bikes with name tags, as dots on the
+  progress bar, and in the place counter (2nd / 3).
+- A crash puts you back at the last checkpoint flag with the clock still running.
+- When the first rider finishes, the rest have 30 seconds ("Race ends in 23s" under the clock), then the race
+  ends and everyone gets the standings. Anyone who hadn't finished is DNF. Every rider's time is their own
+  phone's race clock, so a slow connection doesn't cost time.
+- The winner gets a win next to their name in the room. The host can race again from the results; the others can
+  go back to the room, where the last race's standings stay up.
+- "Leave race" in the pause menu gives up the race but stays in the room. Leave room, or Back, leaves it.
+- If the host leaves, the next rider to have joined becomes host.
+- A phone that loses its connection (screen locked, another app opened, Wi-Fi blip) reconnects by itself and
+  keeps its place for 45 seconds. A finish made while offline is sent when it's back.
+
+When the page has no race server (opened from a plain static host), Multiplayer says so and offers "Race the
+computer" instead: one to three computer riders on any track, which works anywhere.
+
 ## Trying it on a phone
 
 ```sh
 mise run phone
 ```
 
-This serves the site over https on your Wi-Fi and prints the address to open on the phone (port 8443). It makes
-a self-signed certificate in `.cert/` the first time, using the `openssl` command, so the phone warns that the
-connection is not private. That is expected here: tap "Advanced" then "Proceed" on Android, or "Show Details"
-then "visit this website" on iPhone. `mise run app` works too, but over plain http from a phone it falls back
-to the lean buttons.
+This serves the site over https on your Wi-Fi, with the race server, and prints the address to open on the phone
+(port 8443). Friends on the same Wi-Fi open the same address to race you. It makes a self-signed certificate in
+`.cert/` the first time, using the `openssl` command, so each phone warns that the connection is not private.
+That is expected here: tap "Advanced" then "Proceed" on Android, or "Show Details" then "visit this website" on
+iPhone. `mise run app` works too, but it only listens on this computer, and over plain http a phone falls back to
+the lean buttons.
 
 ## Files
 
 ```
 public/js/bike-race-core.js   physics, track builder, worlds and levels, bikes, computer rider, ghost encoding
 public/js/bike-race-art.js    canvas drawing: themes, skies, parallax, terrain, props, loops, bikes, riders, particles
-public/js/bike-race-net.js    WebSocket client for live races (not switched on yet)
+public/js/bike-race-net.js    the connection to the race server: WebSocket or event stream, reconnecting
 public/js/bike-race.js        the game: saves, sound, tilt and touch input, camera and loop, sessions, HUD, menus
 public/index.html             #br-app markup (canvas, HUD, touch areas, screens, modals) and the script tags
 public/css/styles.css         the "Bike Race" section, all classes start with br-
 public/js/hub.js              routes #bike-race and #bike-race/<code> to the game
 public/assets/img/bike-race.jpg   menu card picture
+tools/serve.py                the site server and race server behind `mise run app` and `mise run phone`
 tools/check-bike-levels.js    proves every bike can finish every level and suggests par times
 tools/test-bike-race-browser.js   phone-sized browser tests for the garage and the sheets around it
-tools/phone-server.py         the https server behind `mise run phone`
+tools/test-bike-race-online.js    live races between phones in the browser, and the no-server fallback
+tools/test-race-server.js     the race server's messages, without a browser
 ```
 
 ## How the code fits together
@@ -150,16 +177,31 @@ node tools/test-bike-race-browser.js            # about a minute
 node tools/test-bike-race-browser.js --keep     # also saves screenshots to tools/.shots/
 ```
 
-It serves `public/` on port 8123 (`BR_PORT` changes it) and opens the game in headless Chromium as a touch
-phone held sideways. It checks the garage with no stars and with unlocked bikes, that picks survive a reload,
+It serves `public/` with `tools/serve.py` on port 8123 (`BR_PORT` changes it) and opens the game in headless
+Chromium as a touch phone held sideways. It checks the garage with no stars and with unlocked bikes, that picks survive a reload,
 that bad saves are put right, the round trips from the pause, crash and result sheets, the unlock card, that
 every bike finishes a level in the page, and that the garage and pause sheet fit without scrolling at six phone
 sizes from 568x320 to 932x430. It needs Playwright (`require('playwright')`).
+
+```sh
+node tools/test-race-server.js                  # the race server on its own (about 10 s, Node 22 or newer)
+node tools/test-bike-race-online.js             # live races between phones (about two minutes)
+node tools/test-bike-race-online.js --keep      # also saves screenshots of the room, a race and the results
+```
+
+`test-race-server.js` talks to the server over a WebSocket and the event stream: static files, rooms and codes,
+a whole race with results, the closing clock, dropping out and coming back, and the host passing on.
+`test-bike-race-online.js` plays the real page as two phones with the computer rider steering: create a room, join
+through the invite link, race, results on both, race again, leave a race, drop the connection mid-race and come
+back, the room list, the host leaving. Then the same over https with one phone forced onto the event stream, a
+page with no race server falling back to computer riders, and that the room fits at 568x320. It starts its own
+servers on ports 8126 to 8128.
 
 Address options for testing in a browser:
 
 - `?autopilot` lets the computer rider play every level you start, and skips the "Made for phones" screen.
 - `?keyboard` skips the "Made for phones" screen.
+- `?net=ws` or `?net=sse` uses only that way of reaching the race server.
 
 ## Saved data
 
@@ -171,25 +213,71 @@ to 16 characters.
 Each level's ghost is stored under `bikerace.ghost.v1.<level id>`, for example `bikerace.ghost.v1.clover-1`,
 as `{ time, bike, f }`. `bike` is the bike that set it, so the ghost is drawn on that bike, in a pale paint.
 
-## Not finished yet: live races (step 4)
+## Race server
 
-`FEATURES` at the top of `bike-race.js` is `{ garage: true, multiplayer: false }`. With `multiplayer` off, the
-home menu's Multiplayer button says "Coming soon".
+`tools/serve.py` is one Python process, standard library only, behind both mise tasks. It serves `public/` (with
+ETags, so unchanged files come back as 304) and runs the rooms. `python tools/serve.py` listens on
+127.0.0.1:8000; `--https` listens on every address on port 8443 with the certificate in `.cert/`. `PORT` and
+`HOST` change either. It prints a line for each room opened, joined and closed, each race and its results.
 
-What step 4 needs:
+The server only keeps rooms and passes messages on. Every phone runs its own bike in its own simulation, sends
+its pose 20 times a second, and draws the others from their poses. Bikes don't touch each other.
 
-- A race server that serves `public/` and accepts WebSockets on `/ws`. It replaces `python -m http.server` in
-  `mise run app`, and needs an https mode for phones, like `mise run phone`. `tools/phone-server.py` already
-  makes the self-signed certificate in `.cert/` and finds the Wi-Fi address, so reuse that logic.
-- Rooms with 4-letter codes. `hub.js` already routes `#bike-race/<code>` to the game, so a shared link joins.
-- Races against computer riders when no server is reachable. The `cpu` session mode and `botInput` exist.
-- The client side is drafted and untested against a server: `bike-race-net.js` (connects to `/ws` on the same
-  host, `wss:` on https, gives up after 4 s) and the "Live races" section of `bike-race.js`.
-  - It sends `hello` (name, paint, bike), `list`, `create` (level), `join` (code), `leave`, `level`, `start`,
-    `state` (position about 20 times a second) and `finish` (time).
-  - It expects `welcome`, `rooms`, `room`, `left`, `error`, `countdown`, `state`, `finished` and `results`.
-- The garage is already wired for it: `sendProfile()` resends name, paint and bike when any of them change, and
-  the garage buttons are hidden during an online race.
+### Connections
+
+The game connects when Multiplayer opens, and drops the connection when you leave Bike Race.
+
+- A WebSocket at `/ws` first. If it won't open, an event stream from `GET /net/events` (its first message is
+  `{ t: 'conn', sid }`) plus `POST /net/send?sid=...` with a JSON array of messages. Both carry the same
+  messages. The fallback is there because an iPhone may refuse a WebSocket to a self-signed certificate even
+  after the page was allowed. Which one is in use: `BikeRaceNet.transport`.
+- The game pings every 5 s. The server drops a connection that says nothing for 30 s; the game drops one that
+  hears nothing for 15 s, and checks straight away when the page shows again.
+- A dropped connection retries by itself (`Net.retrying`, "Reconnecting…"). `welcome` hands out a key, kept in
+  sessionStorage, and `hello` sends it back, so the server gives the rider their place back if they return within
+  45 s (`AWAY`). The same key from a second connection takes over and the first gets `replaced`.
+- The server refuses a WebSocket or stream from a page on another site (the Origin must match the Host).
+
+### Messages
+
+All are JSON objects with a type in `t`.
+
+| The game sends | |
+|---|---|
+| `hello` name, paint, bike, key | first, and again when the name, paint or bike changes |
+| `list` | asks for the open rooms (every 3 s in the lobby) |
+| `create` level · `join` code · `leave` | rooms |
+| `level` level · `start` | host only |
+| `state` p, c | the pose `[x, y, angle, wheel spin, lean, flags]` (flags: 1 crashed, 2 finished) and the race clock |
+| `finish` time · `retire` | crossed the line, or gave up the race but stays in the room |
+| `ping` c | answered with `pong` |
+
+| The server sends | |
+|---|---|
+| `welcome` id, key, resumed, share | after the first `hello`; `share` is its Wi-Fi address when it listens there |
+| `rooms` rooms | code, host name, level, count, state |
+| `room` code, host, level, state, players, racers, ending, last | whenever anything in the room changes; state is `lobby`, `countdown` or `race`; players have id, name, paint, bike, wins, away; `last` is the last race's results |
+| `left` · `error` msg · `replaced` | |
+| `countdown` level, racers, seconds | the race starts; GO is `seconds` later |
+| `state` id, p, c | another racer's pose |
+| `finished` id, time · `ending` seconds | someone crossed the line; the closing clock started |
+| `results` level, results | id, name, paint, bike, time (null for DNF), fastest first |
+
+### In the game
+
+- `startOnlineRace` makes an `online` session with an entry in `S.remote` for each other racer: a buffer of
+  poses, their look from the room, and their finish time.
+- Remote poses carry the sender's race clock `c`. `r.off` maps it onto this phone's clock using the quickest
+  delivery seen, and `remotePose` draws each rider 0.1 s back in time, blending between the poses either side, so
+  network jitter doesn't make bikes stutter.
+- A crashed rider's bike is drawn without its rider and faded until they're back at a checkpoint. A rider whose
+  poses stop for 3 s fades too.
+- Finish times are each phone's own race clock (`bike.time` less flip bonuses), so lag never changes a result.
+- If the connection was down when the results came, the `last` field of the next `room` message shows them.
+- Live race rules on the server: `COUNTDOWN` 3 s, `ENDING` 30 s after the first finish, `RACE_LIMIT` 300 s, six
+  riders a room. The tests shorten them with the `BR_COUNTDOWN`, `BR_ENDING` and `BR_AWAY` variables.
+- The garage buttons are hidden during a live race, since the bike is fixed for the race. `sendProfile()` sends a
+  new name, paint or bike to the room.
 
 ## Gotchas
 
@@ -210,3 +298,28 @@ What step 4 needs:
   kicker's face, which stops it dead or throws it on its head. Leave at least 8 m of flat before the next kicker.
   That is why Slag Slide, Core Meltdown and Ember Gauntlet have the extra flats they do.
 - Changing a bike's tuning changes every level for it. Run `node tools/check-bike-levels.js --robust` after.
+- A phone stops a page in the background, so its bike stops too: a locked screen during a live race pauses that
+  rider's clock and bike, and the others see them fade until they come back.
+- Invite links use the page's own address. A page opened as localhost would hand out a link nobody else can open,
+  so then the game uses the server's Wi-Fi address from `welcome` (only when the server listens on the network).
+- A select box is as wide as its longest option unless its panel is `box-sizing: border-box` and the column can
+  shrink (`min-width: 0`). That is why `.br-panel` sets both; without them the multiplayer screen scrolled
+  sideways at 568 px.
+
+## Next: polish and ship (step 5)
+
+Live races are done and tested in headless Chromium, but never on real phones. What step 5 should cover:
+
+- A real phone pass on an iPhone and an Android phone over `mise run phone`: tilt feel (full lean at 24°, the
+  2.5° dead zone), the certificate warning flow, and a live race between two phones. Note which transport each
+  phone ends up on (`BikeRaceNet.transport` in the console, or add it to the room screen): if iPhones use the
+  event stream, check the poses still look smooth.
+- A full browser test pass: `node tools/test-bike-race-browser.js`, `node tools/test-bike-race-online.js`,
+  `node tools/test-race-server.js` and `node tools/check-bike-levels.js --robust`, plus a look at every screen at
+  the six phone sizes the garage test uses.
+- The menu picture for the Pick a Game screen (`public/assets/img/bike-race.jpg`) is a render from step 1 of one
+  rider and a ghost. It could show a live race now, with riders in different paints and name tags.
+- Rough edges seen while building step 4: the room code and track are the only things a rider joining mid-race
+  sees (no way to watch the race on); the "Your name" field and the garage name are the same setting in two
+  places; a host who drops out keeps the room for 45 s before the next rider can start.
+

@@ -2,12 +2,9 @@
 python = "3.12"
 
 [tasks.app]
-description = "Serve the Pick a Game site locally (PORT defaults to 8000)"
-run = '''
-echo "Pick a Game running at http://localhost:${PORT:-8000}"
-python -m http.server "${PORT:-8000}" --bind "${HOST:-127.0.0.1}" --directory public
-'''
+description = "Serve the Pick a Game site and the Bike Race race server locally (PORT defaults to 8000)"
+run = "python tools/serve.py"
 
 [tasks.phone]
-description = "Serve the site over https on your Wi-Fi, so Bike Race can use tilt on a phone (PORT defaults to 8443)"
-run = "python tools/phone-server.py"
+description = "Serve the site over https on your Wi-Fi, so Bike Race can use tilt and race other phones (PORT defaults to 8443)"
+run = "python tools/serve.py --https"
