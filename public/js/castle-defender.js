@@ -2,6 +2,7 @@
 // and spend them on pads to grow an army, towers, walls, cannons and weapons.
 // Building further from the castle opens new roads with tougher enemies.
 import * as THREE from 'three';
+import { BIOME, HOME, biomeWeights, biomeAt, cliffEdge, cliffEdge2, CLIFF, MESAS, fbm, cellSeed, smoothstep } from './castle-defender-world.js';
 
 // ---------------------------------------------------------------- tuning ----
 const HX = 14, HZ = 12;                       // walled base: x in [-HX,HX], z in [-HZ,HZ]
@@ -63,9 +64,9 @@ const PATHS = [P0, P1, P2,
 const PATH_OPEN = [0, 8, 20];   // seconds after the start that each of the first three roads opens
 const THEMES = [
   { name: 'Canyon', hp: 1, value: 1, speed: 1 },
-  { name: 'Frozen Pass', ring: 1, path: 3, center: [17, -70], size: 48, hp: 1.7, value: 1.5, speed: 1.08 },
-  { name: 'Mire', ring: 2, path: 4, center: [65, 55], size: 48, hp: 2.6, value: 2.1, speed: 0.95 },
-  { name: 'Ashlands', ring: 3, path: 5, center: [76, -2], size: 48, hp: 3.8, value: 2.8, speed: 1.05 },
+  { name: 'Frozen Pass', ring: 1, path: 3, hp: 1.7, value: 1.5, speed: 1.08 },
+  { name: 'Mire', ring: 2, path: 4, hp: 2.6, value: 2.1, speed: 0.95 },
+  { name: 'Ashlands', ring: 3, path: 5, hp: 3.8, value: 2.8, speed: 1.05 },
 ];
 const PATH_THEME = [0, 0, 0, 1, 2, 3];
 // enemy sizes; `cost` is how much of a group's budget one of them uses
@@ -574,14 +575,6 @@ function initRenderer() {
   fontReady = document.fonts ? document.fonts.load('80px "Lilita One"').catch(() => {}) : Promise.resolve();
 }
 
-// worn trail bands, as on the sand
-function strokeTrail(g, pts, k) {
-  for (const [w, col, bl] of [[3.0 * k, 'rgba(222,190,148,0.55)', 0.35 * k], [2.3 * k, 'rgba(226,196,156,0.85)', 0.12 * k]]) {
-    g.strokeStyle = col; g.lineWidth = w; g.lineCap = 'round'; g.lineJoin = 'round'; g.filter = `blur(${bl | 0}px)`;
-    smoothLine(g, pts); g.stroke();
-  }
-  g.filter = 'none';
-}
 function smoothLine(g, t) {
   g.beginPath(); g.moveTo(t[0][0], t[0][1]);
   for (let i = 1; i < t.length - 1; i++) { const mx = (t[i][0] + t[i + 1][0]) / 2, my = (t[i][1] + t[i + 1][1]) / 2; g.quadraticCurveTo(t[i][0], t[i][1], mx, my); }
@@ -589,156 +582,326 @@ function smoothLine(g, t) {
 }
 
 // ---------------------------------------------------------------- terrain ----
-function buildTerrain() {
-  const W = 240, X0 = 20, PX = 2048, k = PX / W;
-  const toPx = (x, z) => [(x - X0 + W / 2) * k, (z + W / 2) * k];
-  const R = mulberry(11);
-  const tex = canvasTex(PX, PX, (g) => {
-    g.fillStyle = C.sand; g.fillRect(0, 0, PX, PX);
-    // darker and lighter sand patches
-    for (let i = 0; i < 170; i++) {
-      const [x, y] = [R() * PX, R() * PX], r = 30 + R() * 120;
-      const gr = g.createRadialGradient(x, y, 0, x, y, r);
-      const c = R() < 0.5 ? 'rgba(170,125,80,0.16)' : 'rgba(225,190,140,0.14)';
-      gr.addColorStop(0, c); gr.addColorStop(1, 'rgba(0,0,0,0)'); g.fillStyle = gr; g.fillRect(x - r, y - r, r * 2, r * 2);
-    }
-    // the three first roads plus a few cross trails; the outer roads are drawn when they open
-    const trails = PATHS.slice(0, 3).map(p => p.map(([x, z]) => toPx(x, z)));
-    trails.push([[-12, 30], [-4, 22], [6, 26], [20, 34], [34, 48]].map(([x, z]) => toPx(x, z)));
-    trails.push([[20, -46], [26, -30], [40, -20], [62, -18]].map(([x, z]) => toPx(x, z)));
-    trails.push([[22, 4], [30, 14], [34, 26], [46, 40]].map(([x, z]) => toPx(x, z)));
-    trails.push([[-14, -30], [-6, -22], [0, -30], [8, -36], [16, -50]].map(([x, z]) => toPx(x, z)));
-    for (const t of trails) strokeTrail(g, t, k);
-    // fine grain
-    for (let i = 0; i < 11000; i++) { g.fillStyle = R() < 0.5 ? 'rgba(120,80,40,0.05)' : 'rgba(255,240,210,0.05)'; g.fillRect(R() * PX, R() * PX, 3, 3); }
-  });
-  const ground = new THREE.Mesh(new THREE.PlaneGeometry(W, W), new THREE.MeshLambertMaterial({ map: tex }));
-  ground.rotation.x = -Math.PI / 2; ground.position.x = X0; ground.receiveShadow = true;
-  scene.add(ground);
+// The ground has no edge. It is made in square chunks around the king as he rides and thrown away again behind
+// him. Every chunk is painted from the same functions of the ground position (castle-defender-world.js), so
+// chunks meet without seams and come back the same: biome colours that blend into each other, patches, mire
+// pools, lava cracks, ice, the roads and the decor. The canyon wall is made the same way, in strips along z.
+const CH = 32, CH_PX = 256, CH_K = CH_PX / CH, FIELD = 32, MARGIN = 16;
+const NEAR = 84, FAR = 150;        // chunks within NEAR paces of the king are made; past FAR they are thrown away
+const STRIP = 48, STRIP_NEAR = 120, STRIP_FAR = 200, CLIFF_DEPTH = 220;
+const HOME_DECOR_R = 50;           // inside this the canyon keeps its hand-placed trees, rocks and barricades
+const hexRGB = (h) => [parseInt(h.slice(1, 3), 16), parseInt(h.slice(3, 5), 16), parseInt(h.slice(5, 7), 16)];
+// per biome, in BIOME order: ground, patch colours, roads, wall colours, decor (kind, share) and how much of it
+const LOOKS = [
+  { base: '#ba8b5b', a: 'rgba(170,125,80,0.16)', b: 'rgba(225,190,140,0.14)', road: [222, 190, 148, 0.55], road2: [226, 196, 156, 0.85], dust: '#e6cba2',
+    top: '#f1c98f', side: '#6e4b35', decor: [['tree', 0.45], ['rock', 0.35], ['barricade', 0.2]], decorN: 1.4 },
+  { base: '#e9f0f5', a: 'rgba(160,190,218,0.32)', b: 'rgba(255,255,255,0.7)', road: [168, 186, 204, 1], road2: [190, 205, 219, 1], dust: '#ffffff',
+    top: '#f4f8fb', side: '#7f93a6', decor: [['pine', 0.5], ['iceRock', 0.3], ['drift', 0.2]], decorN: 5.5 },
+  { base: '#62743a', a: 'rgba(52,72,30,0.5)', b: 'rgba(132,156,72,0.4)', road: [107, 85, 55, 1], road2: [125, 100, 67, 1], dust: '#9ab05a',
+    top: '#7c8e45', side: '#4f4632', decor: [['swampTree', 0.35], ['reeds', 0.35], ['mushrooms', 0.15], ['log', 0.15]], decorN: 6 },
+  { base: '#3e393a', a: 'rgba(22,19,21,0.55)', b: 'rgba(96,88,84,0.4)', road: [94, 86, 83, 1], road2: [108, 100, 96, 1], dust: '#5a5050',
+    top: '#4c4446', side: '#2a2527', decor: [['obsidian', 0.42], ['charred', 0.22], ['lava', 0.18], ['vent', 0.18]], decorN: 5 },
+];
+LOOKS.forEach(L => {
+  L.rgb = hexRGB(L.base); L.topC = new THREE.Color(L.top); L.sideC = new THREE.Color(L.side);
+  L.a0 = L.a.replace(/[\d.]+\)$/, '0)'); L.b0 = L.b.replace(/[\d.]+\)$/, '0)');
+});
+const wTmp = new Float32Array(4);
+// pick a biome at random in proportion to its weight at (x, z): where two biomes blend, both show up
+function pickBiome(x, z, u) {
+  biomeWeights(x, z, wTmp);
+  for (let i = 0; i < 4; i++) { if ((u -= wTmp[i]) <= 0) return i; }
+  return 0;
+}
+const pickKind = (list, u) => { const total = list.reduce((s, d) => s + d[1], 0); u *= total; for (const [k, w] of list) { if ((u -= w) <= 0) return k; } return list[0][0]; };
+const segDist = (px, pz, ax, az, bx, bz) => { const dx = bx - ax, dz = bz - az, L = dx * dx + dz * dz; const t = L ? Math.max(0, Math.min(1, ((px - ax) * dx + (pz - az) * dz) / L)) : 0; return Math.hypot(px - ax - t * dx, pz - az - t * dz); };
+const pathDist = (x, z, path) => { let d = 1e9; for (let i = 0; i < path.length - 1; i++) d = Math.min(d, segDist(x, z, path[i][0], path[i][1], path[i + 1][0], path[i + 1][1])); return d; };
 
-  // canyon cliffs on the west, light tops and dark faces
-  const cliffMat = [new THREE.MeshLambertMaterial({ color: C.cliffTop }), new THREE.MeshLambertMaterial({ color: C.cliffSide })];
-  // a flat top plus vertical walls along every edge; every triangle is wound to face outward
-  const addCliff = (pts, h, y0 = 0) => {
-    const cx = pts.reduce((s, p) => s + p[0], 0) / pts.length, cz = pts.reduce((s, p) => s + p[1], 0) / pts.length;
-    const tri = (out, a, b, c, want) => {
-      const ux = b[0] - a[0], uy = b[1] - a[1], uz = b[2] - a[2], vx = c[0] - a[0], vy = c[1] - a[1], vz = c[2] - a[2];
-      const n = [uy * vz - uz * vy, uz * vx - ux * vz, ux * vy - uy * vx];
-      if (n[0] * want[0] + n[1] * want[1] + n[2] * want[2] < 0) [b, c] = [c, b];
-      out.push(...a, ...b, ...c);
-    };
-    const top = [], side = [], y1 = y0 + h;
-    const idx = THREE.ShapeUtils.triangulateShape(pts.map(([x, z]) => new THREE.Vector2(x, z)), []);
-    for (const [i, j, k] of idx) tri(top, [pts[i][0], y1, pts[i][1]], [pts[j][0], y1, pts[j][1]], [pts[k][0], y1, pts[k][1]], [0, 1, 0]);
-    for (let i = 0; i < pts.length; i++) {
-      const [x0, z0] = pts[i], [x1, z1] = pts[(i + 1) % pts.length];
-      const out = [(x0 + x1) / 2 - cx, 0, (z0 + z1) / 2 - cz];
-      tri(side, [x0, y0, z0], [x1, y0, z1], [x1, y1, z1], out);
-      tri(side, [x0, y0, z0], [x1, y1, z1], [x0, y1, z0], out);
-    }
-    for (const [arr, m] of [[top, cliffMat[0]], [side, cliffMat[1]]]) {
-      const g = new THREE.BufferGeometry(); g.setAttribute('position', new THREE.Float32BufferAttribute(arr, 3)); g.computeVertexNormals();
-      const mesh = new THREE.Mesh(g, m); mesh.castShadow = true; mesh.receiveShadow = true; scene.add(mesh);
-    }
+function initTerrain() {
+  const TR = {
+    chunks: new Map(), strips: new Map(), feats: new Map(), roads: [], spare: [], ventT: 0, made: 0, ms: 0,
+    plane: new THREE.PlaneGeometry(CH, CH).rotateX(-Math.PI / 2),
+    lavaGeo: [0, 1, 2].map(i => new THREE.CylinderGeometry(1.1 + i * 0.25, 1.1, 0.05, 16)),
   };
-  const edge = [];
-  for (let z = -119; z <= 119; z += 4) edge.push([-17.6 - 0.9 * Math.sin(z * 0.21) - 0.7 * Math.sin(z * 0.53) - (Math.abs(z) > 24 ? (Math.abs(z) - 24) * 0.35 : 0) - (Math.abs(z % 16) < 4 ? 1.5 : 0), z]);
-  addCliff([[-110, -119], ...edge, [-110, 119]], 3.2);
-  const edge2 = edge.map(([x, z]) => [x - 9 - 2 * Math.sin(z * 0.4) + (Math.abs((z + 8) % 20) < 6 ? 2.5 : 0), z]);
-  addCliff([[-110, -119], ...edge2, [-110, 119]], 2.4, 3.2);
-  // a few mesas in the north-west and south-west corners
-  addCliff([[-24, -42], [-10, -46], [-4, -56], [-16, -66], [-30, -58]], 4.2);
-  addCliff([[-24, 44], [-10, 48], [-6, 60], [-20, 68], [-30, 58]], 4.2);
-
-  // dead trees, rocks and broken barricades
-  const deco = new THREE.MeshLambertMaterial({ vertexColors: true });
-  const add = (geo, x, z, ry = 0, s = 1) => { const m = new THREE.Mesh(geo, deco); m.position.set(x, 0, z); m.rotation.y = ry; m.scale.setScalar(s); m.castShadow = true; scene.add(m); };
+  const cv = (w, h = w) => { const c = document.createElement('canvas'); c.width = w; c.height = h; return c; };
+  TR.fieldCv = [cv(FIELD), cv(FIELD), cv(FIELD)];
+  TR.fieldG = TR.fieldCv.map(c => c.getContext('2d', { willReadFrequently: true }));
+  TR.fieldImg = TR.fieldG.map(g => g.createImageData(FIELD, FIELD));
+  TR.maskCv = cv(CH_PX + MARGIN * 2); TR.maskG = TR.maskCv.getContext('2d');
+  world.terrain = TR;
+  // the hand-placed canyon around the castle, and the two mesas by the wall
+  const deco = world.vmat, home = [];
+  const add = (geo, x, z, ry = 0, s = 1) => { const m = new THREE.Mesh(geo, deco); m.position.set(x, 0, z); m.rotation.y = ry; m.scale.setScalar(s); m.castShadow = true; scene.add(m); home.push(m); };
   const trees = [treeGeo(1), treeGeo(2), treeGeo(3)];
   [[30, 16], [18, -34], [42, -34], [16, 37], [-12, 24], [44, 20], [10, -30], [34, 44], [26, 42], [36, -12]].forEach(([x, z], i) => add(trees[i % 3], x, z, i, 1 + (i % 3) * 0.12));
   const rock = vc(new THREE.DodecahedronGeometry(0.7, 0), '#9a9a9e');
   [[28, -20, 1], [29.5, -19, 0.6], [-12, 19, 0.8], [38, 4, 1.1], [12, 25, 0.7], [-15.5, -17, 0.9], [20, -38, 1.2]].forEach(([x, z, s]) => add(rock, x, z, x, s));
   const bar = barricadeGeo();
   [[19, -18, 0.4], [30, 4, -0.5], [17, 17, 0.9], [-12, -18, -0.3], [33, -15, 1.2], [8, 28, 0.2], [-8, 24, 1.4]].forEach(([x, z, r]) => add(bar, x, z, r));
+  TR.homeDecor = home;
+  for (const pts of MESAS) addMesa(pts);
+  // the roads drawn from the start: the three first roads and a few worn cross trails
+  PATHS.slice(0, 3).forEach((p, i) => addRoad('road' + i, p));
+  [[[-12, 30], [-4, 22], [6, 26], [20, 34], [34, 48]], [[20, -46], [26, -30], [40, -20], [62, -18]], [[22, 4], [30, 14], [34, 26], [46, 40]], [[-14, -30], [-6, -22], [0, -30], [8, -36], [16, -50]]]
+    .forEach((p, i) => addRoad('trail' + i, p));
+}
+// a flat-topped block of canyon rock: a top and walls, every face wound to face outward, coloured by its biome
+function addMesa(pts, h = 4.2) {
+  const cx = pts.reduce((s, p) => s + p[0], 0) / pts.length, cz = pts.reduce((s, p) => s + p[1], 0) / pts.length;
+  biomeWeights(cx, cz, wTmp);
+  const top = blendColor(wTmp, 'topC'), side = blendColor(wTmp, 'sideC'), pos = [], col = [];
+  const idx = THREE.ShapeUtils.triangulateShape(pts.map(([x, z]) => new THREE.Vector2(x, z)), []);
+  for (const [i, j, k] of idx) facet(pos, col, [pts[i][0], h, pts[i][1]], [pts[j][0], h, pts[j][1]], [pts[k][0], h, pts[k][1]], [0, 1, 0], top, top, top);
+  for (let i = 0; i < pts.length; i++) {
+    const [x0, z0] = pts[i], [x1, z1] = pts[(i + 1) % pts.length], out = [(x0 + x1) / 2 - cx, 0, (z0 + z1) / 2 - cz];
+    facet(pos, col, [x0, 0, z0], [x1, 0, z1], [x1, h, z1], out, side, side, side);
+    facet(pos, col, [x0, 0, z0], [x1, h, z1], [x0, h, z0], out, side, side, side);
+  }
+  const mesh = solid(pos, col); scene.add(mesh);
+}
+function blendColor(w, key) { const c = new THREE.Color(0, 0, 0); for (let i = 0; i < 4; i++) if (w[i] > 0.001) { c.r += LOOKS[i][key].r * w[i]; c.g += LOOKS[i][key].g * w[i]; c.b += LOOKS[i][key].b * w[i]; } return c; }
+// one triangle, flipped if needed so it faces `want`
+function facet(pos, col, a, b, c, want, ca, cb, cc) {
+  const ux = b[0] - a[0], uy = b[1] - a[1], uz = b[2] - a[2], vx = c[0] - a[0], vy = c[1] - a[1], vz = c[2] - a[2];
+  const n = [uy * vz - uz * vy, uz * vx - ux * vz, ux * vy - uy * vx];
+  if (n[0] * want[0] + n[1] * want[1] + n[2] * want[2] < 0) { [b, c] = [c, b]; [cb, cc] = [cc, cb]; }
+  pos.push(...a, ...b, ...c); col.push(ca.r, ca.g, ca.b, cb.r, cb.g, cb.b, cc.r, cc.g, cc.b);
+}
+function solid(pos, col) {
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3)); g.setAttribute('color', new THREE.Float32BufferAttribute(col, 3)); g.computeVertexNormals();
+  const m = new THREE.Mesh(g, world.vmat); m.castShadow = true; m.receiveShadow = true;
+  return m;
 }
 
-// ------------------------------------------------------------ outer roads ----
-// Each outer road has its own ground (snow, bog, ash), decor and enemies. All of
-// it is hidden until the road opens.
-const segDist = (px, pz, ax, az, bx, bz) => { const dx = bx - ax, dz = bz - az, L = dx * dx + dz * dz; const t = L ? Math.max(0, Math.min(1, ((px - ax) * dx + (pz - az) * dz) / L)) : 0; return Math.hypot(px - ax - t * dx, pz - az - t * dz); };
-const pathDist = (x, z, path) => { let d = 1e9; for (let i = 0; i < path.length - 1; i++) d = Math.min(d, segDist(x, z, path[i][0], path[i][1], path[i + 1][0], path[i + 1][1])); return d; };
-function buildThemes() {
-  const W = world;
-  W.themes = [null];
-  const looks = [null,
-    { base: '#e9f0f5', a: 'rgba(160,190,218,0.32)', b: 'rgba(255,255,255,0.7)', road: '#c6d3de', road2: '#d6e0e9', dust: '#ffffff',
-      decor: [['pine', 0.5], ['iceRock', 0.3], ['drift', 0.2]] },
-    { base: '#62743a', a: 'rgba(52,72,30,0.5)', b: 'rgba(132,156,72,0.4)', road: '#6b5537', road2: '#7d6443', dust: '#9ab05a',
-      decor: [['swampTree', 0.35], ['reeds', 0.35], ['mushrooms', 0.15], ['log', 0.15]] },
-    { base: '#3e393a', a: 'rgba(22,19,21,0.55)', b: 'rgba(96,88,84,0.4)', road: '#5e5653', road2: '#6c6460', dust: '#5a5050',
-      decor: [['obsidian', 0.42], ['charred', 0.22], ['lava', 0.18], ['vent', 0.18]] }];
-  const lavaMat = new THREE.MeshBasicMaterial({ map: W.lavaTex });
-  for (let i = 1; i < THEMES.length; i++) {
-    const th = THEMES[i], L = looks[i], S = th.size, PX = 1024, k = PX / S, [cx, cz] = th.center;
-    const road = PATHS[th.path].slice(0, 5);  // the new part, up to where it joins an old road
-    const toPx = (x, z) => [(x - cx + S / 2) * k, (z - cz + S / 2) * k];
-    // the themed ground sits toward the far end of the road
-    const sx = road[0][0] - road[4][0], sz = road[0][1] - road[4][1], sl = Math.hypot(sx, sz);
-    const bx = cx + sx / sl * 4, bz = cz + sz / sl * 4;
-    const R = mulberry(40 + i);
-    const mask = document.createElement('canvas'); mask.width = mask.height = PX;
-    const tex = canvasTex(PX, PX, (g) => {
-      const rpx = road.map(([x, z]) => toPx(x, z));
-      strokeTrail(g, rpx, k);
-      // blob mask
-      const m = mask.getContext('2d'), [mx, my] = toPx(bx, bz);
-      for (let j = 0; j < 80; j++) {
-        const a = R() * Math.PI * 2, d = R() * 0.24 * PX, x = mx + Math.cos(a) * d, y = my + Math.sin(a) * d, r = (0.12 + R() * 0.1) * PX;
-        const gr = m.createRadialGradient(x, y, 0, x, y, r); gr.addColorStop(0, 'rgba(255,255,255,1)'); gr.addColorStop(0.5, 'rgba(255,255,255,0.9)'); gr.addColorStop(1, 'rgba(255,255,255,0)');
-        m.fillStyle = gr; m.fillRect(x - r, y - r, r * 2, r * 2);
-      }
-      m.globalCompositeOperation = 'source-in'; m.fillStyle = L.base; m.fillRect(0, 0, PX, PX);
-      m.globalCompositeOperation = 'source-atop';
-      for (let j = 0; j < 60; j++) { const x = R() * PX, y = R() * PX, r = 20 + R() * 70; const gr = m.createRadialGradient(x, y, 0, x, y, r); gr.addColorStop(0, R() < 0.5 ? L.a : L.b); gr.addColorStop(1, 'rgba(0,0,0,0)'); m.fillStyle = gr; m.fillRect(x - r, y - r, r * 2, r * 2); }
-      if (i === 2) for (let j = 0; j < 26; j++) { const x = R() * PX, y = R() * PX, rx = 18 + R() * 40, ry = rx * (0.4 + R() * 0.3); m.fillStyle = '#6f8a6a'; m.beginPath(); m.ellipse(x, y, rx + 5, ry + 4, R(), 0, 7); m.fill(); m.fillStyle = '#2f4a40'; m.beginPath(); m.ellipse(x, y, rx, ry, R(), 0, 7); m.fill(); }
-      if (i === 3) { m.lineCap = 'round'; for (let j = 0; j < 40; j++) { let x = R() * PX, y = R() * PX; m.strokeStyle = '#ff6a1a'; m.lineWidth = 2 + R() * 3; m.shadowColor = '#ff8a2a'; m.shadowBlur = 8; m.beginPath(); m.moveTo(x, y); for (let s = 0; s < 5; s++) { x += (R() - 0.5) * 60; y += (R() - 0.5) * 60; m.lineTo(x, y); } m.stroke(); } m.shadowBlur = 0; }
-      for (let j = 0; j < 5000; j++) { m.fillStyle = R() < 0.5 ? 'rgba(0,0,0,0.05)' : 'rgba(255,255,255,0.06)'; m.fillRect(R() * PX, R() * PX, 3, 3); }
-      // the road across the themed ground
-      for (const [w, col] of [[2.8 * k, L.road], [2.0 * k, L.road2]]) { m.strokeStyle = col; m.lineWidth = w; m.lineCap = 'round'; m.lineJoin = 'round'; smoothLine(m, rpx); m.stroke(); }
-      g.drawImage(mask, 0, 0);
-    });
-    const overlay = new THREE.Mesh(new THREE.PlaneGeometry(S, S), new THREE.MeshLambertMaterial({ map: tex, transparent: true, opacity: 0, depthWrite: false }));
-    overlay.rotation.x = -Math.PI / 2; overlay.position.set(cx, 0.035, cz); overlay.receiveShadow = true; overlay.visible = false;
-    scene.add(overlay);
-    // decor scattered over the themed ground, off the road
-    const alpha = mask.getContext('2d').getImageData(0, 0, PX, PX).data;
-    const onGround = (x, z) => { const [u, v] = toPx(x, z); if (u < 0 || v < 0 || u >= PX || v >= PX) return false; return alpha[((v | 0) * PX + (u | 0)) * 4 + 3] > 215; };
-    const group = new THREE.Group(); group.visible = false; scene.add(group);
-    const items = [], vents = [], geos = {};
-    const total = L.decor.reduce((s, d) => s + d[1], 0);
-    for (let n = 0, tries = 0; n < 30 && tries < 900; tries++) {
-      const a = R() * Math.PI * 2, d = Math.sqrt(R()) * S * 0.42, x = bx + Math.cos(a) * d, z = bz + Math.sin(a) * d;
-      if (!onGround(x, z) || pathDist(x, z, road) < 3.4 || PATHS.slice(0, 3).some(p => pathDist(x, z, p) < 3.4)) continue;
-      if (items.some(it => Math.hypot(it.position.x - x, it.position.z - z) < 2.6)) continue;
-      let r = R() * total, kind = L.decor[0][0];
-      for (const [nm, w] of L.decor) { if ((r -= w) <= 0) { kind = nm; break; } }
-      let mesh;
-      if (kind === 'lava') { mesh = new THREE.Group(); const pool = new THREE.Mesh(new THREE.CylinderGeometry(1.1 + R() * 0.5, 1.1, 0.05, 16), lavaMat); pool.position.y = 0.04; mesh.add(pool); const rim = new THREE.Mesh(geos.obsidian || (geos.obsidian = DECOR.obsidian(mulberry(9))), W.vmat); rim.position.set(1.2, 0, 0.3); rim.scale.setScalar(0.5); mesh.add(rim); }
-      else { const key = kind + (n % 3); if (!geos[key]) geos[key] = DECOR[kind](mulberry(100 * i + n)); mesh = new THREE.Mesh(geos[key], W.vmat); mesh.castShadow = true; }
-      mesh.position.set(x, 0, z); mesh.rotation.y = R() * 6.28;
-      mesh.userData.s = 0.85 + R() * 0.4; mesh.userData.delay = 0.2 + Math.hypot(x - road[0][0], z - road[0][1]) * 0.02 + R() * 0.3;
-      mesh.scale.setScalar(0.001);
-      group.add(mesh); items.push(mesh); n++;
-      if (kind === 'vent') vents.push([x, z]);
+// ----- roads: polylines painted into every chunk they cross
+function addRoad(id, pts) {
+  const TR = world.terrain;
+  removeRoad(id, false);
+  const r = { id, pts: pts.map(p => [p[0], p[1]]), x0: Math.min(...pts.map(p => p[0])), x1: Math.max(...pts.map(p => p[0])), z0: Math.min(...pts.map(p => p[1])), z1: Math.max(...pts.map(p => p[1])) };
+  TR.roads.push(r);
+  dirtyArea(r.x0 - 6, r.z0 - 6, r.x1 + 6, r.z1 + 6);
+  // hand-placed decor in the way goes
+  for (const m of TR.homeDecor) if (m.visible && pathDist(m.position.x, m.position.z, r.pts) < 3.2) m.visible = false;
+  return r;
+}
+function removeRoad(id, dirty = true) {
+  const TR = world.terrain, i = TR.roads.findIndex(r => r.id === id);
+  if (i < 0) return;
+  const [r] = TR.roads.splice(i, 1);
+  if (dirty) dirtyArea(r.x0 - 6, r.z0 - 6, r.x1 + 6, r.z1 + 6);
+}
+function roadsIn(x0, z0, x1, z1) { return world.terrain.roads.filter(r => r.x1 >= x0 && r.x0 <= x1 && r.z1 >= z0 && r.z0 <= z1); }
+function dirtyArea(x0, z0, x1, z1) {
+  for (const ch of world.terrain.chunks.values()) { const cx0 = ch.cx * CH, cz0 = ch.cz * CH; if (cx0 + CH >= x0 && cx0 <= x1 && cz0 + CH >= z0 && cz0 <= z1) ch.dirty = true; }
+}
+
+// ----- what lies on a chunk's ground: the same every time for the same chunk
+function chunkFeatures(cx, cz) {
+  const TR = world.terrain, key = cx + ',' + cz;
+  let f = TR.feats.get(key);
+  if (f) return f;
+  if (TR.feats.size > 900) TR.feats.clear();
+  const R = mulberry(cellSeed(cx, cz, 1)), x0 = cx * CH, z0 = cz * CH, w = new Float32Array(4);
+  f = { patches: [], pools: [], cracks: [], ice: [] };
+  for (let i = 0; i < 18; i++) {
+    const x = x0 + R() * CH, z = z0 + R() * CH, r = i < 4 ? 4 + R() * 12 : 1 + R() * 3.2, u = R(), side = R();
+    const L = LOOKS[pickBiome(x, z, u)];
+    f.patches.push({ x, z, r, col: side < 0.5 ? L.a : L.b, clear: side < 0.5 ? L.a0 : L.b0 });
+  }
+  for (let i = 0; i < 10; i++) {
+    const x = x0 + R() * CH, z = z0 + R() * CH, rx = 0.85 + R() * 1.9, ry = rx * (0.4 + R() * 0.3), rot = R() * 3;
+    biomeWeights(x, z, w);
+    if (w[BIOME.mire] > 0.6) f.pools.push({ x, z, rx, ry, rot, a: smoothstep(0.6, 0.9, w[BIOME.mire]) });
+  }
+  for (let i = 0; i < 16; i++) {
+    const x = x0 + R() * CH, z = z0 + R() * CH, lw = 0.09 + R() * 0.16, pts = [[x, z]];
+    for (let s = 0; s < 5; s++) { const [px, pz] = pts[pts.length - 1]; pts.push([px + (R() - 0.5) * 2.8, pz + (R() - 0.5) * 2.8]); }
+    biomeWeights(x, z, w);
+    if (w[BIOME.ash] > 0.6) f.cracks.push({ pts, lw, a: smoothstep(0.6, 0.9, w[BIOME.ash]) });
+  }
+  for (let i = 0; i < 4; i++) {
+    const x = x0 + R() * CH, z = z0 + R() * CH, rx = 1.2 + R() * 2.8, ry = rx * (0.35 + R() * 0.35), rot = R() * 3;
+    biomeWeights(x, z, w);
+    if (w[BIOME.frozen] > 0.6) f.ice.push({ x, z, rx, ry, rot, a: smoothstep(0.6, 0.9, w[BIOME.frozen]) });
+  }
+  TR.feats.set(key, f);
+  return f;
+}
+function paintChunk(ch) {
+  const TR = world.terrain, g = ch.g, x0 = ch.cx * CH, z0 = ch.cz * CH, w = wTmp;
+  const roads = roadsIn(x0 - 4, z0 - 4, x0 + CH + 4, z0 + CH + 4);
+  // colour fields, a sample per pace, smoothed up to the texture: ground, and the outer and inner road bands
+  const [gi, ri, ri2] = TR.fieldImg.map(im => im.data);
+  for (let j = 0; j < FIELD; j++) for (let i = 0; i < FIELD; i++) {
+    const x = x0 + (i + 0.5) * CH / FIELD, z = z0 + (j + 0.5) * CH / FIELD, o = (j * FIELD + i) * 4;
+    biomeWeights(x, z, w);
+    const n = 1 + 0.045 * fbm(x / 7, z / 7, 5);
+    let r = 0, gg = 0, b = 0;
+    for (let k = 0; k < 4; k++) { const c = LOOKS[k].rgb; r += c[0] * w[k]; gg += c[1] * w[k]; b += c[2] * w[k]; }
+    gi[o] = r * n; gi[o + 1] = gg * n; gi[o + 2] = b * n; gi[o + 3] = 255;
+    if (!roads.length) continue;
+    for (const [d, key] of [[ri, 'road'], [ri2, 'road2']]) {
+      let rr = 0, rg = 0, rb = 0, ra = 0;
+      for (let k = 0; k < 4; k++) { const c = LOOKS[k][key]; rr += c[0] * w[k]; rg += c[1] * w[k]; rb += c[2] * w[k]; ra += c[3] * w[k]; }
+      d[o] = rr; d[o + 1] = rg; d[o + 2] = rb; d[o + 3] = ra * 255;
     }
-    W.themes.push({ overlay, group, items, vents, revealT: -1, road, dust: L.dust, ventT: 0 });
+  }
+  TR.fieldG[0].putImageData(TR.fieldImg[0], 0, 0);
+  g.imageSmoothingEnabled = true;
+  g.drawImage(TR.fieldCv[0], 0, 0, CH_PX, CH_PX);
+  const px = (x) => (x - x0) * CH_K, pz = (z) => (z - z0) * CH_K;
+  const near = (x, z, r) => x + r > x0 && x - r < x0 + CH && z + r > z0 && z - r < z0 + CH;
+  // patches, pools, ice and cracks, including the ones from next door that reach over
+  const feats = [];
+  for (let j = -1; j <= 1; j++) for (let i = -1; i <= 1; i++) feats.push(chunkFeatures(ch.cx + i, ch.cz + j));
+  for (const f of feats) for (const p of f.patches) {
+    if (!near(p.x, p.z, p.r)) continue;
+    const gr = g.createRadialGradient(px(p.x), pz(p.z), 0, px(p.x), pz(p.z), p.r * CH_K);
+    gr.addColorStop(0, p.col); gr.addColorStop(1, p.clear); g.fillStyle = gr;
+    g.fillRect(px(p.x) - p.r * CH_K, pz(p.z) - p.r * CH_K, p.r * CH_K * 2, p.r * CH_K * 2);
+  }
+  for (const f of feats) for (const p of f.ice) {
+    if (!near(p.x, p.z, p.rx + 0.5)) continue;
+    g.globalAlpha = p.a;
+    g.fillStyle = 'rgba(184,214,236,0.55)'; g.beginPath(); g.ellipse(px(p.x), pz(p.z), p.rx * CH_K, p.ry * CH_K, p.rot, 0, 7); g.fill();
+    g.fillStyle = 'rgba(255,255,255,0.45)'; g.beginPath(); g.ellipse(px(p.x) - p.rx * CH_K * 0.3, pz(p.z) - p.ry * CH_K * 0.3, p.rx * CH_K * 0.4, p.ry * CH_K * 0.22, p.rot, 0, 7); g.fill();
+  }
+  for (const f of feats) for (const p of f.pools) {
+    if (!near(p.x, p.z, p.rx + 1)) continue;
+    g.globalAlpha = p.a;
+    g.fillStyle = '#6f8a6a'; g.beginPath(); g.ellipse(px(p.x), pz(p.z), p.rx * CH_K + 5, p.ry * CH_K + 4, p.rot, 0, 7); g.fill();
+    g.fillStyle = '#2f4a40'; g.beginPath(); g.ellipse(px(p.x), pz(p.z), p.rx * CH_K, p.ry * CH_K, p.rot, 0, 7); g.fill();
+  }
+  g.lineCap = 'round'; g.lineJoin = 'round'; g.strokeStyle = '#ff6a1a'; g.shadowColor = '#ff8a2a'; g.shadowBlur = 4;
+  for (const f of feats) for (const c of f.cracks) {
+    if (!near(c.pts[0][0], c.pts[0][1], 8)) continue;
+    g.globalAlpha = c.a; g.lineWidth = c.lw * CH_K;
+    g.beginPath(); g.moveTo(px(c.pts[0][0]), pz(c.pts[0][1])); for (const [x, z] of c.pts) g.lineTo(px(x), pz(z)); g.stroke();
+  }
+  g.shadowBlur = 0; g.globalAlpha = 1;
+  // roads: draw the band in white on a mask (with a margin, so the soft edge carries on over the chunk border),
+  // then fill it with the road colour of whatever biome it runs through
+  if (roads.length) {
+    TR.fieldG[1].putImageData(TR.fieldImg[1], 0, 0); TR.fieldG[2].putImageData(TR.fieldImg[2], 0, 0);
+    const m = TR.maskG, S = CH_PX + MARGIN * 2;
+    for (const [wd, bl, fc] of [[3.0, 0.35, TR.fieldCv[1]], [2.3, 0.12, TR.fieldCv[2]]]) {
+      m.globalCompositeOperation = 'source-over'; m.clearRect(0, 0, S, S);
+      m.filter = `blur(${(bl * CH_K) | 0}px)`; m.strokeStyle = '#fff'; m.lineWidth = wd * CH_K; m.lineCap = 'round'; m.lineJoin = 'round';
+      for (const rd of roads) { smoothLine(m, rd.pts.map(([x, z]) => [px(x) + MARGIN, pz(z) + MARGIN])); m.stroke(); }
+      m.filter = 'none'; m.globalCompositeOperation = 'source-in'; m.imageSmoothingEnabled = true;
+      m.drawImage(fc, MARGIN, MARGIN, CH_PX, CH_PX);   // (source-in clears the margin, which is not copied anyway)
+      m.globalCompositeOperation = 'source-over';
+      g.drawImage(TR.maskCv, MARGIN, MARGIN, CH_PX, CH_PX, 0, 0, CH_PX, CH_PX);
+    }
+  }
+  // fine grain
+  const R = mulberry(cellSeed(ch.cx, ch.cz, 3));
+  for (let i = 0; i < 300; i++) { g.fillStyle = R() < 0.5 ? 'rgba(90,60,30,0.06)' : 'rgba(255,245,225,0.06)'; g.fillRect(R() * CH_PX, R() * CH_PX, 3, 3); }
+  ch.tex.needsUpdate = true;
+}
+// trees, rocks and the like, merged into one mesh per chunk; nothing on a road, a wall, the castle's
+// hand-placed canyon, or a spot kept clear for building
+const decorGeos = new Map();
+function decorGeo(kind, v) {
+  const key = kind + v;
+  let g = decorGeos.get(key);
+  if (!g) {
+    const R = mulberry(1000 + v * 37 + kind.length * 11);
+    g = kind === 'tree' ? treeGeo(1 + v) : kind === 'rock' ? vc(new THREE.DodecahedronGeometry(0.7, 0), '#9a9a9e', T(0, 0, 0, R(), R(), R())) : kind === 'barricade' ? barricadeGeo() : DECOR[kind](R);
+    decorGeos.set(key, g);
+  }
+  return g;
+}
+function decorateChunk(ch) {
+  const TR = world.terrain, x0 = ch.cx * CH, z0 = ch.cz * CH;
+  for (const m of ch.lava) { ch.group.remove(m); }
+  if (ch.decor) { ch.group.remove(ch.decor); ch.decor.geometry.dispose(); ch.decor = null; }
+  ch.lava = []; ch.vents = [];
+  const roads = roadsIn(x0 - 4, z0 - 4, x0 + CH + 4, z0 + CH + 4), keep = G ? G.clear || [] : [];
+  const R = mulberry(cellSeed(ch.cx, ch.cz, 2)), placed = [], parts = [];
+  for (let i = 0; i < 9; i++) {
+    const x = x0 + R() * CH, z = z0 + R() * CH, roll = R(), ry = R() * 6.28, s = 0.85 + R() * 0.4, v = (R() * 3) | 0, ub = R(), uk = R();
+    const L = LOOKS[pickBiome(x, z, ub)];
+    if (roll * 9 > L.decorN) continue;
+    if (Math.hypot(x - HOME.x, z - HOME.z) < HOME_DECOR_R || x < cliffEdge(z) + 2.5) continue;
+    if (roads.some(r => pathDist(x, z, r.pts) < 3.4) || keep.some(c => Math.hypot(c.x - x, c.z - z) < c.r) || placed.some(p => Math.hypot(p[0] - x, p[1] - z) < 2.6)) continue;
+    const kind = pickKind(L.decor, uk);
+    placed.push([x, z]);
+    if (kind === 'lava') {
+      const pool = new THREE.Mesh(TR.lavaGeo[v], world.lavaMat); pool.position.set(x, 0.04, z); ch.group.add(pool); ch.lava.push(pool);
+      const rim = decorGeo('obsidian', 0).clone(); rim.applyMatrix4(T(x + Math.cos(ry) * 1.3, 0, z + Math.sin(ry) * 1.3, 0, ry, 0, 0.5)); parts.push(rim);
+      continue;
+    }
+    if (kind === 'vent') ch.vents.push([x, z]);
+    const geo = decorGeo(kind, v).clone(); geo.applyMatrix4(T(x, 0, z, 0, ry, 0, s)); parts.push(geo);
+  }
+  if (parts.length) {
+    const g = merge(parts); parts.forEach(p => p.dispose());
+    ch.decor = new THREE.Mesh(g, world.vmat); ch.decor.castShadow = true; ch.group.add(ch.decor);
   }
 }
-function resetThemes() {
-  for (let i = 1; i < world.themes.length; i++) {
-    const t = world.themes[i];
-    t.revealT = -1; t.overlay.visible = false; t.overlay.material.opacity = 0; t.group.visible = false;
-    for (const it of t.items) it.scale.setScalar(0.001);
+function makeChunk(cx, cz) {
+  const TR = world.terrain, t0 = performance.now();
+  let cv, tex;
+  if (TR.spare.length) ({ cv, tex } = TR.spare.pop());
+  else { cv = document.createElement('canvas'); cv.width = cv.height = CH_PX; tex = new THREE.CanvasTexture(cv); tex.colorSpace = THREE.SRGBColorSpace; tex.anisotropy = 4; }
+  const mesh = new THREE.Mesh(TR.plane, new THREE.MeshLambertMaterial({ map: tex }));
+  mesh.position.set(cx * CH + CH / 2, 0, cz * CH + CH / 2); mesh.receiveShadow = true;
+  const group = new THREE.Group(); group.add(mesh); scene.add(group);
+  const ch = { cx, cz, cv, g: cv.getContext('2d'), tex, mesh, group, decor: null, lava: [], vents: [], dirty: false };
+  paintChunk(ch); decorateChunk(ch);
+  TR.chunks.set(cx + ',' + cz, ch);
+  TR.made++; TR.ms += performance.now() - t0;
+  return ch;
+}
+function dropChunk(key, ch) {
+  const TR = world.terrain;
+  scene.remove(ch.group); ch.mesh.material.dispose();
+  if (ch.decor) ch.decor.geometry.dispose();
+  if (TR.spare.length < 12) TR.spare.push({ cv: ch.cv, tex: ch.tex }); else ch.tex.dispose();
+  TR.chunks.delete(key);
+}
+// Make the chunks and wall strips around (x, z) that are missing and repaint changed ones, nearest first. Each
+// frame gets a few milliseconds of it; with `all` everything in sight is done at once (a new game, a teleport).
+function updateTerrain(x, z, all = false) {
+  const TR = world.terrain, t0 = performance.now();
+  const r = Math.ceil(NEAR / CH) + 1, ccx = Math.floor(x / CH), ccz = Math.floor(z / CH), want = [];
+  for (let j = -r; j <= r; j++) for (let i = -r; i <= r; i++) {
+    const cx = ccx + i, cz = ccz + j, d = Math.hypot(cx * CH + CH / 2 - x, cz * CH + CH / 2 - z);
+    if (d > NEAR + CH * 0.71) continue;
+    const ch = TR.chunks.get(cx + ',' + cz);
+    if (!ch || ch.dirty) want.push([d, cx, cz, ch]);
   }
+  want.sort((a, b) => a[0] - b[0]);
+  for (const [d, cx, cz, ch] of want) {
+    if (!(all && d < 64) && performance.now() - t0 > 4) break;
+    if (!ch) makeChunk(cx, cz);
+    else { ch.dirty = false; paintChunk(ch); decorateChunk(ch); }
+  }
+  for (const [key, ch] of TR.chunks) if (Math.hypot(ch.cx * CH + CH / 2 - x, ch.cz * CH + CH / 2 - z) > FAR) dropChunk(key, ch);
+  // canyon wall strips
+  const s0 = Math.floor((z - STRIP_NEAR - 1) / STRIP), s1 = Math.floor((z + STRIP_NEAR - 1) / STRIP);
+  for (let s = s0; s <= s1; s++) if (!TR.strips.has(s)) TR.strips.set(s, makeStrip(s));
+  for (const [s, m] of TR.strips) if (Math.abs(s * STRIP + STRIP / 2 - z) > STRIP_FAR) { scene.remove(m); m.geometry.dispose(); TR.strips.delete(s); }
+}
+// one stretch of the canyon wall: two steps, each a top and a face, coloured by the biome at its foot
+function makeStrip(s) {
+  const pos = [], col = [], n = STRIP / CLIFF.step, w = new Float32Array(4);
+  const zs = Array.from({ length: n + 1 }, (_, i) => s * STRIP + 1 + i * CLIFF.step);
+  for (const [edge, y0, y1] of [[cliffEdge, 0, CLIFF.h1], [cliffEdge2, CLIFF.h1, CLIFF.h1 + CLIFF.h2]]) {
+    const e = zs.map(edge), top = [], side = [];
+    zs.forEach((z, i) => { biomeWeights(e[i] + 3, z, w); top.push(blendColor(w, 'topC')); side.push(blendColor(w, 'sideC')); });
+    for (let i = 0; i < n; i++) {
+      const za = zs[i], zb = zs[i + 1], ea = e[i], eb = e[i + 1];
+      facet(pos, col, [ea, y1, za], [eb, y1, zb], [eb - CLIFF_DEPTH, y1, zb], [0, 1, 0], top[i], top[i + 1], top[i + 1]);
+      facet(pos, col, [ea, y1, za], [eb - CLIFF_DEPTH, y1, zb], [ea - CLIFF_DEPTH, y1, za], [0, 1, 0], top[i], top[i + 1], top[i]);
+      facet(pos, col, [ea, y0, za], [eb, y0, zb], [eb, y1, zb], [1, 0, 0], side[i], side[i + 1], side[i + 1]);
+      facet(pos, col, [ea, y0, za], [eb, y1, zb], [ea, y1, za], [1, 0, 0], side[i], side[i + 1], side[i]);
+    }
+  }
+  const m = solid(pos, col); scene.add(m);
+  return m;
 }
 
 // ------------------------------------------------------------ instancing ----
@@ -861,7 +1024,7 @@ function buildWorld() {
   // damage number sprites
   W.textCache = new Map();
   world = W;
-  buildThemes();
+  initTerrain();
 }
 
 // ------------------------------------------------------------------- pads ----
@@ -976,7 +1139,7 @@ function newGame() {
   for (const w of W.wallMeshes) w.count = 0;
   W.grass.visible = false; for (const gt of W.gates) { gt.group.visible = false; gt.open = 0; }
   W.castle.scale.set(1, 1, 1); W.castle.position.y = 0; W.castle.rotation.z = 0;
-  resetThemes();
+  for (let i = 1; i < THEMES.length; i++) removeRoad('theme' + i);
   G.castle.max = G.castle.hp = castleMaxHp();
   refreshObstacles();
   setKingWeapon();
@@ -1126,13 +1289,13 @@ function reachRing(r) {
   G.ring = Math.max(G.ring, r);
 }
 function revealTheme(i) {
-  const th = world.themes[i], info = THEMES[i];
-  th.revealT = 0; th.overlay.visible = true; th.group.visible = true;
+  const info = THEMES[i], road = PATHS[info.path].slice(0, 5);   // the new part, up to where it joins an old road
+  addRoad('theme' + i, road);
   G.trails[info.path].openAt = G.t + 4;
   toast(`A new road has opened: ${info.name}`);
   // a gust along the new road
-  const road = th.road;
-  for (let j = 0; j < road.length - 1; j++) for (let s = 0; s < 1; s += 0.34) puff(road[j][0] + (road[j + 1][0] - road[j][0]) * s, 0.6, road[j][1] + (road[j + 1][1] - road[j][1]) * s, th.dust, 2);
+  const dust = LOOKS[biomeAt(road[0][0], road[0][1])].dust;
+  for (let j = 0; j < road.length - 1; j++) for (let s = 0; s < 1; s += 0.34) puff(road[j][0] + (road[j + 1][0] - road[j][0]) * s, 0.6, road[j][1] + (road[j + 1][1] - road[j][1]) * s, dust, 2);
 }
 function buildTower(t) {
   t.built = true; t.level = 1; t.cd = [];
@@ -1611,7 +1774,7 @@ function updateTroop(dt) {
   if (len > 1) { ix /= len; iz /= len; }
   const moving = len > 0.05;
   let nx = k.x + ix * KING_SPEED * dt, nz = k.z + iz * KING_SPEED * dt;
-  nx = Math.max(BOUNDS.x0, Math.min(BOUNDS.x1, nx)); nz = Math.max(BOUNDS.z0, Math.min(BOUNDS.z1, nz));
+  if (!G.free) { nx = Math.max(BOUNDS.x0, Math.min(BOUNDS.x1, nx)); nz = Math.max(BOUNDS.z0, Math.min(BOUNDS.z1, nz)); }
   [nx, nz] = collideWalls(k.x, k.z, nx, nz);
   for (const [ox, oz, r] of G.obs) {
     const dx = nx - ox, dz = nz - oz, d = Math.hypot(dx, dz);
@@ -1816,7 +1979,8 @@ function syncScene(dt) {
   const W = world, k = G.king;
   animBuildings(dt);
   if (G.wallsAnim) rebuildWalls(dt);
-  updateThemes(dt);
+  updateTerrain(k.x, k.z);
+  updateVents(dt);
   // king
   W.king.position.set(k.x, Math.abs(Math.sin(k.bob)) * 0.08, k.z);
   W.king.rotation.y = k.yaw;
@@ -1951,27 +2115,18 @@ function syncScene(dt) {
   if (G.shake > 0) { const s = G.shake * G.shake * 1.6; camera.position.x += (Math.random() - 0.5) * s; camera.position.y += (Math.random() - 0.5) * s; camera.position.z += (Math.random() - 0.5) * s; G.shake = Math.max(0, G.shake - dt * 1.1); }
   sun.position.set(tx - 14, 34, tz + 10); sun.target.position.set(tx, 0, tz);
 }
-// outer roads fading in once opened; the ash vents smoke while the king is near
-function updateThemes(dt) {
-  for (let i = 1; i < world.themes.length; i++) {
-    const th = world.themes[i];
-    if (th.revealT < 0) continue;
-    if (th.revealT < 4) {
-      th.revealT += dt;
-      const k = Math.min(1, th.revealT / 1.5); th.overlay.material.opacity = k * k * (3 - 2 * k);
-      for (const it of th.items) { const q = Math.max(0, Math.min(1, (th.revealT - it.userData.delay) / 0.5)); it.scale.setScalar(Math.max(0.001, it.userData.s * easeOutBack(q))); }
-    }
-    if (th.vents.length && Math.hypot(G.king.x - THEMES[i].center[0], G.king.z - THEMES[i].center[1]) < 50) {
-      th.ventT -= dt;
-      if (th.ventT <= 0 && world.fx.length < 200) {
-        th.ventT = 0.35;
-        const [x, z] = th.vents[(Math.random() * th.vents.length) | 0];
-        const s = new THREE.Sprite(new THREE.SpriteMaterial({ map: world.puffTex, color: '#6a6262', transparent: true, depthWrite: false }));
-        s.position.set(x, 1.0, z); scene.add(s);
-        world.fx.push({ o: s, t: 0, dur: 2.2, kind: 'smoke', s0: 1.1 });
-      }
-    }
-  }
+// ash vents near the king smoke
+function updateVents(dt) {
+  const TR = world.terrain, k = G.king;
+  if ((TR.ventT -= dt) > 0 || world.fx.length >= 200) return;
+  TR.ventT = 0.35;
+  const near = [];
+  for (const ch of TR.chunks.values()) for (const v of ch.vents) if (Math.hypot(v[0] - k.x, v[1] - k.z) < 40) near.push(v);
+  if (!near.length) return;
+  const [x, z] = near[(Math.random() * near.length) | 0];
+  const sp = new THREE.Sprite(new THREE.SpriteMaterial({ map: world.puffTex, color: '#6a6262', transparent: true, depthWrite: false }));
+  sp.position.set(x, 1.0, z); scene.add(sp);
+  world.fx.push({ o: sp, t: 0, dur: 2.2, kind: 'smoke', s0: 1.1 });
 }
 function bar(i, x, y, z, w, frac, hex, q) {
   const W = world;
@@ -2098,7 +2253,7 @@ function setup() {
     root: document.getElementById('cd-app'), coins: document.getElementById('cd-coins'), toast: document.getElementById('cd-toast'),
     joy: document.getElementById('cd-joy'), knob: document.querySelector('#cd-joy .cd-knob'), pause: document.getElementById('cd-pausemenu'), over: document.getElementById('cd-over'), overText: document.getElementById('cd-over-text'),
   };
-  initRenderer(); buildTerrain(); buildWorld(); initInput();
+  initRenderer(); buildWorld(); initInput();
   document.getElementById('cd-pause-btn').onclick = () => togglePause(true);
   document.getElementById('cd-resume').onclick = () => togglePause(false);
   document.getElementById('cd-restart').onclick = () => { ui.pause.hidden = true; startGame(); };
@@ -2109,6 +2264,7 @@ function setup() {
 }
 function startGame() {
   newGame(); resize();
+  updateTerrain(G.king.x, G.king.z, true);
   ui.over.hidden = true; ui.pause.hidden = true; idleJoystick(true);
   if (ui.toast) ui.toast.classList.remove('show');
 }
@@ -2123,5 +2279,17 @@ function hide() {
   running = false; cancelAnimationFrame(raf);
   if (G && !G.over) { G.paused = true; ui.pause.hidden = false; }
 }
-window.CastleDefender = { show, hide };
+// for tools/test-castle-defender-browser.js
+function debug() {
+  return {
+    get G() { return G; }, world, THREE, scene, camera, renderer,
+    teleport(x, z) { G.free = true; G.king.x = x; G.king.z = z; updateTerrain(x, z, true); },
+    // run the game for `sec` seconds of game time as fast as possible
+    advance(sec, dt = 1 / 30) { for (let t = 0; t < sec && !G.over; t += dt) { step(dt); syncScene(dt); } },
+    reachRing, rich(n = 1e6) { G.coins = n; },
+    terrain: () => ({ chunks: world.terrain.chunks.size, strips: world.terrain.strips.size, made: world.terrain.made, ms: world.terrain.ms, roads: world.terrain.roads.map(r => r.id) }),
+    biomeAt,
+  };
+}
+window.CastleDefender = { show, hide, _debug: debug };
 
