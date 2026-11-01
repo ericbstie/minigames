@@ -27,6 +27,11 @@
       <div class="nm outlined">Water Sort</div>
       <div class="ds">Pour the colours between tubes until each tube holds one colour. 20 levels.</div>
     </button>
+    <button class="hub-card" type="button" data-game="bike-race">
+      <img alt="" src="assets/img/bike-race.jpg">
+      <div class="nm outlined">Bike Race</div>
+      <div class="ds">Tilt your phone to lean, hold to ride, and flip across five worlds. Made for phones.</div>
+    </button>
   </div>
 </section>
 
@@ -146,6 +151,221 @@
   </section>
 </div>
 
+<div id="br-app" hidden>
+  <canvas id="br-canvas"></canvas>
+  <svg width="0" height="0" style="position:absolute" aria-hidden="true"><defs><linearGradient id="br-gold" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#ffe680"/><stop offset="0.55" stop-color="#ffd43b"/><stop offset="1" stop-color="#f5a623"/></linearGradient></defs></svg>
+
+  <div class="br-hud" id="br-hud" hidden>
+    <div class="br-progress" aria-hidden="true"><div class="br-track"></div><span class="br-flag"></span><div id="br-dots"></div><span class="br-dot ghost" id="br-dot-ghost" hidden></span><span class="br-dot me" id="br-dot-me"></span></div>
+    <div class="br-hud-left">
+      <button class="br-round" id="br-pause" type="button" aria-label="Pause"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="6" y="5" width="4.2" height="14" rx="1.6"/><rect x="13.8" y="5" width="4.2" height="14" rx="1.6"/></svg></button>
+      <button class="br-round" id="br-retry" type="button" aria-label="Restart level"><svg viewBox="0 0 24 24" aria-hidden="true"><path class="ln" d="M7.4 7.6A6.9 6.9 0 1 1 5.2 12.6"/><path d="M3.4 4.4l6.4.4-2.6 5.8Z"/></svg></button>
+    </div>
+    <div class="br-hud-mid"><div class="br-time outlined" id="br-time" aria-live="off">0.00</div><div class="br-sub" id="br-sub"></div></div>
+    <div class="br-hud-right">
+      <div class="br-pos outlined" id="br-pos" hidden></div>
+      <button class="br-round" id="br-sound" type="button" aria-label="Sound" aria-pressed="true"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9.5h3.6L12.5 5v14l-4.9-4.5H4Z"/><path class="ln on" d="M15.6 9a4.2 4.2 0 0 1 0 6M18.2 6.4a8 8 0 0 1 0 11.2"/><path class="ln off" d="M16 9.5l5 5M21 9.5l-5 5"/></svg></button>
+    </div>
+  </div>
+  <div class="br-center outlined" id="br-center" hidden></div>
+  <div class="br-toast outlined" id="br-toast" aria-live="polite"></div>
+  <div class="br-tipbar" id="br-tipbar" hidden></div>
+
+  <div class="br-touch" id="br-touch" hidden>
+    <div class="br-touch-l">
+      <button type="button" id="br-tback" aria-label="Lean back"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15 4.5 7.5 12l7.5 7.5"/></svg></button>
+      <button type="button" id="br-tfwd" aria-label="Lean forward"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 4.5 16.5 12 9 19.5"/></svg></button>
+    </div>
+    <div class="br-touch-r">
+      <button type="button" id="br-tbrake" class="brake"><span class="cap outlined">Brake</span></button>
+      <button type="button" id="br-tgas" class="gas"><span class="cap outlined">Gas</span></button>
+    </div>
+  </div>
+
+  <section class="br-screen" id="br-desktop" hidden>
+    <button class="hub-back outlined" id="br-desk-back" type="button">Games</button>
+    <div class="br-col br-desk-col">
+      <h1 class="outlined br-logo">Bike Race</h1>
+      <div class="br-panel br-desk">
+        <svg class="br-desk-phone" viewBox="0 0 120 72" aria-hidden="true"><rect x="4" y="4" width="112" height="64" rx="12"/><rect x="14" y="12" width="92" height="48" rx="5" class="scr"/><circle cx="34" cy="44" r="7" class="pad"/><circle cx="86" cy="44" r="8" class="pad go"/></svg>
+        <h2 class="outlined">Made for phones</h2>
+        <p>Hold your phone sideways, turn it like a steering wheel to lean the bike, and keep your thumbs on gas and brake. Open this page on your phone:</p>
+        <p class="br-desk-url" id="br-desk-url"></p>
+        <button class="b plain outlined" id="br-desk-keys" type="button">Try it here with the keyboard</button>
+      </div>
+    </div>
+  </section>
+
+  <div class="br-rotate" id="br-rotate" aria-live="polite">
+    <svg viewBox="0 0 64 64" aria-hidden="true"><rect x="20" y="8" width="24" height="44" rx="5"/><path d="M48 46a18 18 0 0 0 4-14" class="arr"/><path d="M47 30.5l5 1.6 1.6-5" class="arr"/></svg>
+    <p class="outlined">Turn your phone sideways</p>
+  </div>
+
+  <section class="br-screen" id="br-home">
+    <button class="hub-back outlined" id="br-home-back" type="button">Games</button>
+    <div class="br-col br-home-col">
+      <h1 class="outlined br-logo">Bike Race</h1>
+      <div class="tally outlined"><svg viewBox="0 0 24 24" class="star-on" aria-hidden="true"><path d="M12.0 2.3 L14.9 8.8 L22.0 9.6 L16.8 14.3 L18.2 21.3 L12.0 17.8 L5.8 21.3 L7.2 14.3 L2.0 9.6 L9.1 8.8 Z"/></svg><span id="br-home-stars">0 / 90</span></div>
+      <div class="br-menu">
+        <button class="b go outlined" id="br-go-solo" type="button">Single player</button>
+        <button class="b sky outlined" id="br-go-mp" type="button">Multiplayer</button>
+        <button class="b plain outlined" id="br-go-garage" type="button">Garage</button>
+      </div>
+      <p class="br-how" id="br-home-how"></p>
+    </div>
+  </section>
+
+  <section class="br-screen" id="br-worlds" hidden>
+    <button class="hub-back outlined" id="br-worlds-back" type="button">Back</button>
+    <div class="br-col">
+      <h1 class="outlined">Pick a world</h1>
+      <div class="tally outlined"><svg viewBox="0 0 24 24" class="star-on" aria-hidden="true"><path d="M12.0 2.3 L14.9 8.8 L22.0 9.6 L16.8 14.3 L18.2 21.3 L12.0 17.8 L5.8 21.3 L7.2 14.3 L2.0 9.6 L9.1 8.8 Z"/></svg><span id="br-worlds-stars">0 / 90</span></div>
+      <div class="br-world-cards" id="br-world-cards"></div>
+    </div>
+  </section>
+
+  <section class="br-screen" id="br-levels" hidden>
+    <button class="hub-back outlined" id="br-levels-back" type="button">Worlds</button>
+    <div class="br-col">
+      <h1 class="outlined" id="br-levels-title">World</h1>
+      <p class="br-sub2" id="br-levels-sub"></p>
+      <div class="br-level-grid" id="br-level-grid"></div>
+    </div>
+  </section>
+
+  <section class="br-screen" id="br-garage" hidden>
+    <button class="hub-back outlined" id="br-garage-back" type="button">Back</button>
+    <div class="br-col">
+      <h1 class="outlined">Garage</h1>
+      <div class="tally outlined"><svg viewBox="0 0 24 24" class="star-on" aria-hidden="true"><path d="M12.0 2.3 L14.9 8.8 L22.0 9.6 L16.8 14.3 L18.2 21.3 L12.0 17.8 L5.8 21.3 L7.2 14.3 L2.0 9.6 L9.1 8.8 Z"/></svg><span id="br-garage-stars">0 / 90</span></div>
+      <div class="br-panel br-rider">
+        <label class="br-field"><span>Rider name</span><input id="br-name" type="text" maxlength="16" autocomplete="nickname" placeholder="Rider" spellcheck="false"></label>
+        <div class="br-field"><span>Paint</span><div class="br-paints" id="br-paints"></div></div>
+        <div class="br-field" id="br-tilt-row"><span>Tilt the phone to lean</span><button class="br-toggle" id="br-t-tilt" type="button" aria-pressed="false"><i></i></button></div>
+      </div>
+      <div class="br-bikes" id="br-bikes"></div>
+    </div>
+  </section>
+
+  <section class="br-screen" id="br-mp" hidden>
+    <button class="hub-back outlined" id="br-mp-back" type="button">Back</button>
+    <div class="br-col">
+      <h1 class="outlined">Multiplayer</h1>
+      <div class="br-status" id="br-mp-status" data-state="idle"><span class="dot"></span><span id="br-mp-status-text">Looking for the race server…</span></div>
+      <div class="br-panel"><label class="br-field"><span>Your name</span><input id="br-mp-name" type="text" maxlength="16" autocomplete="nickname" placeholder="Rider" spellcheck="false"></label></div>
+
+      <div id="br-mp-lobby" hidden>
+        <div class="br-panel">
+          <h3>Start a room</h3>
+          <label class="br-field"><span>Track</span><select id="br-mp-level"></select></label>
+          <button class="b go outlined" id="br-mp-create" type="button">Create room</button>
+        </div>
+        <div class="br-panel">
+          <h3>Join a friend</h3>
+          <div class="br-row"><input id="br-mp-code" type="text" maxlength="4" placeholder="CODE" autocapitalize="characters" autocomplete="off" spellcheck="false" aria-label="Room code"><button class="b sky outlined" id="br-mp-join" type="button">Join</button></div>
+        </div>
+        <div class="br-panel">
+          <h3>Open rooms</h3>
+          <ul class="br-rooms" id="br-mp-rooms"></ul>
+        </div>
+      </div>
+
+      <div id="br-mp-room" hidden>
+        <div class="br-panel br-room-head">
+          <div class="br-code">Room <b class="outlined" id="br-room-code">----</b></div>
+          <button class="b plain outlined" id="br-room-copy" type="button">Copy invite link</button>
+        </div>
+        <div class="br-panel">
+          <h3>Track</h3>
+          <select id="br-room-level" aria-label="Track"></select>
+          <p class="br-big" id="br-room-level-text"></p>
+        </div>
+        <div class="br-panel"><h3>Riders</h3><ul class="br-players" id="br-room-players"></ul></div>
+        <p class="br-note" id="br-room-note"></p>
+        <div class="btns br-room-btns">
+          <button class="b go outlined" id="br-room-start" type="button">Start race</button>
+          <button class="b plain outlined" id="br-room-leave" type="button">Leave room</button>
+        </div>
+      </div>
+
+      <div class="br-panel br-offline" id="br-mp-offline" hidden>
+        <h3>No race server here</h3>
+        <p>Live races need the site started with <code>mise run app</code>, which runs the race server next to the pages. Friends on the same network can then open the same address and join your room.</p>
+        <button class="b plain outlined" id="br-mp-retry" type="button">Try again</button>
+      </div>
+
+      <div class="br-panel">
+        <h3>Race the computer</h3>
+        <p class="br-small">Works anywhere, no server needed. Crash and you restart from the last checkpoint flag.</p>
+        <label class="br-field"><span>Track</span><select id="br-cpu-level"></select></label>
+        <div class="br-field"><span>Riders</span><div class="br-seg" id="br-cpu-count"><button type="button" data-n="1">1</button><button type="button" data-n="2">2</button><button type="button" data-n="3">3</button></div></div>
+        <button class="b go outlined" id="br-cpu-start" type="button">Race computer riders</button>
+      </div>
+    </div>
+  </section>
+
+  <div id="br-pausemenu" class="modal" hidden>
+    <div class="sheet">
+      <h2 class="outlined">Paused</h2>
+      <p id="br-pause-text"></p>
+      <div class="br-toggles">
+        <div class="br-field" id="br-p-ghost-row"><span>Ghost of best run</span><button class="br-toggle" id="br-t-ghost" type="button" aria-pressed="true"><i></i></button></div>
+        <div class="br-field"><span>Sound</span><button class="br-toggle" id="br-t-sound" type="button" aria-pressed="true"><i></i></button></div>
+        <div class="br-field" id="br-p-tilt-row"><span>Tilt the phone to lean</span><button class="br-toggle" id="br-p-tilt" type="button" aria-pressed="false"><i></i></button></div>
+      </div>
+      <div class="btns">
+        <button class="b go outlined" id="br-p-resume" type="button">Resume</button>
+        <button class="b plain outlined" id="br-p-restart" type="button">Restart</button>
+        <button class="b plain outlined" id="br-p-levels" type="button">Levels</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="br-crash" class="modal br-crash" hidden>
+    <div class="sheet">
+      <h2 class="outlined" id="br-crash-title">Wipeout!</h2>
+      <p id="br-crash-text"></p>
+      <div class="btns">
+        <button class="b go outlined" id="br-crash-retry" type="button">Try again</button>
+        <button class="b plain outlined" id="br-crash-levels" type="button">Levels</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="br-result" class="modal br-result" hidden>
+    <div class="sheet">
+      <div class="br-rstars" aria-hidden="true">
+        <svg viewBox="0 0 24 24" class="br-rstar"><path d="M12.0 2.3 L14.9 8.8 L22.0 9.6 L16.8 14.3 L18.2 21.3 L12.0 17.8 L5.8 21.3 L7.2 14.3 L2.0 9.6 L9.1 8.8 Z"/></svg>
+        <svg viewBox="0 0 24 24" class="br-rstar mid"><path d="M12.0 2.3 L14.9 8.8 L22.0 9.6 L16.8 14.3 L18.2 21.3 L12.0 17.8 L5.8 21.3 L7.2 14.3 L2.0 9.6 L9.1 8.8 Z"/></svg>
+        <svg viewBox="0 0 24 24" class="br-rstar"><path d="M12.0 2.3 L14.9 8.8 L22.0 9.6 L16.8 14.3 L18.2 21.3 L12.0 17.8 L5.8 21.3 L7.2 14.3 L2.0 9.6 L9.1 8.8 Z"/></svg>
+      </div>
+      <h2 class="outlined" id="br-res-title">Level cleared!</h2>
+      <div class="br-times">
+        <div><span>Your time</span><b id="br-res-time">0.00s</b></div>
+        <div><span>Best time</span><b id="br-res-best">0.00s</b><em id="br-res-new" hidden>New best!</em></div>
+      </div>
+      <p id="br-res-hint"></p>
+      <div class="btns">
+        <button class="b go outlined" id="br-res-next" type="button">Next level</button>
+        <button class="b plain outlined" id="br-res-retry" type="button">Retry</button>
+        <button class="b plain outlined" id="br-res-levels" type="button">Levels</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="br-raceresult" class="modal br-result" hidden>
+    <div class="sheet">
+      <h2 class="outlined" id="br-rr-title">Race over</h2>
+      <ol class="br-standings" id="br-rr-list"></ol>
+      <p class="br-note" id="br-rr-wait" hidden>The host picks what happens next.</p>
+      <div class="btns">
+        <button class="b go outlined" id="br-rr-again" type="button">Race again</button>
+        <button class="b plain outlined" id="br-rr-room" type="button">Back to room</button>
+        <button class="b plain outlined" id="br-rr-leave" type="button">Leave</button>
+      </div>
+    </div>
+  </div>
+</div>
 
 
 <script src="js/hub.js"></script>
@@ -155,6 +375,10 @@
 <script type="module" src="js/ant-sort.js"></script>
 <script type="module" src="js/castle-defender.js"></script>
 <script src="js/water-sort.js"></script>
+<script src="js/bike-race-core.js"></script>
+<script src="js/bike-race-art.js"></script>
+<script src="js/bike-race-net.js"></script>
+<script src="js/bike-race.js"></script>
 <script type="module" src="js/main.js"></script>
 </body>
 </html>

@@ -1,6 +1,6 @@
 # Pick a Game
 
-Three browser minigames: Ant Sort, Castle Defender and Water Sort.
+Four browser minigames: Ant Sort, Castle Defender, Water Sort and Bike Race (made for phones).
 
 ## Run
 
@@ -12,3 +12,6 @@ mise run app
 ```
 
 Then open http://localhost:8000.
+
+To play Bike Race with tilt on a phone, run `mise run phone` and open the address it prints on the phone.
+More in [docs/bike-race.md](docs/bike-race.md).
