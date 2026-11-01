@@ -233,17 +233,27 @@
     </div>
   </section>
 
-  <section class="br-screen" id="br-garage" hidden>
+  <section class="br-screen br-garage" id="br-garage" hidden>
     <button class="hub-back outlined" id="br-garage-back" type="button">Back</button>
-    <div class="br-col">
+    <div class="br-g-head">
       <h1 class="outlined">Garage</h1>
       <div class="tally outlined"><svg viewBox="0 0 24 24" class="star-on" aria-hidden="true"><path d="M12.0 2.3 L14.9 8.8 L22.0 9.6 L16.8 14.3 L18.2 21.3 L12.0 17.8 L5.8 21.3 L7.2 14.3 L2.0 9.6 L9.1 8.8 Z"/></svg><span id="br-garage-stars">0 / 90</span></div>
-      <div class="br-panel br-rider">
-        <label class="br-field"><span>Rider name</span><input id="br-name" type="text" maxlength="16" autocomplete="nickname" placeholder="Rider" spellcheck="false"></label>
-        <div class="br-field"><span>Paint</span><div class="br-paints" id="br-paints"></div></div>
-        <div class="br-field" id="br-tilt-row"><span>Tilt the phone to lean</span><button class="br-toggle" id="br-t-tilt" type="button" aria-pressed="false"><i></i></button></div>
+    </div>
+    <div class="br-g-body">
+      <div class="br-g-show">
+        <canvas id="br-g-stage" aria-hidden="true"></canvas>
+        <div class="br-g-info">
+          <div class="br-g-title"><h2 class="outlined" id="br-g-name">Scout</h2><span class="br-g-perk" id="br-g-perk"></span></div>
+          <p class="br-g-blurb" id="br-g-blurb"></p>
+          <div class="br-stats" id="br-g-stats"></div>
+          <div class="br-g-status" id="br-g-status" aria-live="polite"></div>
+        </div>
       </div>
-      <div class="br-bikes" id="br-bikes"></div>
+      <div class="br-g-strip" id="br-bikes" role="radiogroup" aria-label="Bikes"></div>
+      <div class="br-panel br-g-side">
+        <label class="br-field br-g-namerow"><span>Rider name</span><input id="br-name" type="text" maxlength="16" autocomplete="nickname" enterkeyhint="done" placeholder="Rider" spellcheck="false"></label>
+        <div class="br-field br-g-paintrow"><span>Paint</span><div class="br-paints" id="br-paints" role="radiogroup" aria-label="Paint"></div></div>
+      </div>
     </div>
   </section>
 
@@ -316,6 +326,7 @@
       <div class="btns">
         <button class="b go outlined" id="br-p-resume" type="button">Resume</button>
         <button class="b plain outlined" id="br-p-restart" type="button">Restart</button>
+        <button class="b plain outlined br-to-garage" id="br-p-garage" type="button">Garage</button>
         <button class="b plain outlined" id="br-p-levels" type="button">Levels</button>
       </div>
     </div>
@@ -327,6 +338,7 @@
       <p id="br-crash-text"></p>
       <div class="btns">
         <button class="b go outlined" id="br-crash-retry" type="button">Try again</button>
+        <button class="b plain outlined br-to-garage" id="br-crash-garage" type="button">Garage</button>
         <button class="b plain outlined" id="br-crash-levels" type="button">Levels</button>
       </div>
     </div>
@@ -345,9 +357,14 @@
         <div><span>Best time</span><b id="br-res-best">0.00s</b><em id="br-res-new" hidden>New best!</em></div>
       </div>
       <p id="br-res-hint"></p>
+      <button class="br-unlock" id="br-res-unlock" type="button" hidden>
+        <canvas width="132" height="84" aria-hidden="true"></canvas>
+        <span class="br-unlock-text"><b id="br-res-unlock-title"></b><span id="br-res-unlock-sub"></span><i class="br-meter" id="br-res-unlock-meter"><b></b></i></span>
+      </button>
       <div class="btns">
         <button class="b go outlined" id="br-res-next" type="button">Next level</button>
         <button class="b plain outlined" id="br-res-retry" type="button">Retry</button>
+        <button class="b plain outlined br-to-garage" id="br-res-garage" type="button">Garage</button>
         <button class="b plain outlined" id="br-res-levels" type="button">Levels</button>
       </div>
     </div>

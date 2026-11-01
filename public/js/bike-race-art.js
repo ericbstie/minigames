@@ -30,6 +30,8 @@ const PAINTS = [
   { id: 'pink', body: '#ec6fa4', dark: '#b2457a', suit: '#3b2f6b', helmet: '#ffffff' },
   { id: 'yellow', body: '#f2c230', dark: '#b38a12', suit: '#2b2b33', helmet: '#e8463c' },
   { id: 'teal', body: '#22b3a6', dark: '#14796f', suit: '#f39234', helmet: '#ffffff' },
+  { id: 'black', body: '#3d3b4a', dark: '#24222e', suit: '#e8463c', helmet: '#ffd23f' },
+  { id: 'white', body: '#f4f1ea', dark: '#bcb4a8', suit: '#3a7bd5', helmet: '#e8463c' },
 ];
 const paintAt = (i) => PAINTS[((i % PAINTS.length) + PAINTS.length) % PAINTS.length];
 
@@ -464,13 +466,21 @@ function drawMarkers(g, cam, level, t, showCheckpoints) {
 }
 
 // ---------- bike and rider ----------
-// body shapes in bike-local metres (origin at the centre of mass, y up, facing +x)
+// Body shapes in bike-local metres (origin at the centre of mass, y up, facing +x). The wheels, rider and
+// hit circles are the same on every bike (see BASE in the core); only the bodywork and wheels look different.
+//   tire: tyre depth   knobs/knobR: tread blocks (0 = road tyre)   rim: 'paint' or a colour   hub: spoke | wire | alloy
+//   tank: tank outline   tall: raises the whole body (long suspension)   tuck: rider crouches forward
 const SHAPES = {
-  scout: { tire: 0.1, tank: [[-0.5, 0.22], [-0.05, 0.36], [0.36, 0.33], [0.46, 0.16], [0.05, 0.04], [-0.35, 0.06]], fender: true, plate: '#fdfbfd' },
-  hopper: { tire: 0.08, tank: [[-0.46, 0.26], [-0.08, 0.4], [0.32, 0.36], [0.4, 0.2], [0.02, 0.1], [-0.3, 0.1]], fender: true, plate: '#fff3b0', tall: 0.06 },
-  twister: { tire: 0.09, tank: [[-0.36, 0.18], [-0.02, 0.3], [0.32, 0.3], [0.4, 0.14], [0.02, 0.02], [-0.26, 0.04]], fender: false, plate: '#7be8fc' },
-  bulldog: { tire: 0.14, tank: [[-0.56, 0.2], [-0.1, 0.42], [0.4, 0.38], [0.52, 0.12], [0.06, -0.02], [-0.42, 0.02]], fender: true, plate: '#ffd43b' },
-  comet: { tire: 0.09, tank: [[-0.6, 0.24], [-0.1, 0.32], [0.3, 0.38], [0.62, 0.16], [0.4, 0.0], [-0.3, 0.02]], fender: false, plate: '#ffffff', fairing: true },
+  scout: { tire: 0.1, knobs: 12, knobR: 0.028, rim: '#c9c6cf', hub: 'spoke', plate: '#fdfbfd', fender: 'low',
+    tank: [[-0.5, 0.22], [-0.05, 0.36], [0.36, 0.33], [0.46, 0.16], [0.05, 0.04], [-0.35, 0.06]] },
+  hopper: { tire: 0.075, knobs: 14, knobR: 0.024, rim: '#ffd23f', hub: 'wire', plate: '#fff3b0', fender: 'high', tall: 0.07, springs: true,
+    tank: [[-0.46, 0.24], [-0.08, 0.38], [0.3, 0.35], [0.38, 0.2], [0.02, 0.1], [-0.3, 0.1]] },
+  twister: { tire: 0.09, knobs: 10, knobR: 0.032, rim: 'paint', hub: 'spoke', plate: '#7be8fc', fender: 'none', frame: true, seat: 'stub', bars: 'tall',
+    tank: [[-0.18, 0.24], [0.06, 0.33], [0.32, 0.3], [0.36, 0.18], [0.08, 0.12], [-0.12, 0.14]] },
+  bulldog: { tire: 0.15, knobs: 10, knobR: 0.046, rim: '#55505d', hub: 'alloy', plate: '#ffd43b', fender: 'low', guard: true, twinPipe: true, lamp: true, skid: true,
+    tank: [[-0.56, 0.2], [-0.14, 0.44], [0.4, 0.4], [0.54, 0.14], [0.08, -0.02], [-0.42, 0.02]] },
+  comet: { tire: 0.07, knobs: 0, rim: 'paint', hub: 'alloy', fender: 'none', fairing: true, tuck: 0.35, seat: 'race',
+    tank: [[-0.36, 0.26], [-0.08, 0.38], [0.3, 0.4], [0.42, 0.26], [0.1, 0.12], [-0.26, 0.12]] },
 };
 
 function capsule(g, x0, y0, x1, y1, w, col) {
@@ -483,23 +493,49 @@ function poly(g, pts, fill) {
   g.closePath(); g.fillStyle = fill; g.fill();
   g.strokeStyle = INK; g.lineWidth = 0.045; g.stroke();
 }
-function wheel(g, x, y, r, phi, tireW) {
+// a coil spring between two points (long-travel suspension)
+function spring(g, x0, y0, x1, y1, w, col) {
+  const dx = x1 - x0, dy = y1 - y0, l = Math.hypot(dx, dy), ux = dx / l, uy = dy / l, px = -uy * w, py = ux * w, n = 7;
+  g.beginPath(); g.moveTo(x0, y0);
+  for (let i = 1; i < n * 2; i++) { const t = i / (n * 2), s = i % 2 ? 1 : -1; g.lineTo(x0 + dx * t + px * s, y0 + dy * t + py * s); }
+  g.lineTo(x1, y1);
+  g.strokeStyle = INK; g.lineWidth = 0.06; g.stroke();
+  g.strokeStyle = col; g.lineWidth = 0.032; g.stroke();
+}
+function wheel(g, x, y, r, phi, shape, paint) {
   g.save(); g.translate(x, y); g.rotate(phi);
   g.fillStyle = '#2d2a32'; g.beginPath(); g.arc(0, 0, r, 0, TAU); g.fill();
   g.strokeStyle = INK; g.lineWidth = 0.035; g.stroke();
-  // tread knobs
-  g.fillStyle = '#423e48';
-  for (let i = 0; i < 12; i++) { const a = i * TAU / 12; g.beginPath(); g.arc(Math.cos(a) * (r - 0.02), Math.sin(a) * (r - 0.02), 0.028, 0, TAU); g.fill(); }
-  const ri = r - tireW;
-  g.fillStyle = '#c9c6cf'; g.beginPath(); g.arc(0, 0, ri, 0, TAU); g.fill();
-  g.fillStyle = '#efedf2'; g.beginPath(); g.arc(0, 0, ri - 0.035, 0, TAU); g.fill();
-  g.strokeStyle = '#8f8b97'; g.lineWidth = 0.022;
-  for (let i = 0; i < 6; i++) { const a = i * TAU / 6; g.beginPath(); g.moveTo(0, 0); g.lineTo(Math.cos(a) * (ri - 0.03), Math.sin(a) * (ri - 0.03)); g.stroke(); }
+  // tread blocks, or a shiny stripe on a road tyre
+  if (shape.knobs) {
+    g.fillStyle = '#423e48';
+    const kr = shape.knobR || 0.028;
+    for (let i = 0; i < shape.knobs; i++) { const a = i * TAU / shape.knobs; g.beginPath(); g.arc(Math.cos(a) * (r - kr * 0.7), Math.sin(a) * (r - kr * 0.7), kr, 0, TAU); g.fill(); }
+  } else {
+    g.strokeStyle = 'rgba(255,255,255,0.18)'; g.lineWidth = 0.02; g.beginPath(); g.arc(0, 0, r - 0.03, 0.4, 1.6); g.stroke();
+  }
+  const ri = r - shape.tire, rim = shape.rim === 'paint' ? paint.body : shape.rim;
+  g.fillStyle = rim; g.beginPath(); g.arc(0, 0, ri, 0, TAU); g.fill();
+  g.strokeStyle = INK; g.lineWidth = 0.02; g.stroke();
+  if (shape.hub === 'alloy') {
+    // five thick spokes on a dark disc
+    g.fillStyle = '#3a3640'; g.beginPath(); g.arc(0, 0, ri - 0.03, 0, TAU); g.fill();
+    g.strokeStyle = rim; g.lineWidth = 0.045;
+    for (let i = 0; i < 5; i++) { const a = i * TAU / 5; g.beginPath(); g.moveTo(Math.cos(a) * 0.04, Math.sin(a) * 0.04); g.lineTo(Math.cos(a) * (ri - 0.03), Math.sin(a) * (ri - 0.03)); g.stroke(); }
+  } else {
+    g.fillStyle = '#efedf2'; g.beginPath(); g.arc(0, 0, ri - 0.03, 0, TAU); g.fill();
+    const n = shape.hub === 'wire' ? 12 : 6;
+    g.strokeStyle = '#8f8b97'; g.lineWidth = shape.hub === 'wire' ? 0.012 : 0.022;
+    for (let i = 0; i < n; i++) {
+      const a = i * TAU / n, b = shape.hub === 'wire' ? a + 0.5 : a;
+      g.beginPath(); g.moveTo(Math.cos(a) * 0.04, Math.sin(a) * 0.04); g.lineTo(Math.cos(b) * (ri - 0.03), Math.sin(b) * (ri - 0.03)); g.stroke();
+    }
+  }
   g.fillStyle = '#6d6975'; g.beginPath(); g.arc(0, 0, 0.05, 0, TAU); g.fill();
   g.restore();
 }
 
-// Draws a bike. pose: { x, y, a, wheels: [[x, y, phi], [x, y, phi]] | null, lean, crashed }
+// Draws a bike. pose: { x, y, a, wheels: [[x, y, phi], [x, y, phi]] | null, phi, lean, noRider }
 function drawBike(g, cam, pose, look, opts = {}) {
   const ppm = cam.ppm, type = look.bike || 'scout', shape = SHAPES[type] || SHAPES.scout, paint = look.paint || PAINTS[0];
   const B = C.BASE, r = B.radius;
@@ -512,38 +548,83 @@ function drawBike(g, cam, pose, look, opts = {}) {
   // wheel centres in bike-local space
   const ca = Math.cos(-pose.a), sa = Math.sin(-pose.a);
   const local = (wx, wy) => { const dx = wx - pose.x, dy = wy - pose.y; return [dx * ca - dy * sa, dx * sa + dy * ca]; };
-  const tall = shape.tall || 0;
+  const T = shape.tall || 0;
   let rw, fw, rphi, fphi;
   if (pose.wheels) { rw = local(pose.wheels[0][0], pose.wheels[0][1]); fw = local(pose.wheels[1][0], pose.wheels[1][1]); rphi = pose.wheels[0][2]; fphi = pose.wheels[1][2]; }
   else { rw = [B.anchors[0][0], B.anchors[0][1] - 0.04]; fw = [B.anchors[1][0], B.anchors[1][1] - 0.04]; rphi = fphi = pose.phi || 0; }
   const ghost = opts.ghost;
   if (!pose.noBike) {
-    // swingarm and fork
-    capsule(g, -0.12, -0.16 + tall, rw[0], rw[1], 0.075, '#8f8b97');
-    capsule(g, 0.4, 0.3 + tall, fw[0], fw[1], 0.065, '#d8b45a');
-    capsule(g, 0.37, 0.36 + tall, fw[0] - 0.03, fw[1] + 0.12, 0.05, '#efedf2');
-    wheel(g, rw[0], rw[1], r, rphi, shape.tire);
-    wheel(g, fw[0], fw[1], r, fphi, shape.tire);
-    g.strokeStyle = INK; g.lineWidth = 0.04;
-    // engine and exhaust
+    // swingarm, rear shock and fork
+    capsule(g, -0.12, -0.16 + T, rw[0], rw[1], 0.075, '#8f8b97');
+    if (shape.springs) spring(g, (rw[0] - 0.12) / 2, (rw[1] - 0.16 + T) / 2 + 0.02, -0.34, 0.3 + T, 0.055, '#ffd23f');
+    capsule(g, 0.4, 0.3 + T, fw[0], fw[1], 0.065, shape.springs ? '#efedf2' : '#d8b45a');
+    if (shape.springs) spring(g, fw[0] - 0.03 + (0.37 - fw[0]) * 0.2, fw[1] + 0.12 + (0.36 + T - fw[1]) * 0.2, 0.37 - (0.37 - fw[0]) * 0.12, 0.36 + T - (0.36 + T - fw[1]) * 0.12, 0.05, '#ffd23f');
+    else capsule(g, 0.37, 0.36 + T, fw[0] - 0.03, fw[1] + 0.12, 0.05, '#efedf2');
+    wheel(g, rw[0], rw[1], r, rphi, shape, paint);
+    wheel(g, fw[0], fw[1], r, fphi, shape, paint);
+    // engine, skid plate and exhaust
     poly(g, [[-0.22, -0.02], [0.18, -0.02], [0.2, -0.26], [-0.16, -0.28]], '#55505d');
-    capsule(g, 0.1, -0.2, -0.55, 0.08 + tall, 0.06, '#c9c6cf');
-    // rear fender and seat
-    if (shape.fender) poly(g, [[-0.4, 0.2 + tall], [-0.95, 0.3 + tall], [-0.9, 0.36 + tall], [-0.36, 0.3 + tall]], paint.body);
-    poly(g, [[-0.62, 0.3 + tall], [0.02, 0.38 + tall], [0.02, 0.44 + tall], [-0.58, 0.38 + tall]], '#2d2a32');
-    // tank and side panel
-    poly(g, shape.tank.map(([x, y]) => [x, y + tall]), paint.body);
+    g.fillStyle = 'rgba(255,255,255,0.18)'; g.fillRect(-0.16, -0.12, 0.3, 0.035); g.fillRect(-0.16, -0.2, 0.3, 0.035);
+    if (shape.skid) poly(g, [[-0.24, -0.26], [0.24, -0.24], [0.16, -0.36], [-0.18, -0.36]], '#8f8b97');
+    if (shape.fairing) {
+      capsule(g, 0.0, -0.24, -0.52, -0.1, 0.07, '#c9c6cf');
+      poly(g, [[-0.62, -0.06], [-0.4, -0.1], [-0.4, -0.2], [-0.62, -0.16]], '#8f8b97');
+    } else if (shape.frame) {
+      capsule(g, 0.05, -0.24, -0.46, -0.14, 0.06, '#c9c6cf');
+    } else {
+      capsule(g, 0.1, -0.2, -0.55, 0.08 + T, 0.06, '#c9c6cf');
+      if (shape.twinPipe) capsule(g, 0.12, -0.27, -0.6, -0.02 + T, 0.06, '#c9c6cf');
+    }
+    // open frame tubes (trials style)
+    if (shape.frame) {
+      capsule(g, 0.38, 0.32 + T, -0.1, -0.12 + T, 0.07, paint.dark);
+      capsule(g, -0.44, 0.34 + T, -0.12, -0.12 + T, 0.06, paint.dark);
+      capsule(g, 0.3, 0.3 + T, -0.44, 0.34 + T, 0.06, paint.dark);
+    }
+    // rear fender or tail, and the seat
+    if (shape.fender === 'low') poly(g, [[-0.4, 0.2 + T], [-0.95, 0.3 + T], [-0.9, 0.36 + T], [-0.36, 0.3 + T]], paint.body);
+    else if (shape.fender === 'high') poly(g, [[-0.42, 0.24 + T], [-1.0, 0.44 + T], [-0.96, 0.5 + T], [-0.38, 0.34 + T]], paint.body);
+    if (shape.fairing) {
+      // pointed tail with a stripe
+      poly(g, [[-0.2, 0.3], [-0.94, 0.5], [-0.92, 0.42], [-0.32, 0.12]], paint.body);
+      g.strokeStyle = paint.dark; g.lineWidth = 0.05; g.beginPath(); g.moveTo(-0.34, 0.28); g.lineTo(-0.86, 0.44); g.stroke();
+    }
+    if (shape.seat === 'stub') poly(g, [[-0.5, 0.32 + T], [-0.26, 0.36 + T], [-0.26, 0.42 + T], [-0.48, 0.38 + T]], '#2d2a32');
+    else if (shape.seat === 'race') poly(g, [[-0.44, 0.34], [0.0, 0.38], [0.0, 0.44], [-0.42, 0.4]], '#2d2a32');
+    else poly(g, [[-0.62, 0.3 + T], [0.02, 0.38 + T], [0.02, 0.44 + T], [-0.58, 0.38 + T]], '#2d2a32');
+    // tank and its shine
+    poly(g, shape.tank.map(([x, y]) => [x, y + T]), paint.body);
     g.fillStyle = 'rgba(255,255,255,0.35)';
-    g.beginPath(); g.moveTo(shape.tank[1][0], shape.tank[1][1] + tall - 0.04); g.lineTo(shape.tank[2][0] - 0.05, shape.tank[2][1] + tall - 0.05); g.lineTo(shape.tank[2][0] - 0.12, shape.tank[2][1] + tall - 0.1); g.closePath(); g.fill();
-    g.fillStyle = paint.dark; g.beginPath(); g.moveTo(-0.3, 0.12 + tall); g.lineTo(0.1, 0.1 + tall); g.lineTo(0.05, 0.18 + tall); g.lineTo(-0.28, 0.2 + tall); g.fill();
-    // front fender and number plate
-    if (!shape.fairing) poly(g, [[0.5, 0.14], [0.98, 0.12], [0.95, 0.06], [0.52, 0.06]], paint.body);
-    else poly(g, [[0.3, 0.38 + tall], [0.58, 0.5 + tall], [0.66, 0.2], [0.42, 0.06]], paint.dark);
-    poly(g, [[0.4, 0.3 + tall], [0.56, 0.44 + tall], [0.6, 0.3 + tall], [0.48, 0.2 + tall]], shape.plate);
+    g.beginPath(); g.moveTo(shape.tank[1][0], shape.tank[1][1] + T - 0.04); g.lineTo(shape.tank[2][0] - 0.05, shape.tank[2][1] + T - 0.05); g.lineTo(shape.tank[2][0] - 0.12, shape.tank[2][1] + T - 0.1); g.closePath(); g.fill();
+    if (!shape.frame && !shape.fairing) { g.fillStyle = paint.dark; g.beginPath(); g.moveTo(-0.3, 0.12 + T); g.lineTo(0.1, 0.1 + T); g.lineTo(0.05, 0.18 + T); g.lineTo(-0.28, 0.2 + T); g.fill(); }
+    // crash bars in front of the engine
+    if (shape.guard) { capsule(g, 0.46, 0.22, 0.38, -0.14, 0.05, '#55505d'); capsule(g, 0.38, -0.14, 0.14, -0.33, 0.05, '#55505d'); }
+    // front end
+    if (shape.fairing) {
+      poly(g, [[-0.22, -0.02], [0.26, 0.0], [0.38, -0.2], [0.0, -0.3], [-0.2, -0.26]], paint.dark);          // belly pan
+      poly(g, [[0.12, 0.3], [0.42, 0.58], [0.7, 0.34], [0.66, 0.06], [0.3, -0.02], [0.1, 0.1]], paint.body);   // nose
+      g.fillStyle = 'rgba(123,232,252,0.75)'; g.strokeStyle = INK; g.lineWidth = 0.035;                   // windscreen
+      g.beginPath(); g.moveTo(0.4, 0.56); g.lineTo(0.5, 0.74); g.lineTo(0.6, 0.64); g.lineTo(0.66, 0.4); g.closePath(); g.fill(); g.stroke();
+      g.fillStyle = '#fff3b0'; g.beginPath(); g.ellipse(0.62, 0.2, 0.06, 0.035, -0.6, 0, TAU); g.fill(); g.stroke();
+      g.strokeStyle = 'rgba(255,255,255,0.4)'; g.lineWidth = 0.04; g.beginPath(); g.moveTo(0.2, 0.26); g.lineTo(0.44, 0.48); g.stroke();
+      // a short front mudguard over the road tyre
+      poly(g, [[fw[0] - 0.26, fw[1] + 0.3], [fw[0] + 0.12, fw[1] + 0.38], [fw[0] + 0.16, fw[1] + 0.33], [fw[0] - 0.2, fw[1] + 0.25]], paint.dark);
+    } else {
+      if (shape.fender === 'low') poly(g, [[0.5, 0.14], [0.98, 0.12], [0.95, 0.06], [0.52, 0.06]], paint.body);
+      else if (shape.fender === 'high') poly(g, [[0.44, 0.24 + T], [1.02, 0.28 + T], [0.98, 0.2 + T], [0.48, 0.16 + T]], paint.body);
+      poly(g, [[0.4, 0.3 + T], [0.56, 0.44 + T], [0.6, 0.3 + T], [0.48, 0.2 + T]], shape.plate);
+      if (shape.lamp) {
+        g.fillStyle = '#fff3b0'; g.strokeStyle = INK; g.lineWidth = 0.035;
+        g.beginPath(); g.arc(0.6, 0.36, 0.08, 0, TAU); g.fill(); g.stroke();
+        g.fillStyle = '#ffffff'; g.beginPath(); g.arc(0.62, 0.38, 0.028, 0, TAU); g.fill();
+      }
+    }
     // handlebar
-    capsule(g, 0.42, 0.42 + tall, 0.34, 0.6 + tall, 0.045, '#55505d');
+    if (shape.bars === 'tall') { capsule(g, 0.42, 0.42 + T, 0.36, 0.68 + T, 0.045, '#55505d'); capsule(g, 0.3, 0.66 + T, 0.42, 0.64 + T, 0.035, '#55505d'); }
+    else if (shape.fairing) capsule(g, 0.44, 0.5, 0.34, 0.58, 0.045, '#55505d');
+    else capsule(g, 0.42, 0.42 + T, 0.34, 0.6 + T, 0.045, '#55505d');
   }
-  if (!pose.noRider) drawRider(g, pose.lean || 0, paint, tall, ghost);
+  if (!pose.noRider) drawRider(g, (pose.lean || 0) - (shape.tuck || 0), paint, T, ghost);
   g.restore();
 }
 function drawRider(g, lean, paint, tall, ghost) {

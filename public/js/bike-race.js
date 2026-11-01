@@ -9,8 +9,8 @@ const fmt = (t) => (t == null || !isFinite(t)) ? '--' : t.toFixed(2);
 const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const ordinal = (n) => n + (['th', 'st', 'nd', 'rd'][(n % 100 - 20) % 10] || ['th', 'st', 'nd', 'rd'][n % 100] || 'th');
 const isTouch = () => matchMedia('(pointer: coarse)').matches || 'ontouchstart' in window;
-// Steps 3 (garage) and 4 (multiplayer) of the plan switch these on. Their code is drafted below but not finished.
-const FEATURES = { garage: false, multiplayer: false };
+// Step 4 of the plan (live multiplayer) switches multiplayer on. Its code is drafted below but not finished.
+const FEATURES = { garage: true, multiplayer: false };
 // ?autopilot lets the computer rider drive your bike (used by the browser tests)
 const AUTOPILOT = /[?&]autopilot\b/.test(location.search);
 // The game is made for phones held sideways. On a computer it shows a "play on your phone" screen, unless the
@@ -21,15 +21,18 @@ const isPhone = () => isTouch();
 // ------------------------------------------------------------------------------------------------
 // Saved progress
 const SAVE_KEY = 'bikerace.v1', GHOST_KEY = 'bikerace.ghost.v1.';
-const defaults = () => ({ best: {}, stars: {}, bike: 'scout', paint: 0, name: '', ghost: true, sound: true, tilt: true, cpu: 2, lastWorld: 'clover' });
+// bike, paint and name are the garage choices; seen lists the bikes already looked at in the garage, so a newly
+// unlocked one can say "New"
+const defaults = () => ({ best: {}, stars: {}, bike: 'scout', paint: 0, name: '', seen: ['scout'], ghost: true, sound: true, tilt: true, cpu: 2, lastWorld: 'clover' });
 let save = defaults();
 try { save = Object.assign(defaults(), JSON.parse(localStorage.getItem(SAVE_KEY) || '{}')); } catch (e) {}
 const persist = () => { try { localStorage.setItem(SAVE_KEY, JSON.stringify(save)); } catch (e) {} };
+const cleanName = (v) => String(v || '').replace(/[\u0000-\u001f\u007f]/g, '').slice(0, 16);
 function loadGhost(id) {
-  try { const g = JSON.parse(localStorage.getItem(GHOST_KEY + id) || 'null'); return g && g.f ? { time: g.time, frames: C.decodeGhost(g.f) } : null; } catch (e) { return null; }
+  try { const g = JSON.parse(localStorage.getItem(GHOST_KEY + id) || 'null'); return g && g.f ? { time: g.time, bike: C.bikeById(g.bike).id, frames: C.decodeGhost(g.f) } : null; } catch (e) { return null; }
 }
-function saveGhost(id, time, frames) {
-  try { localStorage.setItem(GHOST_KEY + id, JSON.stringify({ time, f: C.encodeGhost(frames) })); } catch (e) {}
+function saveGhost(id, time, frames, bike) {
+  try { localStorage.setItem(GHOST_KEY + id, JSON.stringify({ time, bike, f: C.encodeGhost(frames) })); } catch (e) {}
 }
 const totalStars = () => C.LEVELS.reduce((n, L) => n + (save.stars[L.id] || 0), 0);
 const worldStars = (w) => w.levels.reduce((n, L) => n + (save.stars[L.id] || 0), 0);
@@ -43,6 +46,15 @@ function levelUnlocked(L) {
   return worldUnlocked(w) && (L.index === 0 || finished(w.levels[L.index - 1].id));
 }
 const bikeUnlocked = (b) => totalStars() >= b.stars;
+const nextLockedBike = () => C.BIKES.find(b => !bikeUnlocked(b)) || null;
+const newBikes = () => C.BIKES.filter(b => bikeUnlocked(b) && !save.seen.includes(b.id));
+// a save from an older version, or edited by hand, could name a bike that is locked or doesn't exist
+(function checkSave() {
+  if (!Array.isArray(save.seen)) save.seen = ['scout'];
+  if (!C.BIKES.some(b => b.id === save.bike) || !bikeUnlocked(C.bikeById(save.bike))) save.bike = 'scout';
+  save.paint = ((Math.floor(+save.paint) || 0) % A.PAINTS.length + A.PAINTS.length) % A.PAINTS.length;
+  save.name = cleanName(save.name);
+})();
 const myLook = () => ({ bike: save.bike, paint: A.paintAt(save.paint), name: save.name || 'You' });
 
 const builtLevels = new Map();
@@ -234,6 +246,7 @@ function frame(now) {
     followCamera(sess, dt);
     draw(sess);
   }
+  if (view === 'garage') drawStage(dt);
   if (view === 'play' && S) hud();
   else Sound.engine(0, 0, false);
 }
@@ -386,7 +399,7 @@ function draw(sess) {
   // ghost of the best run
   if (sess.ghost && sess.ghost.frames.length) {
     const f = ghostPose(sess.ghost.frames, sess.me.running ? sess.me.time : 0);
-    A.drawBike(g, cam, f, { bike: save.bike, paint: { body: '#ffffff', dark: '#d9d4e4', suit: '#e8e3f2', helmet: '#ffffff' } }, { alpha: 0.38, ghost: true });
+    A.drawBike(g, cam, f, { bike: sess.ghost.bike, paint: GHOST_PAINT }, { alpha: 0.38, ghost: true });
   }
   // computer riders and other players
   for (const cpu of sess.cpus) drawSimBike(cpu.bike, cpu.look, 0.85);
@@ -405,6 +418,7 @@ function draw(sess) {
     for (const [, r] of sess.remote) { const p = remotePose(r, now - 0.12); if (p && !p.crashed) A.drawTag(g, cam, p.x, p.y, r.look.name, r.look.paint.body); }
   }
 }
+const GHOST_PAINT = { body: '#ffffff', dark: '#d9d4e4', suit: '#e8e3f2', helmet: '#ffffff' };
 function drawSimBike(b, look, alpha) {
   const pose = { x: b.c.x, y: b.c.y, a: b.c.a, lean: b.leanVis, wheels: b.wheels.map(W => [W.x, W.y, W.phi]), noRider: !!b.rider };
   A.drawBike(g, cam, pose, look, { alpha });
@@ -497,7 +511,7 @@ function soloFinished(sess) {
   sess.prevBest = prev;
   sess.stars = stars;
   const unlockedBefore = C.BIKES.filter(bikeUnlocked).length;
-  if (sess.newBest) { save.best[id] = time; saveGhost(id, time, sess.rec); }
+  if (sess.newBest) { save.best[id] = time; saveGhost(id, time, sess.rec, sess.me.type.id); }
   save.stars[id] = Math.max(prevStars, stars);
   persist();
   sess.newBike = C.BIKES.filter(bikeUnlocked).length > unlockedBefore ? C.BIKES.filter(bikeUnlocked).pop() : null;
@@ -513,8 +527,9 @@ function showResult(sess) {
   ui.resNew.hidden = !sess.newBest || !sess.prevBest;
   let hint = stars < 3 ? `Finish under ${fmt(stars < 2 ? C.twoStarTime(def) : def.par)}s for ${stars < 2 ? 2 : 3} stars.` : `Under par (${fmt(def.par)}s). Nice riding.`;
   if (sess.me.flips) hint += ` ${sess.me.flips} flip${sess.me.flips > 1 ? 's' : ''} took off ${(sess.me.flips * 0.5).toFixed(1)}s.`;
-  if (sess.newBike && FEATURES.garage) hint += ` New bike unlocked: ${sess.newBike.name}!`;
   ui.resHint.textContent = hint;
+  garageButtons();
+  renderUnlock(sess);
   const nxt = nextLevelId(def.id);
   ui.resNext.hidden = !nxt || !levelUnlocked(C.levelById(nxt));
   ui.resNext.textContent = nxt && C.levelById(nxt).world !== def.world ? 'Next world' : 'Next level';
@@ -527,6 +542,7 @@ function showCrash() {
   if (S.me.crashKind === 'lava') ui.crashTitle.textContent = 'Too hot!';
   else if (S.me.crashKind === 'fall' || S.me.crashKind === 'pit') ui.crashTitle.textContent = 'Down the pit!';
   else ui.crashTitle.textContent = 'Wipeout!';
+  garageButtons();
   openModal(ui.crash);
 }
 
@@ -711,6 +727,9 @@ function renderHome() {
   for (const [id, on] of [['br-go-mp', FEATURES.multiplayer], ['br-go-garage', FEATURES.garage]]) {
     const b = $(id); b.disabled = !on; b.classList.toggle('soon', !on);
   }
+  const fresh = FEATURES.garage ? newBikes() : [];
+  $('br-go-garage').classList.toggle('has-new', fresh.length > 0);
+  $('br-go-garage').dataset.badge = fresh.length > 1 ? `${fresh.length} new bikes` : 'New bike!';
   ui.homeHow.innerHTML = isPhone()
     ? 'Hold the right side of the screen for <b>GAS</b> and the left side to <b>BRAKE</b>. Turn the phone like a steering wheel to lean the bike.'
     : 'Keyboard test mode: <b>↑</b> gas · <b>↓</b> brake · <b>←</b> lean back · <b>→</b> lean forward · <b>R</b> restart · <b>Esc</b> pause';
@@ -746,39 +765,198 @@ function renderLevels(w) {
   });
 }
 
+// ------------------------------------------------------------------------------------------------
+// Garage: pick a bike (each unlocks at a total number of stars), a paint and a rider name. Every choice is saved
+// as soon as it is made. It opens from the home menu, and from the pause, crash and result sheets during a run;
+// leaving it then goes back to that sheet, or restarts the level when the bike changed.
+const garage = { focus: 'scout', t: 0, rev: 0, hop: 0, shake: 0, from: null };
+const STAT_NAMES = [['speed', 'Speed'], ['grip', 'Grip'], ['spin', 'Flips'], ['air', 'Air']];
+const starTiny = '<svg viewBox="0 0 24 24" class="star-on" aria-hidden="true"><path d="M12.0 2.3 L14.9 8.8 L22.0 9.6 L16.8 14.3 L18.2 21.3 L12.0 17.8 L5.8 21.3 L7.2 14.3 L2.0 9.6 L9.1 8.8 Z"/></svg>';
+
+function openGarage(focus) {
+  if (!FEATURES.garage) return;
+  garage.from = null;
+  if (view === 'play' && S && S.mode !== 'online') {
+    const open = [['pause', ui.pause], ['crash', ui.crash], ['result', ui.result], ['race', ui.raceResult]].find(([, m]) => !m.hidden);
+    garage.from = { modal: open ? open[0] : 'pause', bike: save.bike };
+    S.paused = true;
+    closeModals();
+  }
+  garage.focus = focus || save.bike;
+  garage.rev = 0; garage.hop = 0; garage.shake = 0;
+  showView('garage');
+}
+function closeGarage() {
+  const from = garage.from;
+  garage.from = null;
+  if (!from || !S) { showView('home'); return; }
+  // a different bike, or a run that hadn't started yet: start the level again on the bike now chosen
+  if (from.modal === 'pause' && (from.bike !== save.bike || S.phase === 'ready')) { restart(); return; }
+  S.me.look = { ...myLook(), bike: S.me.type.id };     // new paint and name show straight away
+  enterPlay();
+  if (from.modal === 'pause') pause();
+  else if (from.modal === 'crash') openModal(ui.crash);
+  else if (from.modal === 'result') { renderUnlock(S); openModal(ui.result); }
+  else openModal(ui.raceResult);
+}
+function pickBike(b) {
+  garage.focus = b.id;
+  if (bikeUnlocked(b)) {
+    if (!save.seen.includes(b.id)) save.seen.push(b.id);
+    if (save.bike !== b.id) {
+      save.bike = b.id;
+      garage.rev = 1;
+      Sound.blip(196, 0.18, 'sawtooth', 0.1); Sound.blip(294, 0.22, 'sawtooth', 0.08, 0.1);
+      if (Net.status === 'online') sendProfile();
+      newAttract();
+    }
+    persist();
+  } else { garage.shake = 1; Sound.blip(160, 0.14, 'square', 0.08); }
+  renderGarage();
+}
+function pickPaint(i) {
+  save.paint = i; persist();
+  garage.focus = save.bike; garage.hop = 1;
+  Sound.blip(660 + i * 30, 0.08, 'triangle', 0.1);
+  if (Net.status === 'online') sendProfile();
+  if (attract) attract.me.look = { ...attract.me.look, paint: A.paintAt(i) };
+  renderGarage();
+}
 function renderGarage() {
-  ui.name.value = save.name || '';
-  ui.garageStars.textContent = `${totalStars()} / ${C.LEVELS.length * 3}`;
+  const total = totalStars();
+  ui.garageStars.textContent = `${total} / ${C.LEVELS.length * 3}`;
+  if (document.activeElement !== ui.name) ui.name.value = save.name;
   ui.bikes.innerHTML = '';
   for (const b of C.BIKES) {
-    const open = bikeUnlocked(b), st = C.bikeStats(b);
+    const open = bikeUnlocked(b), riding = save.bike === b.id, fresh = open && !save.seen.includes(b.id);
     const el = document.createElement('button');
-    el.type = 'button'; el.className = 'card br-bike' + (save.bike === b.id ? ' sel' : '') + (open ? '' : ' locked');
-    el.disabled = !open;
-    el.setAttribute('aria-pressed', save.bike === b.id ? 'true' : 'false');
-    el.innerHTML = `<canvas width="300" height="190"></canvas><div class="nm outlined">${esc(b.name)}</div><div class="ds">${esc(open ? b.blurb : 'Unlocks at ' + b.stars + ' stars')}</div>
-      <div class="br-stats">${[['Speed', st.speed], ['Grip', st.grip], ['Spin', st.spin], ['Air', st.air]].map(([k, v]) => `<div><span>${k}</span><i><b style="width:${Math.round(20 + v * 80)}%"></b></i></div>`).join('')}</div>${open ? '' : lockSvg}`;
-    el.onclick = () => { save.bike = b.id; persist(); renderGarage(); if (Net.status === 'online') sendProfile(); newAttract(); };
+    el.type = 'button';
+    el.className = 'br-gbike' + (riding ? ' riding' : '') + (open ? '' : ' locked') + (garage.focus === b.id ? ' focus' : '');
+    el.setAttribute('role', 'radio');
+    el.setAttribute('aria-checked', String(riding));
+    el.setAttribute('aria-label', open ? `${b.name}, ${b.perk}` : `${b.name}, locked until ${b.stars} stars`);
+    el.innerHTML = `<canvas width="176" height="104"></canvas><span class="nm">${esc(b.name)}</span>`
+      + `<span class="st">${riding ? 'Riding' : open ? esc(b.perk) : `${starTiny}${b.stars}`}</span>`
+      + (fresh ? '<em class="br-new">New</em>' : '') + (open ? '' : lockSvg);
+    el.onclick = () => pickBike(b);
     ui.bikes.appendChild(el);
-    requestAnimationFrame(() => drawBikePreview(el.querySelector('canvas'), b.id, save.paint));
+    drawBikeThumb(el.querySelector('canvas'), b, !open);
   }
   ui.paints.innerHTML = '';
   A.PAINTS.forEach((p, i) => {
-    const s = document.createElement('button');
-    s.type = 'button'; s.className = 'br-paint' + (i === save.paint ? ' sel' : ''); s.style.background = p.body;
-    s.setAttribute('aria-label', p.id + ' paint'); s.setAttribute('aria-pressed', i === save.paint ? 'true' : 'false');
-    s.onclick = () => { save.paint = i; persist(); renderGarage(); if (Net.status === 'online') sendProfile(); if (attract) attract.me.look = { ...attract.me.look, paint: A.paintAt(i) }; };
-    ui.paints.appendChild(s);
+    const el = document.createElement('button');
+    el.type = 'button'; el.className = 'br-paint' + (i === save.paint ? ' sel' : '');
+    el.style.setProperty('--body', p.body); el.style.setProperty('--suit', p.suit);
+    el.setAttribute('role', 'radio'); el.setAttribute('aria-label', p.id); el.setAttribute('aria-checked', String(i === save.paint));
+    el.onclick = () => pickPaint(i);
+    ui.paints.appendChild(el);
   });
-  ui.tiltRow.hidden = !isPhone();
-  syncToggles();
+  // the bike on show
+  const b = C.bikeById(garage.focus), open = bikeUnlocked(b), st = C.bikeStats(b);
+  ui.gName.textContent = b.name;
+  ui.gPerk.textContent = b.perk;
+  ui.gBlurb.textContent = b.blurb;
+  ui.gStats.innerHTML = STAT_NAMES.map(([k, label]) => `<div><span>${label}</span><i><b style="width:${Math.round(12 + st[k] * 88)}%"></b></i></div>`).join('');
+  if (save.bike === b.id) ui.gStatus.innerHTML = '<span class="br-chip go">Riding this bike</span>';
+  else if (open) {
+    ui.gStatus.innerHTML = `<button class="b go outlined br-ride" type="button">Ride ${esc(b.name)}</button>`;
+    ui.gStatus.firstElementChild.onclick = () => pickBike(b);
+  }
+  else {
+    const prev = Math.max(0, ...C.BIKES.filter(x => x.stars < b.stars).map(x => x.stars)), need = b.stars - total;
+    const pct = Math.max(0, Math.min(1, (total - prev) / (b.stars - prev)));
+    ui.gStatus.innerHTML = `<div class="br-lockline">${lockSvg}<b>${need} more star${need === 1 ? '' : 's'}</b><span class="n">${starTiny}${total} / ${b.stars}</span></div><i class="br-meter"><b style="width:${Math.round(pct * 100)}%"></b></i>`;
+  }
+  ui.garage.classList.toggle('locked', !open);
 }
-function drawBikePreview(cv, bikeId, paint) {
+// a still bike for the strip and the result sheet; locked bikes are a dark outline
+function drawBikeThumb(cv, b, locked) {
   const gg = cv.getContext('2d'), c2 = new A.Camera();
-  c2.W = cv.width; c2.H = cv.height; c2.ppm = cv.height / 2.5; c2.x = 0; c2.y = 0.25;
+  c2.W = cv.width; c2.H = cv.height; c2.ppm = Math.min(cv.height / 2.35, cv.width / 2.3); c2.x = 0; c2.y = 0.27;
+  gg.setTransform(1, 0, 0, 1, 0, 0);
   gg.clearRect(0, 0, cv.width, cv.height);
-  gg.fillStyle = 'rgba(59,35,38,0.12)'; gg.beginPath(); gg.ellipse(cv.width / 2, c2.sy(-0.78), cv.width * 0.36, 7, 0, 0, Math.PI * 2); gg.fill();
-  A.drawBike(gg, c2, { x: 0, y: 0, a: 0, lean: 0, phi: 0.4 }, { bike: bikeId, paint: A.paintAt(paint) });
+  gg.fillStyle = 'rgba(59,35,38,0.12)'; gg.beginPath(); gg.ellipse(cv.width / 2, c2.sy(-0.8), c2.ppm * 1.05, c2.ppm * 0.09, 0, 0, Math.PI * 2); gg.fill();
+  drawBikeOn(gg, c2, { x: 0, y: 0, a: 0, lean: 0, phi: 0.4 }, { bike: b.id, paint: A.paintAt(save.paint) }, locked);
+}
+const silCanvas = document.createElement('canvas');
+function drawBikeOn(gg, c2, pose, look, locked) {
+  if (!locked) { A.drawBike(gg, c2, pose, look); return; }
+  const W = gg.canvas.width, H = gg.canvas.height;
+  if (silCanvas.width !== W || silCanvas.height !== H) { silCanvas.width = W; silCanvas.height = H; }
+  const sg = silCanvas.getContext('2d');
+  sg.setTransform(1, 0, 0, 1, 0, 0); sg.globalCompositeOperation = 'source-over'; sg.clearRect(0, 0, W, H);
+  sg.setTransform(gg.getTransform());
+  A.drawBike(sg, c2, pose, look);
+  sg.setTransform(1, 0, 0, 1, 0, 0); sg.globalCompositeOperation = 'source-in';
+  sg.fillStyle = '#6b5559'; sg.fillRect(0, 0, W, H);
+  sg.globalCompositeOperation = 'source-over';
+  gg.save(); gg.setTransform(1, 0, 0, 1, 0, 0); gg.globalAlpha = 0.5; gg.drawImage(silCanvas, 0, 0); gg.restore();
+}
+// The showroom: the bike on a turntable with your name on it. It idles, pops a wheelie when you pick it,
+// hops when you repaint it, and shakes its head when you tap a locked bike.
+function drawStage(dt) {
+  const cv = ui.gStage, w = cv.clientWidth, h = cv.clientHeight;
+  if (!w || !h) return;
+  const d = Math.min(2, window.devicePixelRatio || 1);
+  if (cv.width !== Math.round(w * d) || cv.height !== Math.round(h * d)) { cv.width = Math.round(w * d); cv.height = Math.round(h * d); }
+  const gg = cv.getContext('2d');
+  gg.setTransform(d, 0, 0, d, 0, 0);
+  gg.clearRect(0, 0, w, h);
+  garage.t += dt;
+  garage.rev = Math.max(0, garage.rev - dt / 0.9); garage.hop = Math.max(0, garage.hop - dt / 0.45); garage.shake = Math.max(0, garage.shake - dt / 0.4);
+  const b = C.bikeById(garage.focus), open = bikeUnlocked(b), t = garage.t;
+  const c2 = new A.Camera();
+  c2.W = w; c2.H = h; c2.ppm = Math.max(20, Math.min(h / 3.05, w / 2.75)); c2.x = 0.02; c2.y = 0.1;
+  // spotlight and turntable
+  const cx = c2.sx(0), floor = c2.sy(-0.8), ppm = c2.ppm;
+  const glowR = Math.min(ppm * 1.9, w * 0.5, h * 0.62), glow = gg.createRadialGradient(cx, floor - ppm * 0.9, glowR * 0.1, cx, floor - ppm * 0.9, glowR);
+  glow.addColorStop(0, open ? 'rgba(255,224,130,0.55)' : 'rgba(200,190,205,0.45)'); glow.addColorStop(1, 'rgba(255,224,130,0)');
+  gg.fillStyle = glow; gg.fillRect(0, 0, w, h);
+  const rx = ppm * 1.3, ry = ppm * 0.2, band = ppm * 0.22;
+  gg.fillStyle = '#c9b8bf'; gg.beginPath(); gg.ellipse(cx, floor + band, rx, ry, 0, 0, Math.PI); gg.lineTo(cx - rx, floor); gg.ellipse(cx, floor, rx, ry, 0, Math.PI, 0, true); gg.closePath(); gg.fill();
+  gg.fillStyle = '#efe6ea'; gg.beginPath(); gg.ellipse(cx, floor, rx, ry, 0, 0, Math.PI * 2); gg.fill();
+  gg.strokeStyle = 'rgba(59,35,38,0.12)'; gg.lineWidth = 2;
+  for (let i = 0; i < 6; i++) { const a = t * 0.5 + i * Math.PI / 3; gg.beginPath(); gg.moveTo(cx, floor); gg.lineTo(cx + Math.cos(a) * rx * 0.96, floor + Math.sin(a) * ry * 0.96); gg.stroke(); }
+  gg.fillStyle = 'rgba(59,35,38,0.16)'; gg.beginPath(); gg.ellipse(cx, floor, rx * 0.78, ry * 0.55, 0, 0, Math.PI * 2); gg.fill();
+  gg.strokeStyle = '#3b2326'; gg.lineWidth = 2.5; gg.beginPath(); gg.ellipse(cx, floor, rx, ry, 0, 0, Math.PI * 2); gg.moveTo(cx - rx, floor); gg.lineTo(cx - rx, floor + band); gg.ellipse(cx, floor + band, rx, ry, 0, Math.PI, 0, true); gg.lineTo(cx + rx, floor); gg.stroke();
+  // the rider's name on the front of the turntable
+  const nm = (save.name || 'Rider').toUpperCase();
+  gg.font = `${Math.round(Math.max(10, band * 0.78))}px 'Lilita One', 'Trebuchet MS', sans-serif`; gg.textAlign = 'center'; gg.textBaseline = 'middle';
+  gg.fillStyle = '#7c6870'; gg.fillText(nm, cx, floor + band * 0.5 + ry * 0.92);
+  // the bike: idle sway, a wheelie on the back wheel when picked, a hop when repainted
+  const k = garage.rev > 0 ? Math.sin(Math.PI * (1 - garage.rev)) : 0;
+  const a = 0.32 * k, rwx = C.BASE.anchors[0][0], rwy = C.BASE.anchors[0][1] - 0.04;
+  const [ox, oy] = C.rot(a, rwx, rwy);
+  const hop = garage.hop > 0 ? 0.16 * Math.sin(Math.PI * (1 - garage.hop)) : 0;
+  const pose = { x: rwx - ox + Math.sin(t * 46) * 0.05 * garage.shake, y: rwy - oy + hop, a, lean: open ? Math.sin(t * 1.7) * 0.14 + k * 0.6 : 0, phi: 0.4 - (1 - garage.rev) * (garage.rev > 0 ? 9 : 0) };
+  drawBikeOn(gg, c2, pose, { bike: b.id, paint: A.paintAt(save.paint) }, !open);
+  if (!open) {
+    // a big padlock over the outline
+    const lx = c2.sx(0), ly = c2.sy(0.25), s = ppm * 0.36;
+    gg.fillStyle = '#fdfbfd'; gg.strokeStyle = '#3b2326'; gg.lineWidth = Math.max(2, s * 0.12);
+    gg.beginPath(); gg.arc(lx, ly - s * 0.3, s * 0.42, Math.PI, 0); gg.stroke();
+    gg.beginPath(); gg.roundRect ? gg.roundRect(lx - s * 0.62, ly - s * 0.3, s * 1.24, s * 0.95, s * 0.18) : gg.rect(lx - s * 0.62, ly - s * 0.3, s * 1.24, s * 0.95); gg.fill(); gg.stroke();
+    gg.fillStyle = '#3b2326'; gg.beginPath(); gg.arc(lx, ly + s * 0.1, s * 0.12, 0, Math.PI * 2); gg.fill(); gg.fillRect(lx - s * 0.05, ly + s * 0.1, s * 0.1, s * 0.28);
+  }
+}
+// the "new bike" or "next bike" card on the result sheet
+function renderUnlock(sess) {
+  const el = ui.resUnlock, fresh = sess && sess.newBike, next = nextLockedBike(), b = fresh || next;
+  el.hidden = !FEATURES.garage || !b;
+  ui.resGarage.classList.toggle('sky', !!fresh); ui.resGarage.classList.toggle('plain', !fresh);
+  if (el.hidden) return;
+  const total = totalStars();
+  el.classList.toggle('fresh', !!fresh);
+  ui.resUnlockTitle.textContent = fresh ? `New bike: ${fresh.name}!` : `Next bike: ${next.name}`;
+  ui.resUnlockSub.textContent = fresh ? `${fresh.perk}. Try it in the garage.` : `${total} / ${next.stars} stars`;
+  const prev = Math.max(0, ...C.BIKES.filter(x => x.stars < b.stars).map(x => x.stars));
+  ui.resUnlockMeter.hidden = !!fresh;
+  ui.resUnlockMeter.firstElementChild.style.width = Math.round(Math.max(0, Math.min(1, (total - prev) / (b.stars - prev))) * 100) + '%';
+  drawBikeThumb(el.querySelector('canvas'), b, !fresh);
+}
+function garageButtons() {
+  const off = !FEATURES.garage || (S && S.mode === 'online');
+  for (const el of document.querySelectorAll('.br-to-garage')) el.hidden = off;
 }
 
 function levelOptions(sel, selected) {
@@ -833,12 +1011,13 @@ function pause() {
   ui.pRestart.hidden = S.mode === 'online';
   ui.pLevels.textContent = S.mode === 'solo' ? 'Levels' : 'Leave race';
   ui.pGhostRow.hidden = S.mode !== 'solo';
+  garageButtons();
   syncToggles();
   openModal(ui.pause);
 }
 function resume() { closeModals(); if (S) { S.paused = false; last = performance.now(); } }
 function syncToggles() {
-  for (const [el, on] of [[ui.tGhost, save.ghost], [ui.tSound, save.sound], [ui.tTilt, save.tilt], [ui.pTilt, save.tilt]]) if (el) el.setAttribute('aria-pressed', String(!!on));
+  for (const [el, on] of [[ui.tGhost, save.ghost], [ui.tSound, save.sound], [ui.pTilt, save.tilt]]) if (el) el.setAttribute('aria-pressed', String(!!on));
   if (ui.soundBtn) ui.soundBtn.setAttribute('aria-pressed', String(!!save.sound));
   if (ui.pTiltRow) ui.pTiltRow.hidden = !isPhone();
 }
@@ -859,10 +1038,12 @@ function setup() {
     homeStars: $('br-home-stars'), homeHow: $('br-home-how'),
     worldCards: $('br-world-cards'), worldsStars: $('br-worlds-stars'),
     levelsTitle: $('br-levels-title'), levelsSub: $('br-levels-sub'), levelGrid: $('br-level-grid'),
-    bikes: $('br-bikes'), paints: $('br-paints'), name: $('br-name'), garageStars: $('br-garage-stars'), tiltRow: $('br-tilt-row'), tTilt: $('br-t-tilt'),
+    garage: $('br-garage'), bikes: $('br-bikes'), paints: $('br-paints'), name: $('br-name'), garageStars: $('br-garage-stars'),
+    gStage: $('br-g-stage'), gName: $('br-g-name'), gPerk: $('br-g-perk'), gBlurb: $('br-g-blurb'), gStats: $('br-g-stats'), gStatus: $('br-g-status'),
     pause: $('br-pausemenu'), pauseText: $('br-pause-text'), pRestart: $('br-p-restart'), pLevels: $('br-p-levels'), tGhost: $('br-t-ghost'), tSound: $('br-t-sound'), pGhostRow: $('br-p-ghost-row'), pTilt: $('br-p-tilt'), pTiltRow: $('br-p-tilt-row'),
     crash: $('br-crash'), crashTitle: $('br-crash-title'), crashText: $('br-crash-text'),
     result: $('br-result'), resStars: [...document.querySelectorAll('#br-result .br-rstar')], resTitle: $('br-res-title'), resTime: $('br-res-time'), resBest: $('br-res-best'), resNew: $('br-res-new'), resHint: $('br-res-hint'), resNext: $('br-res-next'),
+    resUnlock: $('br-res-unlock'), resUnlockTitle: $('br-res-unlock-title'), resUnlockSub: $('br-res-unlock-sub'), resUnlockMeter: $('br-res-unlock-meter'), resGarage: $('br-res-garage'),
     raceResult: $('br-raceresult'), rrTitle: $('br-rr-title'), rrList: $('br-rr-list'), rrAgain: $('br-rr-again'), rrRoom: $('br-rr-room'), rrWait: $('br-rr-wait'),
     mpStatus: $('br-mp-status'), mpStatusText: $('br-mp-status-text'), mpName: $('br-mp-name'), mpLobby: $('br-mp-lobby'), mpRoom: $('br-mp-room'), mpOffline: $('br-mp-offline'),
     mpLevel: $('br-mp-level'), mpRooms: $('br-mp-rooms'), mpCode: $('br-mp-code'),
@@ -880,16 +1061,18 @@ function setup() {
   // any tap in the game may be the first one: iOS only shows its motion permission prompt from a tap
   app.addEventListener('click', () => startTilt(), true);
   $('br-go-mp').onclick = go(() => showView('mp'));
-  $('br-go-garage').onclick = go(() => showView('garage'));
+  $('br-go-garage').onclick = go(() => openGarage());
   $('br-worlds-back').onclick = () => showView('home');
   $('br-levels-back').onclick = () => showView('worlds');
-  $('br-garage-back').onclick = () => showView('home');
+  $('br-garage-back').onclick = () => closeGarage();
   $('br-mp-back').onclick = () => { if (roomState) Net.send({ t: 'leave' }); roomState = null; showView('home'); };
   // garage
-  const setName = (v) => { save.name = v.replace(/[\u0000-\u001f]/g, '').slice(0, 16); persist(); };
+  const setName = (v) => { save.name = cleanName(v); persist(); };
   ui.name.oninput = () => setName(ui.name.value);
-  ui.name.onchange = () => { if (Net.status === 'online') sendProfile(); };
-  ui.tTilt.onclick = () => setTilt(!save.tilt);
+  ui.name.onchange = () => { ui.name.value = save.name = cleanName(ui.name.value.trim()); persist(); if (Net.status === 'online') sendProfile(); };
+  ui.name.onkeydown = (e) => { if (e.key === 'Enter') ui.name.blur(); };
+  for (const id of ['br-p-garage', 'br-crash-garage', 'br-res-garage']) $(id).onclick = go(() => openGarage(S && S.newBike && S.newBike.id));
+  ui.resUnlock.onclick = go(() => openGarage(S && S.newBike ? S.newBike.id : (nextLockedBike() || {}).id));
   // play HUD
   $('br-pause').onclick = () => pause();
   ui.retry.onclick = () => restart();
@@ -934,6 +1117,7 @@ function setup() {
   $('br-cpu-start').onclick = go(() => startCpuRace(ui.cpuLevel.value, save.cpu));
   // keyboard
   window.addEventListener('keydown', (e) => {
+    if (running && view === 'garage' && e.code === 'Escape' && !/INPUT/.test((e.target && e.target.tagName) || '')) { e.preventDefault(); closeGarage(); return; }
     if (!running || view !== 'play') return;
     if (e.target && /INPUT|SELECT|TEXTAREA/.test(e.target.tagName)) return;
     Sound.init(); Sound.resume();
