@@ -199,7 +199,7 @@ const WORLDS = [
   { id: 'ember', name: 'Ember Canyon', blurb: 'Red rock, deep gaps and big drops.', gravity: 1, levels: [
     { name: 'Dust Devil', par: 16.5, track: [['rise', 20, 4], ['step', -2], ['flat', 12], ['kicker', 8, 1.6], ['gap', 7, 0], ['flat', 22], ['hill', 30, 5], ['flat', 20], ['step', -3], ['flat', 10], ['bumps', 20, 3, 0.5], ['rise', 24, 5], ['flat', 6], ['rise', 24, -6]] },
     { name: 'Mesa Mile', par: 18.5, track: [['rise', 26, 6], ['flat', 10], ['kicker', 6, 1], ['gap', 9, -4], ['rise', 24, -2], ['flat', 8], ['table', 8, 3, 8, 12], ['bumps', 26, 3, 0.7], ['rise', 30, 8], ['flat', 8], ['step', -5], ['flat', 12], ['kicker', 9, 2], ['gap', 9, 0], ['flat', 20]] },
-    { name: 'Rattlesnake Run', par: 21, track: [['bumps', 36, 4, 0.7], ['kicker', 8, 1.8], ['gap', 8, 1], ['flat', 20], ['rise', 20, 4], ['step', -6], ['flat', 12], ['hill', 26, 4], ['hill', 26, -3], ['kicker', 9, 2.2], ['gap', 10, -2], ['flat', 20], ['bumps', 24, 3, 0.6], ['rise', 30, -4]] },
+    { name: 'Rattlesnake Run', par: 20.5, track: [['bumps', 36, 4, 0.7], ['kicker', 8, 1.8], ['gap', 8, 1], ['flat', 20], ['rise', 20, 4], ['step', -6], ['flat', 12], ['hill', 26, 4], ['hill', 26, -3], ['kicker', 9, 2.2], ['gap', 10, -2], ['flat', 20], ['bumps', 24, 3, 0.6], ['rise', 30, -4]] },
     { name: 'Spire Leap', par: 18.5, track: [['rise', 34, 9], ['kicker', 6, 1.2], ['gap', 12, -6], ['rise', 24, -3], ['flat', 6], ['kicker', 8, 1.8], ['gap', 8, 1], ['flat', 18], ['ledge', 1.2], ['flat', 8], ['ledge', 1.2], ['flat', 8], ['rise', 26, -6], ['bumps', 30, 4, 0.6], ['table', 10, 3.5, 6, 14]] },
     { name: 'Canyon Drop', par: 19, track: [['rise', 40, 12], ['flat', 6], ['step', -6], ['flat', 6], ['rise', 18, -6], ['flat', 6], ['kicker', 9, 2.4], ['gap', 12, 0], ['flat', 20], ['hill', 30, 5], ['kicker', 8, 2], ['gap', 10, 2], ['flat', 20], ['bumps', 26, 3, 0.7], ['rise', 26, -6]] },
     { name: 'Ember Gauntlet', par: 25, track: [['kicker', 8, 2], ['gap', 9, 0], ['flat', 18], ['rise', 30, 8], ['step', -4], ['bumps', 24, 3, 0.6], ['kicker', 9, 2.4], ['gap', 12, -2], ['flat', 20], ['table', 9, 3.5, 4, 12], ['flat', 10], ['ledge', 1.4], ['flat', 7], ['ledge', 1.4], ['flat', 13], ['kicker', 6, 1.2], ['gap', 8, -4], ['rise', 24, -4], ['hill', 40, 7], ['kicker', 9, 2.2], ['gap', 11, 0], ['flat', 20]] },
@@ -214,7 +214,7 @@ const WORLDS = [
   ] },
   { id: 'moon', name: 'Crater Moon', blurb: 'Low gravity, huge air and loops.', gravity: 0.42, levels: [
     { name: 'Small Step', par: 23.5, track: [['hill', 30, 2], ['flat', 20], ['kicker', 8, 1.6], ['flat', 50], ['hill', 40, -5], ['flat', 30], ['kicker', 9, 2], ['gap', 16, 0], ['flat', 50], ['bumps', 40, 3, 0.8]] },
-    { name: 'Crater Hop', par: 27.5, track: [['hill', 40, -6], ['flat', 30], ['kicker', 8, 2], ['gap', 18, 0], ['flat', 50], ['hill', 44, -8], ['flat', 30], ['loop', 4], ['flat', 14], ['kicker', 9, 2.2], ['gap', 16, 2], ['flat', 50]] },
+    { name: 'Crater Hop', par: 28, track: [['hill', 40, -6], ['flat', 30], ['kicker', 8, 2], ['gap', 18, 0], ['flat', 50], ['hill', 44, -8], ['flat', 30], ['loop', 4], ['flat', 14], ['kicker', 9, 2.2], ['gap', 16, 2], ['flat', 50]] },
     { name: 'Moonwalk', par: 30.5, track: [['loop', 4.5], ['flat', 14], ['rise', 30, 10], ['flat', 8], ['kicker', 6, 1.5], ['gap', 20, -8], ['rise', 40, -2], ['flat', 30], ['table', 10, 3, 10, 16], ['flat', 30], ['bumps', 40, 3, 0.8], ['flat', 10], ['kicker', 9, 2.4], ['gap', 18, 0], ['flat', 50]] },
     { name: 'Orbit', par: 37, track: [['kicker', 9, 2.4], ['gap', 18, 0], ['flat', 50], ['loop', 5], ['flat', 10], ['hill', 50, 8], ['flat', 40], ['kicker', 8, 2], ['gap', 20, -4], ['flat', 50], ['loop', 4.5], ['flat', 14], ['bumps', 40, 3, 0.8], ['flat', 10], ['kicker', 10, 2.6], ['gap', 22, 0], ['flat', 50]] },
     { name: 'Dark Side', par: 40, track: [['rise', 40, 14], ['flat', 6], ['kicker', 6, 1.4], ['gap', 20, -12], ['rise', 50, -2], ['flat', 20], ['loop', 5], ['flat', 10], ['table', 12, 4, 10, 18], ['flat', 30], ['hill', 50, -10], ['flat', 30], ['kicker', 10, 2.6], ['gap', 22, 2], ['flat', 50], ['bumps', 30, 2, 0.8], ['flat', 10], ['loop', 4.5], ['flat', 16]] },
@@ -248,16 +248,18 @@ const twoStarTime = (level) => Math.round(level.par * 1.3 * 10) / 10;
 // runs every bike through every level; rerun it after changing anything here.
 //   torque, maxSpin   engine pull and top wheel speed (top speed is maxSpin * radius m/s)
 //   wheelie           how much the front lifts under gas
-//   lean, leanMaxW    lean torque and the fastest spin leaning can reach (flips)
+//   lean, leanMaxW    lean push on the ground (AIR_LEAN times more in the air) and the air spin at full lean
 //   mu, iceMu         tyre grip on ground and on ice
 //   grav              share of the level's gravity the bike feels (below 1 floats longer in the air)
 //   kU, cU, travelUp  suspension spring, damping and travel
+const AIR_LEAN = 2.4, REVERSE = 0.15;   // air lean strength over ground lean; reverse speed over top wheel speed
+const WRECK_HULLS = [[-0.3, 0.3, 0.18], [0.35, 0.3, 0.18]];   // extra hit circles for the frame once it tumbles on its own
 const BASE = {
   massC: 10, inertiaC: 3.0, massW: 1.0, radius: 0.34, inertiaW: 0.09,
   anchors: [[-0.62, -0.4], [0.64, -0.4]],
   kU: 560, cU: 30, kP: 7000, cP: 90, travelUp: 0.2, travelDown: 0.1,
   torque: 30, maxSpin: 46, wheelie: 0.15, brake: 40,
-  lean: 32, leanMaxW: 7.5, mu: 1.15, iceMu: 0.28, grav: 1,
+  lean: 42, leanMaxW: 10, mu: 1.15, iceMu: 0.28, grav: 1,
   head: [0.08, 0.98, 0.21], torso: [-0.2, 0.52, 0.17],
   hulls: [[0, -0.12, 0.25], [-0.62, -0.02, 0.16], [0.6, 0.06, 0.15]],
 };
@@ -267,22 +269,22 @@ const BIKES = [
     blurb: 'Steady and forgiving. Good at a bit of everything.', tune: {} },
   { id: 'hopper', name: 'Hopper', stars: 10, perk: 'Big air',
     blurb: 'Light and springy. Floats over gaps, but drifts on the moon.',
-    tune: { massC: 8.6, inertiaC: 2.6, kU: 480, cU: 22, travelUp: 0.28, torque: 29, grav: 0.86, mu: 1.05 } },
+    tune: { massC: 8.6, inertiaC: 2.6, kU: 480, cU: 22, travelUp: 0.28, torque: 29, grav: 0.86, mu: 1.05, lean: 38 } },
   { id: 'twister', name: 'Twister', stars: 25, perk: 'Fast flips',
     blurb: 'Spins round in a flash, so flips come easy. Twitchy on the ground.',
-    tune: { lean: 52, leanMaxW: 12.5, inertiaC: 2.5, wheelie: 0.18 } },
+    tune: { lean: 58, leanMaxW: 14, inertiaC: 2.5, wheelie: 0.18 } },
   { id: 'bulldog', name: 'Bulldog', stars: 45, perk: 'Grip',
     blurb: 'Heavy and grippy. Climbs ice like it is dry, but drops fast off jumps.',
-    tune: { massC: 12.5, inertiaC: 4.3, mu: 1.5, iceMu: 0.55, torque: 40, maxSpin: 44.5, wheelie: 0.08, lean: 38, leanMaxW: 6.5, kU: 640, cU: 36, grav: 1.05 } },
+    tune: { massC: 12.5, inertiaC: 4.3, mu: 1.5, iceMu: 0.55, torque: 40, maxSpin: 44.5, wheelie: 0.08, lean: 48, leanMaxW: 8.5, kU: 640, cU: 36, grav: 1.05 } },
   { id: 'comet', name: 'Comet', stars: 70, perk: 'Top speed',
     blurb: 'The fastest bike. Pulls big wheelies and slides on ice.',
-    tune: { maxSpin: 53, torque: 37, wheelie: 0.28, lean: 30, mu: 1.08, iceMu: 0.22 } },
+    tune: { maxSpin: 53, torque: 37, wheelie: 0.28, lean: 40, mu: 1.08, iceMu: 0.22 } },
 ];
 for (const b of BIKES) b.spec = Object.assign({}, BASE, b.tune);
 const bikeById = (id) => BIKES.find(b => b.id === id) || BIKES[0];
 // Seconds to lean through one full turn from a standstill in the air (ignores air drag).
 function flipTime(s) {
-  const acc = s.lean / s.inertiaC, w = s.leanMaxW, spinUp = w / acc, turned = w * w / (2 * acc);
+  const acc = s.lean * AIR_LEAN / s.inertiaC, w = s.leanMaxW, spinUp = w / acc, turned = w * w / (2 * acc);
   return turned >= TAU ? Math.sqrt(2 * TAU / acc) : spinUp + (TAU - turned) / w;
 }
 // 0..1 ratings for the garage bars, worked out from the tuning above
@@ -291,7 +293,7 @@ function bikeStats(b) {
   return {
     speed: clamp((s.maxSpin * s.radius - 13.5) / 5 * 0.8 + (s.torque / (s.massC + 2 * s.massW) - 2.3) * 0.2, 0, 1),
     grip: clamp((s.mu - 0.9) / 0.7 * 0.6 + (s.iceMu - 0.15) / 0.45 * 0.4, 0, 1),
-    spin: clamp((1.45 - flipTime(s)) / 0.65, 0, 1),
+    spin: clamp((1.0 - flipTime(s)) / 0.45, 0, 1),
     air: clamp((1.1 - s.grav) / 0.25 + (s.travelUp - 0.2) * 1.5, 0, 1),
   };
 }
@@ -330,6 +332,7 @@ class Bike {
     this.leanVis = 0;
     this.events = [];
     this.rider = null;             // the tumbling rider after a crash
+    this.loose = false;            // after a crash the wheels come off and everything tumbles on its own
     this.checkpoint = 0;           // index of the last checkpoint passed (multiplayer respawns)
     this.disabledGroups.clear();
     for (const L of this.sim.level.loops) this.disabledGroups.add(L.gB);
@@ -355,11 +358,12 @@ class Bike {
     const s = this.s, c = this.c, g = this.gravity, T = this.sim.level.terrain;
     const live = !this.crashed && !this.finished;
     const inp = live ? this.input : (this.finished ? { gas: 0, brake: 1, lean: 0 } : { gas: 0, brake: 0, lean: 0 });
-    this.leanVis += (clamp(inp.lean, -1, 1) - this.leanVis) * Math.min(1, dt * 12);
+    this.leanVis += (clamp(inp.lean, -1, 1) - this.leanVis) * Math.min(1, dt * 18);
     let fx = 0, fy = -g * s.massC, tq = 0;
     const ca = Math.cos(c.a), sa = Math.sin(c.a);
     const ux = -sa, uy = ca, px = ca, py = sa;   // chassis up and forward axes
-    for (let i = 0; i < 2; i++) {
+    if (this.loose) for (const W of this.wheels) W.vy -= g * dt;
+    else for (let i = 0; i < 2; i++) {
       const W = this.wheels[i], [lx, ly] = s.anchors[i];
       const rx = lx * ca - ly * sa, ry = lx * sa + ly * ca;
       const Ax = c.x + rx, Ay = c.y + ry;
@@ -379,21 +383,33 @@ class Bike {
       R.om = Math.max(-s.maxSpin, R.om - (s.torque * inp.gas / s.inertiaW) * dt);
       tq += s.wheelie * s.inertiaW * (before - R.om) / dt;
     }
-    if (inp.brake > 0) for (const W of this.wheels) {
-      const d = (s.brake * inp.brake / s.inertiaW) * dt;
-      W.om = Math.abs(W.om) <= d ? 0 : W.om - Math.sign(W.om) * d;
+    if (inp.brake > 0) {
+      if (live && !inp.gas && this.grounded && c.vx * px + c.vy * py < 0.5) {
+        // stopped (or rolling back): holding the brake backs the bike up slowly
+        const top = s.maxSpin * REVERSE;
+        if (R.om < top) R.om = Math.min(top, R.om + (s.torque * 0.5 * inp.brake / s.inertiaW) * dt);
+      } else for (const W of this.wheels) {
+        const d = (s.brake * inp.brake / s.inertiaW) * dt;
+        W.om = Math.abs(W.om) <= d ? 0 : W.om - Math.sign(W.om) * d;
+      }
     }
     for (const W of this.wheels) W.om *= 1 - 0.15 * dt;      // bearing drag
     const lean = clamp(inp.lean, -1, 1);
-    if (lean && !(Math.sign(lean) === Math.sign(c.w) && Math.abs(c.w) > s.leanMaxW)) tq += lean * s.lean;
-    if (!this.grounded && !lean) c.w *= 1 - 0.4 * dt;
+    if (this.grounded) {
+      // on the ground leaning is a push: lean back to pull a wheelie, forward to keep the nose down
+      if (lean && !(Math.sign(lean) === Math.sign(c.w) && Math.abs(c.w) > s.leanMaxW)) tq += lean * s.lean;
+    } else if (live) {
+      // in the air the lean sets how fast the bike turns, so it starts and stops turning almost at once
+      const want = lean * s.leanMaxW, rate = lean ? 10 : 3.5, most = s.lean * AIR_LEAN;
+      tq += clamp((want - c.w) * rate * s.inertiaC, -most, most);
+    } else c.w *= 1 - 0.4 * dt;   // a wreck, or a bike past the finish, just tumbles
     // integrate
     c.vx += (fx / s.massC) * dt; c.vy += (fy / s.massC) * dt; c.w += (tq / s.inertiaC) * dt;
     const drag = 1 - 0.012 * dt;
     c.vx *= drag; c.vy *= drag;
     c.x += c.vx * dt; c.y += c.vy * dt; c.a += c.w * dt;
     for (const W of this.wheels) { W.x += W.vx * dt; W.y += W.vy * dt; W.phi += W.om * dt; }
-    this.bumpStops();
+    if (!this.loose) this.bumpStops();
     // collisions
     let touching = false;
     for (const W of this.wheels) { if (this.collideWheel(W, T)) touching = true; W.age += dt; }
@@ -482,7 +498,7 @@ class Bike {
 
   collideHulls(T) {
     const s = this.s, c = this.c;
-    for (const [lx, ly, r] of s.hulls) {
+    for (const [lx, ly, r] of this.loose ? (s.wreckHulls || (s.wreckHulls = s.hulls.concat(WRECK_HULLS))) : s.hulls) {
       const [hx, hy] = this.toWorld(lx, ly);
       for (const i of T.near(hx)) {
         const g = T.group[i];
@@ -542,6 +558,9 @@ class Bike {
     this.crashed = true; this.crashAt = this.time; this.crashKind = kind;
     const c = this.c, [hx, hy] = this.toWorld(this.s.torso[0], this.s.torso[1] + 0.2);
     this.rider = { x: hx, y: hy, vx: c.vx * 0.8 - c.w * 0.4, vy: c.vy * 0.8 + 2.5, a: c.a, w: c.w + (c.vx > 0 ? -4 : 4), r: 0.3 };
+    // the wheels pop off: the back one up and behind, the front one up and ahead
+    this.loose = true;
+    this.wheels.forEach((W, i) => { W.vx += i ? 1.6 : -1.2; W.vy += i ? 3.4 : 2.6; W.om += i ? -6 : 6; });
     this.events.push({ type: 'crash', kind });
   }
   stepRider(dt, T, g) {

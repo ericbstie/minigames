@@ -6,7 +6,14 @@ genre (throttle, lean, flips, head-first crashes, timed runs, stars, ghosts) wit
 ## Playing
 
 Hold the phone sideways. Turn it like a steering wheel to lean the bike: anticlockwise leans back, clockwise
-leans forward. Hold the right half of the screen for gas and the left half to brake.
+leans forward. Hold the right half of the screen for gas and the left half to brake; keep holding the brake once
+the bike has stopped and it backs up slowly. Before the start the two halves are tinted red and green with a
+dashed line between them, so it's clear which is which.
+
+In the air the tilt sets how fast the bike turns, so a small turn of the phone gives a slow rotation, a full turn
+(14°) a fast one, and levelling the phone stops the spin within about a quarter of a second. On the ground, leaning
+back pulls a wheelie and leaning forward keeps the nose down. A crash throws the rider off and the wheels come off
+the bike.
 
 Five worlds with six levels each: Clover Hills, Ember Canyon, Frostbite Pass (ice), Crater Moon (low gravity and
 loops) and Magma Works (lava). Finish a level to open the next one, and finish a world to open the next world.
@@ -29,7 +36,7 @@ it. On Android, tapping Single player also goes fullscreen and locks the screen 
 either from a web page.
 
 On a computer the game shows a "Made for phones" screen with the page address. Its "Try it here with the
-keyboard" button is for testing: ↑ ride, ↓ brake, ← lean back, → lean forward, R restart, Esc pause.
+keyboard" button is for testing: ↑ ride, ↓ brake (then back up), ← lean back, → lean forward, R restart, Esc pause.
 
 ## Racing other people
 
@@ -48,7 +55,8 @@ open the invite link (the Invite button shares it on phones; elsewhere it copies
 - The winner gets a win next to their name in the room. The host can race again from the results; the others can
   go back to the room, where the last race's standings stay up.
 - "Leave race" in the pause menu gives up the race but stays in the room. Leave room, or Back, leaves it.
-- If the host leaves, the next rider to have joined becomes host.
+- If the host leaves, or drops out between races, the next rider to have joined who is still connected becomes
+  host, so the others can carry on.
 - A phone that loses its connection (screen locked, another app opened, Wi-Fi blip) reconnects by itself and
   keeps its place for 45 seconds. A finish made while offline is sent when it's back.
 
@@ -72,18 +80,19 @@ the lean buttons.
 
 ```
 public/js/bike-race-core.js   physics, track builder, worlds and levels, bikes, computer rider, ghost encoding
-public/js/bike-race-art.js    canvas drawing: themes, skies, parallax, terrain, props, loops, bikes, riders, particles
+public/js/bike-race-art.js    canvas drawing: world backdrops, the track line, lava, loops, flags, bikes, riders, particles
 public/js/bike-race-net.js    the connection to the race server: WebSocket or event stream, reconnecting
 public/js/bike-race.js        the game: saves, sound, tilt and touch input, camera and loop, sessions, HUD, menus
 public/index.html             #br-app markup (canvas, HUD, touch areas, screens, modals) and the script tags
 public/css/styles.css         the "Bike Race" section, all classes start with br-
 public/js/hub.js              routes #bike-race and #bike-race/<code> to the game
-public/assets/img/bike-race.jpg   menu card picture
+public/assets/img/bike-race.jpg   menu card picture, made by tools/render-bike-race-card.js
 tools/serve.py                the site server and race server behind `mise run app` and `mise run phone`
 tools/check-bike-levels.js    proves every bike can finish every level and suggests par times
 tools/test-bike-race-browser.js   phone-sized browser tests for the garage and the sheets around it
 tools/test-bike-race-online.js    live races between phones in the browser, and the no-server fallback
 tools/test-race-server.js     the race server's messages, without a browser
+tools/render-bike-race-card.js    redraws the menu card picture with the game's own drawing code
 ```
 
 ## How the code fits together
@@ -92,20 +101,40 @@ tools/test-race-server.js     the race server's messages, without a browser
   - `buildLevel(world, def)` walks a list of track pieces (`flat`, `hill`, `bumps`, `kicker`, `gap`, `table`,
     `ledge`, `step`, `loop`, `ice`, ...) and returns the terrain, finish line, checkpoints and drawing data.
   - `Sim` steps every bike at a fixed 1/120 s with 5 substeps. `Bike` is a chassis plus two sprung wheels, and
-    crashes when the head or body hits the ground or the bike falls into a pit or lava.
+    crashes when the head or body hits the ground or the bike falls into a pit or lava. On a crash `bike.loose`
+    turns the springs off, so the wheels and the frame tumble on their own (the frame gets two extra hit circles,
+    `WRECK_HULLS`), and the rider becomes a separate body (`bike.rider`).
   - Bike input is `{ gas, brake, lean }`, with lean from -1 (forward) to 1 (back). Tilt gives values in between.
+  - Leaning works two ways (see `Bike.step`). On the ground it is a push of `lean` (the bike's tuning) times the
+    input. In the air it steers the spin rate towards input × `leanMaxW`, with a push of at most `lean` ×
+    `AIR_LEAN`, and with no input it brings the spin to a stop. That is what makes the air control snappy: the
+    bike turns while the phone is turned and stops when it's level.
+  - Braking slows both wheels. Once the bike is stopped or rolling back on the ground, holding the brake (without
+    gas) drives the back wheel backwards, up to `REVERSE` (15%) of top speed.
   - Bikes report what happened through `bike.events` (flip, land, crash, finish).
   - `botInput(bike, cfg)` is the computer rider. The level checker, the menu background rider, `?autopilot`
     and the computer racers all use it.
   - Ghosts are 20 frames a second of `[x, y, angle]`, packed by `encodeGhost` / `decodeGhost`.
 - `bike-race-art.js` (`window.BikeRaceArt`) only draws. It takes a `Camera` and plain poses, and never touches
   the simulation.
+  - The track is a thin line (`theme.line` with a darker `theme.lineEdge`, plus a pale `halo` on the dark moon
+    and magma worlds) over the backdrop. Nothing is filled in under it. Ice stretches are pale blue. Pit walls and
+    floors are left out, so a pit is a break in the line; lava is a pool drawn in the gap after the bikes
+    (`drawHazards`), so a bike sinks into it. Loops are circles of the same line.
+  - Each world in `THEMES` is a sky (two or three colours, a sun or planet, clouds, stars or sparks) and four
+    flat parallax layers that run to the bottom of the screen. Layer fields are listed above `THEMES`: ridge
+    shape (`peaks` for pointed mountains with optional snow `caps`, `flat` for plateaus, `round` for hills), a top
+    and bottom colour, a lit `rim`, and a `deco` drawn along the ridge (trees, windmills, arches, rock columns,
+    pines, domes, aerials, craters, chimneys, a volcano, glowing cracks).
+  - The finish is one pole with a chequered flag that ripples. The start has a small post.
+- The camera (`followCamera` in `bike-race.js`) zooms out a little in the air and, when the ground below is far
+  away (a big jump or drop), pulls back and lowers itself so the landing stays on screen.
 - `bike-race.js` (`window.BikeRace`) owns everything else. A *session* (`makeSession(mode, levelId)`) holds one
   run: the sim, your bike, the ghost and the phase (`ready`, `countdown`, `run`, `crashed`, `finished`). The modes
   are `solo`, `cpu`, `online` and `attract` (the menu background).
 - Tilt lives in the "Input" section of `bike-race.js`. `tiltAngle(beta, gamma, screenAngle)` works out which way
   is down on the screen from the `deviceorientation` angles, so it reads the steering-wheel turn however far the
-  phone is tipped back. Full lean is 24°, with a 2.5° dead zone around level. `tilt.state` is `idle`, `asking`,
+  phone is tipped back. Full lean is 14° (`TILT_FULL`), with a 1.5° dead zone around level (`TILT_DEAD`). `tilt.state` is `idle`, `asking`,
   `waiting`, `on`, `denied`, `nosensor` or `insecure`, and `refreshControls()` picks the touch layout from it.
 
 ## Garage
@@ -118,20 +147,21 @@ on the right are your rider name and ten paints. Picks save as soon as they are 
 |---|---|---|---|
 | Scout | 0 | All-rounder | none |
 | Hopper | 10 | Big air | light, soft long-travel springs, 86% gravity, a bit less grip |
-| Twister | 25 | Fast flips | strong, fast lean: a flip takes 0.94 s against 1.32 s |
+| Twister | 25 | Fast flips | strong, fast lean: a flip takes 0.70 s against 0.89 s |
 | Bulldog | 45 | Grip | heavy, grippy tyres (ice grip 0.55 against 0.28), strong pull, slow lean, falls a bit faster |
 | Comet | 70 | Top speed | top speed 18 m/s against 15.6, quick off the line, big wheelies, slides on ice |
 
 There are 90 stars in all. What the computer rider measures on flat ground (top speed, 0 to 10 m/s, time for
-one flip, and time and distance in the air off an 8 m long, 2 m high kicker taken at 11 m/s):
+one flip at full lean from a standstill in the air, and time and distance in the air off an 8 m long, 2 m high
+kicker taken at 11 m/s):
 
 | Bike | Top speed | 0–10 m/s | Flip | Air |
 |---|---|---|---|---|
-| Scout | 15.6 m/s | 1.57 s | 1.32 s | 0.97 s, 8.7 m |
-| Hopper | 15.6 m/s | 1.47 s | 1.27 s | 1.10 s, 10.0 m |
-| Twister | 15.6 m/s | 1.57 s | 0.94 s | 0.96 s, 8.6 m |
-| Bulldog | 15.1 m/s | 1.39 s | 1.42 s | 0.93 s, 8.4 m |
-| Comet | 18.0 m/s | 1.27 s | 1.35 s | 0.97 s, 8.8 m |
+| Scout | 15.6 m/s | 1.57 s | 0.89 s | 0.97 s, 8.7 m |
+| Hopper | 15.6 m/s | 1.47 s | 0.90 s | 1.10 s, 10.0 m |
+| Twister | 15.6 m/s | 1.57 s | 0.70 s | 0.96 s, 8.6 m |
+| Bulldog | 15.1 m/s | 1.39 s | 1.00 s | 0.93 s, 8.4 m |
+| Comet | 18.0 m/s | 1.27 s | 0.91 s | 0.97 s, 8.8 m |
 
 Bulldog climbs an icy hill in 5.3 s where Scout takes 6.9 s. Hopper is the slowest on the moon, because it
 floats too long there.
@@ -140,7 +170,7 @@ floats too long there.
   `blurb` and `tune`, which is merged over `BASE`. Two tuning values were added for the garage: `iceMu` (grip on
   ice) and `grav` (multiplies the level's gravity, read through `bike.gravity`).
 - `bikeStats(bike)` turns the tuning into the four 0 to 1 bars (Speed, Grip, Flips, Air). `flipTime(tune)` is
-  the time for one full flip.
+  the time for one full flip, ignoring the slow-down as the spin reaches its top rate.
 - Looks are in `SHAPES` in `bike-race-art.js`: tyres, rims, springs, fenders, frame, fairing and how far the
   rider tucks. Paints are `PAINTS` (10 of them).
 - Locked bikes are drawn as grey silhouettes with a padlock and "N more stars". Tapping one shakes it.
@@ -306,20 +336,33 @@ All are JSON objects with a type in `t`.
   shrink (`min-width: 0`). That is why `.br-panel` sets both; without them the multiplayer screen scrolled
   sideways at 568 px.
 
-## Next: polish and ship (step 5)
+## Menu picture
 
-Live races are done and tested in headless Chromium, but never on real phones. What step 5 should cover:
+```sh
+node tools/render-bike-race-card.js                       # writes public/assets/img/bike-race.jpg
+node tools/render-bike-race-card.js --level=ember-1 --t=5 --out=/tmp/card.jpg
+```
 
-- A real phone pass on an iPhone and an Android phone over `mise run phone`: tilt feel (full lean at 24°, the
-  2.5° dead zone), the certificate warning flow, and a live race between two phones. Note which transport each
-  phone ends up on (`BikeRaceNet.transport` in the console, or add it to the room screen): if iPhones use the
-  event stream, check the poses still look smooth.
-- A full browser test pass: `node tools/test-bike-race-browser.js`, `node tools/test-bike-race-online.js`,
-  `node tools/test-race-server.js` and `node tools/check-bike-levels.js --robust`, plus a look at every screen at
-  the six phone sizes the garage test uses.
-- The menu picture for the Pick a Game screen (`public/assets/img/bike-race.jpg`) is a render from step 1 of one
-  rider and a ghost. It could show a live race now, with riders in different paints and name tags.
-- Rough edges seen while building step 4: the room code and track are the only things a rider joining mid-race
-  sees (no way to watch the race on); the "Your name" field and the garage name are the same setting in two
-  places; a host who drops out keeps the room for 45 s before the next rider can start.
+It races three computer riders (Comet, Scout and Twister, held to the same speed so they stay together) on a real
+level, stops the clock at `--t` seconds and draws that moment with `bike-race-art.js` at 1280x960, then saves it
+as a 640x480 JPEG. Run it again after changing the art so the card matches the game.
 
+## On a real phone
+
+Everything above is tested in headless Chromium posing as a phone. These need a real iPhone and a real Android
+phone on `mise run phone`:
+
+- Tilt feel: full lean at 14° and the 1.5° dead zone. Is a full flip easy to start and stop? Too twitchy riding
+  along? `TILT_FULL` and `TILT_DEAD` in `bike-race.js`, and `AIR_LEAN` and each bike's `lean` and `leanMaxW` in
+  the core, are the knobs.
+- iPhone: the motion permission prompt on the first tap, and what happens after "Don't Allow" (lean arrows and
+  the "Motion access is off" line in the pause menu).
+- The certificate warning on each phone, then a live race between the two. The room screen shows how each phone
+  is connected ("Connected over a WebSocket" or "an event stream") and the ping; on the event stream, check the
+  other bike still moves smoothly.
+- Locking the screen mid-race and coming back, and switching apps: the run pauses, sound stops and comes back.
+- Android: Single player goes fullscreen and locks sideways.
+- Sound on iPhone with the ring/silent switch on silent (web audio follows it on some iOS versions).
+
+Known gaps: a rider who joins a room mid-race only sees the room until the next race (no watching), and the
+"Your name" field in Multiplayer and the garage name are the same setting shown in two places.

@@ -77,7 +77,16 @@ const Sound = {
     try { this.ctx = new AC(); } catch (e) { return; }
     this.master = this.ctx.createGain(); this.master.gain.value = save.sound ? 0.6 : 0; this.master.connect(this.ctx.destination);
   },
-  resume() { if (this.ctx && this.ctx.state === 'suspended') this.ctx.resume(); },
+  resume() { if (this.ctx && this.ctx.state !== 'running' && !document.hidden) this.ctx.resume().catch(() => {}); },
+  // iPhones start Web Audio only from inside a tap; a silent sound played then unlocks it for good
+  unlock() {
+    this.init(); this.resume();
+    if (!this.ctx || this.unlocked) return;
+    this.unlocked = true;
+    try { const s = this.ctx.createBufferSource(); s.buffer = this.ctx.createBuffer(1, 1, 22050); s.connect(this.ctx.destination); s.start(0); } catch (e) {}
+  },
+  // a page in the background must not keep humming (phones keep Web Audio running for other tabs and apps)
+  suspend() { if (this.ctx && this.ctx.state === 'running') this.ctx.suspend().catch(() => {}); },
   setOn(on) { if (this.master) this.master.gain.setTargetAtTime(on ? 0.6 : 0, this.ctx.currentTime, 0.05); },
   engineOn() {
     if (!this.ctx || this.eng) return;
@@ -123,6 +132,8 @@ const Sound = {
   flip() { this.blip(660, 0.1); this.blip(990, 0.16, 'triangle', 0.18, 0.08); },
   count(go) { this.blip(go ? 880 : 440, go ? 0.35 : 0.15, 'square', 0.12); },
   finish() { [523, 659, 784, 1046].forEach((f, i) => this.blip(f, 0.22, 'triangle', 0.2, i * 0.09)); },
+  checkpoint() { this.blip(784, 0.1, 'triangle', 0.14); this.blip(1175, 0.18, 'triangle', 0.14, 0.07); },
+  tap() { this.blip(520, 0.05, 'triangle', 0.08); },
 };
 
 // ------------------------------------------------------------------------------------------------
@@ -134,7 +145,7 @@ const Sound = {
 const keys = new Set();
 const touchCtl = { gas: false, brake: false, back: false, fwd: false };
 const KEYMAP = { ArrowUp: 'gas', KeyW: 'gas', Space: 'gas', ArrowDown: 'brake', KeyS: 'brake', ArrowLeft: 'back', KeyA: 'back', ArrowRight: 'fwd', KeyD: 'fwd' };
-const TILT_FULL = 24, TILT_DEAD = 2.5;     // degrees of turn for full lean, and the dead zone around level
+const TILT_FULL = 14, TILT_DEAD = 1.5;     // degrees of turn for full lean, and the dead zone around level
 const DEG = Math.PI / 180;
 // state: idle (not started) | asking (iOS prompt open) | waiting (listening, no reading yet) | on | denied | nosensor | insecure
 const tilt = { state: 'idle', angle: 0, lean: 0, asked: false, told: '', timer: 0 };
@@ -191,6 +202,11 @@ function startTilt() {
   } else listenTilt();
   refreshControls();
 }
+// why tilt is off, under the switch in the pause menu
+const TILT_WHY = { denied: 'Motion access is off for this site', insecure: 'Needs an https address', nosensor: 'No tilt sensor found' };
+function syncTiltWhy() {
+  if (ui.pTiltWhy) ui.pTiltWhy.textContent = save.tilt && isPhone() ? TILT_WHY[tilt.state] || '' : '';
+}
 function setTilt(on) {
   save.tilt = on; persist();
   if (on) startTilt();
@@ -202,6 +218,8 @@ function refreshControls() {
   const tiltOn = useTilt() || (save.tilt && ['waiting', 'asking'].includes(tilt.state));
   ui.touch.classList.toggle('tilt', tiltOn);
   ui.touch.classList.toggle('buttons', !tiltOn);
+  app.classList.toggle('tilt-on', tiltOn);
+  syncTiltWhy();
   if (!isPhone() || !save.tilt || tilt.told === tilt.state || view !== 'play') return;
   const why = { denied: 'Motion access is off, so lean with the arrows. To tilt, allow motion for this site and reload.',
     insecure: 'Tilt needs an https address. Lean with the arrows for now.',
@@ -226,7 +244,7 @@ function resize() {
   canvas.width = Math.round(w * dpr); canvas.height = Math.round(h * dpr);
   cam.W = w; cam.H = h;
 }
-function basePpm() { return Math.max(16, Math.min(72, Math.min(cam.H / 10.5, cam.W / 16))); }
+function basePpm() { return Math.max(16, Math.min(72, Math.min(cam.H / 11.5, cam.W / 17))); }
 
 function frame(now) {
   if (!running) return;
@@ -252,11 +270,14 @@ function frame(now) {
 
 function followCamera(sess, dt, snap) {
   const b = sess.me, c = b.c;
-  const ppmT = basePpm() * (1 / (1 + 0.22 * Math.min(1, b.airborne / 0.8)) - Math.min(0.12, Math.max(0, c.vx - 8) * 0.012));
+  const lead = Math.max(-2, Math.min(5, c.vx * 0.3));
+  // high over the ground (a big jump or a drop), pull back and frame the landing too
+  const below = sess.level.terrain.surface(c.x + lead * 0.6, c.y);
+  const high = below ? Math.max(0, Math.min(9, c.y - below.y - 2.2)) : 0;
+  const ppmT = basePpm() * (1 / (1 + 0.18 * Math.min(1, b.airborne / 0.8) + 0.045 * high) - Math.min(0.12, Math.max(0, c.vx - 8) * 0.012));
   const k = snap ? 1 : 1 - Math.exp(-dt * 2.2);
   cam.ppm += (ppmT - cam.ppm) * k;
-  const lead = Math.max(-2, Math.min(5, c.vx * 0.3));
-  const tx = c.x + lead + cam.W * 0.1 / cam.ppm, ty = c.y + 1.2 + Math.max(-1.5, Math.min(1.5, c.vy * 0.08));
+  const tx = c.x + lead + cam.W * 0.1 / cam.ppm, ty = c.y + 1.2 - high * 0.55 + Math.max(-1.5, Math.min(1.5, c.vy * 0.08));
   const kx = snap ? 1 : 1 - Math.exp(-dt * 7), ky = snap ? 1 : 1 - Math.exp(-dt * 4);
   cam.x += (tx - cam.x) * kx; cam.y += (ty - cam.y) * ky;
 }
@@ -274,7 +295,7 @@ function makeSession(mode, levelId, opts = {}) {
     phase: mode === 'attract' ? 'run' : 'ready', paused: false,
     ghost: null, rec: [], recNext: 0, cpus: [], remote: new Map(),
     countdown: 0, crashTimer: 0, finishTimer: 0, respawnTimer: 0, sendTimer: 0, lastCount: -1,
-    results: null, finishedSent: false, flash: [],
+    results: null, finishedSent: false, flash: [], cpSeen: 0,
   };
   if (mode === 'attract') me.running = true;
   if (mode === 'solo' && save.ghost) sess.ghost = loadGhost(levelId);
@@ -300,6 +321,13 @@ function update(sess) {
   }
   for (const e of me.events) onEvent(sess, me, e);
   me.events.length = 0;
+  if (me.checkpoint > sess.cpSeen) {
+    sess.cpSeen = me.checkpoint;
+    if ((sess.mode === 'cpu' || sess.mode === 'online') && !me.crashed) {
+      Sound.checkpoint();
+      particles.burst(sess.level.checkpoints[me.checkpoint - 1], me.c.y + 1.6, ['#43b05c', '#ffffff', '#ffd43b'], 12, 4, 'star');
+    }
+  }
   for (const cpu of sess.cpus) {
     for (const e of cpu.bike.events) if (e.type === 'crash') cpu.respawnAt = 1.2;
     cpu.bike.events.length = 0;
@@ -392,8 +420,7 @@ function draw(sess) {
   A.drawSky(g, cam, theme, t);
   A.drawLayers(g, cam, theme, t);
   A.drawLoops(g, cam, sess.level, theme);
-  A.drawTerrain(g, cam, sess.level, theme, t);
-  A.drawProps(g, cam, sess.level, theme, t);
+  A.drawTerrain(g, cam, sess.level, theme);
   A.drawMarkers(g, cam, sess.level, t, sess.mode === 'online' || sess.mode === 'cpu');
   // ghost of the best run
   if (sess.ghost && sess.ghost.frames.length) {
@@ -413,6 +440,7 @@ function draw(sess) {
     if (!p.crashed) poses.push([p, r]);
   }
   drawSimBike(sess.me, sess.me.look, 1);
+  A.drawHazards(g, cam, sess.level, t);
   particles.draw(g, cam);
   // name tags
   if (sess.mode === 'cpu' || sess.mode === 'online') {
@@ -422,8 +450,9 @@ function draw(sess) {
 }
 const GHOST_PAINT = { body: '#ffffff', dark: '#d9d4e4', suit: '#e8e3f2', helmet: '#ffffff' };
 function drawSimBike(b, look, alpha) {
-  const pose = { x: b.c.x, y: b.c.y, a: b.c.a, lean: b.leanVis, wheels: b.wheels.map(W => [W.x, W.y, W.phi]), noRider: !!b.rider };
+  const pose = { x: b.c.x, y: b.c.y, a: b.c.a, lean: b.leanVis, wheels: b.wheels.map(W => [W.x, W.y, W.phi]), noRider: !!b.rider, loose: b.loose };
   A.drawBike(g, cam, pose, look, { alpha });
+  if (b.loose) for (const W of b.wheels) A.drawWheel(g, cam, W.x, W.y, W.phi, look, alpha);
   if (b.rider) A.drawRagdoll(g, cam, b.rider, look.paint);
 }
 function ghostPose(frames, t) {
@@ -458,6 +487,9 @@ function hud() {
   const left = s.endsAt && !me.finished ? Math.max(0, Math.ceil(s.endsAt - performance.now() / 1000)) : -1;
   setText(ui.sub, 'sub', left >= 0 ? `Race ends in ${left}s` : s.subText || '');
   ui.sub.classList.toggle('hurry', left >= 0);
+  // show the two touch halves until the race is under way
+  const waiting = s.phase === 'ready' || s.phase === 'countdown';
+  if (ui.touch.classList.contains('ready') !== waiting) ui.touch.classList.toggle('ready', waiting);
   // progress dots
   const L = s.level.finishX, pct = (x) => Math.max(0, Math.min(100, x / L * 100)).toFixed(1) + '%';
   ui.dotMe.style.left = pct(me.c.x);
@@ -517,6 +549,7 @@ function soloFinished(sess) {
   const id = sess.levelId, time = sess.me.finishTime, prev = save.best[id];
   const stars = C.starsFor(sess.def, time), prevStars = save.stars[id] || 0;
   sess.newBest = !prev || time < prev - 1e-9;
+  sess.firstClear = !prev;
   sess.prevBest = prev;
   sess.stars = stars;
   const unlockedBefore = C.BIKES.filter(bikeUnlocked).length;
@@ -530,12 +563,15 @@ function soloFinished(sess) {
 function showResult(sess) {
   const def = sess.def, time = sess.me.finishTime, stars = sess.stars;
   ui.resStars.forEach((el, i) => { el.classList.toggle('on', i < stars); el.style.animationDelay = (0.15 + i * 0.18) + 's'; });
-  ui.resTitle.textContent = stars === 3 ? 'Perfect run!' : 'Level cleared!';
+  const lastInWorld = def.index === sess.world.levels.length - 1, lastWorld = sess.world === C.WORLDS[C.WORLDS.length - 1];
+  ui.resTitle.textContent = sess.firstClear && lastInWorld ? (lastWorld ? 'Every world cleared!' : `${sess.world.name} cleared!`)
+    : stars === 3 ? 'Perfect run!' : 'Level cleared!';
   ui.resTime.textContent = fmt(time) + 's';
   ui.resBest.textContent = fmt(save.best[def.id]) + 's';
   ui.resNew.hidden = !sess.newBest || !sess.prevBest;
   let hint = stars < 3 ? `Finish under ${fmt(stars < 2 ? C.twoStarTime(def) : def.par)}s for ${stars < 2 ? 2 : 3} stars.` : `Under par (${fmt(def.par)}s). Nice riding.`;
   if (sess.me.flips) hint += ` ${sess.me.flips} flip${sess.me.flips > 1 ? 's' : ''} took off ${(sess.me.flips * 0.5).toFixed(1)}s.`;
+  if (sess.firstClear && lastInWorld && lastWorld) hint = `That was the last level. ${totalStars()} of ${C.LEVELS.length * 3} stars so far: go back for the rest.`;
   ui.resHint.textContent = hint;
   garageButtons();
   renderUnlock(sess);
@@ -546,7 +582,13 @@ function showResult(sess) {
 }
 function showCrash() {
   if (!S || S.mode !== 'solo') return;
-  const tips = ['Lean back (←) in the air if the nose drops, forward (→) if it rises.', 'Land with both wheels at the same time for a smooth touchdown.', 'Ease off the gas before big bumps.', 'Lean the way the ground slopes where you will land.', 'Flips take 0.5s off your time each, if you land them.'];
+  const kind = S.me.crashKind;
+  const air = useTilt() ? 'In the air, turn the phone anticlockwise if the nose drops and clockwise if it rises.'
+    : isPhone() ? 'In the air, lean back (‹) if the nose drops and forward (›) if it rises.'
+    : 'Lean back (←) in the air if the nose drops, forward (→) if it rises.';
+  const tips = kind === 'lava' || kind === 'fall' || kind === 'pit'
+    ? ['Carry more speed into the jump to clear the gap.', 'Keep the gas on as you take off, and land level.']
+    : [air, 'Land with both wheels at the same time for a smooth touchdown.', 'Ease off the gas before big bumps.', 'Lean the way the ground slopes where you will land.', 'Flips take 0.5s off your time each, if you land them.'];
   ui.crashText.textContent = tips[Math.floor(Math.random() * tips.length)];
   if (S.me.crashKind === 'lava') ui.crashTitle.textContent = 'Too hot!';
   else if (S.me.crashKind === 'fall' || S.me.crashKind === 'pit') ui.crashTitle.textContent = 'Down the pit!';
@@ -600,6 +642,7 @@ function showStandings(rows, mode) {
   ui.rrAgain.hidden = mode === 'online' && !host;
   ui.rrAgain.textContent = 'Race again';
   ui.rrRoom.textContent = mode === 'online' ? 'Back to room' : 'Change track';
+  ui.rrLeave.hidden = mode !== 'online';
   ui.rrWait.hidden = !(mode === 'online' && !host);
   openModal(ui.raceResult);
   if (myPlace === 1) particles.burst(S.me.c.x, S.me.c.y + 2, ['#ffd43b', '#e8463c', '#43b05c', '#3a7bd5'], 50, 8);
@@ -760,7 +803,7 @@ function showView(v) {
   if (v === 'desktop') ui.deskUrl.textContent = location.origin + location.pathname + '#bike-race';
   if (v === 'worlds') renderWorlds();
   if (v === 'garage') renderGarage();
-  if (v === 'mp') { Net.connect(); renderMp(); clearInterval(listTimer); listTimer = setInterval(() => { if (view === 'mp' && !roomState) Net.send({ t: 'list' }); }, 3000); }
+  if (v === 'mp') { Net.connect(); renderMp(); clearInterval(listTimer); listTimer = setInterval(() => { if (view === 'mp') { if (!roomState) Net.send({ t: 'list' }); renderConn(); } }, 3000); }
   else clearInterval(listTimer);
   const scr = $('br-' + v); if (scr) scr.scrollTop = 0;
 }
@@ -806,8 +849,8 @@ function renderHome() {
   $('br-go-garage').classList.toggle('has-new', fresh.length > 0);
   $('br-go-garage').dataset.badge = fresh.length > 1 ? `${fresh.length} new bikes` : 'New bike!';
   ui.homeHow.innerHTML = isPhone()
-    ? 'Hold the right side of the screen for <b>GAS</b> and the left side to <b>BRAKE</b>. Turn the phone like a steering wheel to lean the bike.'
-    : 'Keyboard test mode: <b>↑</b> gas · <b>↓</b> brake · <b>←</b> lean back · <b>→</b> lean forward · <b>R</b> restart · <b>Esc</b> pause';
+    ? 'Hold the right side of the screen for <b>GAS</b> and the left side to <b>BRAKE</b> (keep holding to back up). Turn the phone like a steering wheel to lean the bike.'
+    : 'Keyboard test mode: <b>↑</b> gas · <b>↓</b> brake, then back up · <b>←</b> lean back · <b>→</b> lean forward · <b>R</b> restart · <b>Esc</b> pause';
 }
 function renderWorlds() {
   ui.worldsStars.textContent = `${totalStars()} / ${C.LEVELS.length * 3}`;
@@ -827,6 +870,7 @@ function renderWorlds() {
 function showLevels() { view = 'levels'; for (const id of VIEWS) $('br-' + id).hidden = id !== 'levels'; $('br-levels').scrollTop = 0; }
 function renderLevels(w) {
   ui.levelsTitle.textContent = w.name;
+  ui.levelsStars.textContent = `${worldStars(w)} / ${w.levels.length * 3}`;
   ui.levelsSub.textContent = w.blurb;
   ui.levelGrid.innerHTML = '';
   w.levels.forEach((L, i) => {
@@ -1043,6 +1087,12 @@ function renderMpStatus() {
   ui.mpStatusText.textContent = st === 'online' ? 'Connected to the race server' : st === 'offline' ? 'No race server found'
     : Net.retrying ? 'Reconnecting…' : 'Looking for the race server…';
 }
+// how this phone reaches the race server, for checking a real phone (an iPhone may end up on the event stream)
+function renderConn() {
+  if (!ui.roomConn) return;
+  const kind = Net.transport;
+  ui.roomConn.textContent = kind ? `Connected over ${kind === 'ws' ? 'a WebSocket' : 'an event stream'}${Net.pingMs ? ` · ping ${Net.pingMs} ms` : ''}` : '';
+}
 const standingRows = (rows) => rows.map((r, i) => `<li class="${r.me ? 'me' : ''}"><span class="pl">${i + 1}</span><span class="sw" style="background:${esc(r.color)}"></span><span class="nm">${esc(r.name)}</span><span class="tm">${r.time == null ? 'DNF' : fmt(r.time) + 's'}</span></li>`).join('');
 function renderMp() {
   if (!ui.mpLobby) return;
@@ -1075,7 +1125,8 @@ function renderMp() {
     ui.roomLevel.hidden = !host || racing; ui.roomLevelText.hidden = host && !racing;
     if (host) { if (ui.roomLevel.dataset.for !== r.code || ui.roomLevel.value !== r.level) { levelOptions(ui.roomLevel, r.level); ui.roomLevel.dataset.for = r.code; } }
     ui.roomLevelText.textContent = L ? `${w.name} ${L.index + 1} · ${L.name}` : r.level;
-    ui.roomPlayers.innerHTML = players.map(p => `<li class="${p.away ? 'away' : ''}"><span class="sw" style="background:${A.paintAt(p.paint).body}"></span><span class="nm">${esc(p.name)}${p.id === Net.id ? ' <small>(you)</small>' : ''}${p.id === r.host ? ' <small>host</small>' : ''}${p.away ? ' <small>away</small>' : ''}</span><span class="bk">${esc(C.bikeById(p.bike).name)}</span><span class="wn">${p.wins || 0} win${p.wins === 1 ? '' : 's'}</span></li>`).join('');
+    const racers = racing ? r.racers || [] : [];
+    ui.roomPlayers.innerHTML = players.map(p => `<li class="${p.away ? 'away' : ''}"><span class="sw" style="background:${A.paintAt(p.paint).body}"></span><span class="nm">${esc(p.name)}${p.id === Net.id ? ' <small>(you)</small>' : ''}${p.id === r.host ? ' <small>host</small>' : ''}${p.away ? ' <small>away</small>' : racers.includes(p.id) ? ' <small>racing</small>' : ''}</span><span class="bk">${esc(C.bikeById(p.bike).name)}</span><span class="wn">${p.wins || 0} win${p.wins === 1 ? '' : 's'}</span></li>`).join('');
     ui.roomStart.hidden = !host || racing;
     const hostName = (players.find(p => p.id === r.host) || {}).name || 'the host';
     ui.roomNote.textContent = racing ? 'A race is on. You will be in the next one.'
@@ -1084,6 +1135,7 @@ function renderMp() {
     const last = lastResults && lastResults.code === r.code ? lastResults : null;
     ui.roomLast.hidden = !last;
     if (last) ui.roomLastList.innerHTML = standingRows(last.rows);
+    renderConn();
   }
 }
 
@@ -1103,6 +1155,8 @@ function pause() {
   syncToggles();
   openModal(ui.pause);
 }
+// a run that is going and can be stopped: your own, or a race against computer riders (live races can't wait)
+const shouldAutoPause = () => view === 'play' && !!S && (S.mode === 'solo' ? S.phase === 'run' : S.mode === 'cpu' && (S.phase === 'run' || S.phase === 'countdown') && !S.me.finished);
 function resume() { closeModals(); if (S) { S.paused = false; last = performance.now(); } }
 function syncToggles() {
   for (const [el, on] of [[ui.tGhost, save.ghost], [ui.tSound, save.sound], [ui.pTilt, save.tilt]]) if (el) el.setAttribute('aria-pressed', String(!!on));
@@ -1125,18 +1179,18 @@ function setup() {
     center: $('br-center'), toast: $('br-toast'), touch: $('br-touch'), tipbar: $('br-tipbar'),
     homeStars: $('br-home-stars'), homeHow: $('br-home-how'),
     worldCards: $('br-world-cards'), worldsStars: $('br-worlds-stars'),
-    levelsTitle: $('br-levels-title'), levelsSub: $('br-levels-sub'), levelGrid: $('br-level-grid'),
+    levelsTitle: $('br-levels-title'), levelsSub: $('br-levels-sub'), levelsStars: $('br-levels-stars'), levelGrid: $('br-level-grid'),
     garage: $('br-garage'), bikes: $('br-bikes'), paints: $('br-paints'), name: $('br-name'), garageStars: $('br-garage-stars'),
     gStage: $('br-g-stage'), gName: $('br-g-name'), gPerk: $('br-g-perk'), gBlurb: $('br-g-blurb'), gStats: $('br-g-stats'), gStatus: $('br-g-status'),
-    pause: $('br-pausemenu'), pauseText: $('br-pause-text'), pRestart: $('br-p-restart'), pLevels: $('br-p-levels'), tGhost: $('br-t-ghost'), tSound: $('br-t-sound'), pGhostRow: $('br-p-ghost-row'), pTilt: $('br-p-tilt'), pTiltRow: $('br-p-tilt-row'),
+    pause: $('br-pausemenu'), pauseText: $('br-pause-text'), pRestart: $('br-p-restart'), pLevels: $('br-p-levels'), tGhost: $('br-t-ghost'), tSound: $('br-t-sound'), pGhostRow: $('br-p-ghost-row'), pTilt: $('br-p-tilt'), pTiltRow: $('br-p-tilt-row'), pTiltWhy: $('br-p-tilt-why'),
     crash: $('br-crash'), crashTitle: $('br-crash-title'), crashText: $('br-crash-text'),
     result: $('br-result'), resStars: [...document.querySelectorAll('#br-result .br-rstar')], resTitle: $('br-res-title'), resTime: $('br-res-time'), resBest: $('br-res-best'), resNew: $('br-res-new'), resHint: $('br-res-hint'), resNext: $('br-res-next'),
     resUnlock: $('br-res-unlock'), resUnlockTitle: $('br-res-unlock-title'), resUnlockSub: $('br-res-unlock-sub'), resUnlockMeter: $('br-res-unlock-meter'), resGarage: $('br-res-garage'),
-    raceResult: $('br-raceresult'), rrTitle: $('br-rr-title'), rrList: $('br-rr-list'), rrAgain: $('br-rr-again'), rrRoom: $('br-rr-room'), rrWait: $('br-rr-wait'),
+    raceResult: $('br-raceresult'), rrTitle: $('br-rr-title'), rrList: $('br-rr-list'), rrAgain: $('br-rr-again'), rrRoom: $('br-rr-room'), rrWait: $('br-rr-wait'), rrLeave: $('br-rr-leave'),
     mpStatus: $('br-mp-status'), mpStatusText: $('br-mp-status-text'), mpName: $('br-mp-name'), mpLobby: $('br-mp-lobby'), mpRoom: $('br-mp-room'), mpOffline: $('br-mp-offline'), mpOfflineWhy: $('br-mp-offline-why'), mpCpu: $('br-mp-cpu'), mpNamePanel: $('br-mp-name-panel'),
     mpLevel: $('br-mp-level'), mpRooms: $('br-mp-rooms'), mpCode: $('br-mp-code'),
     roomCode: $('br-room-code'), roomLink: $('br-room-link'), roomCopy: $('br-room-copy'), roomLevel: $('br-room-level'), roomLevelText: $('br-room-level-text'), roomPlayers: $('br-room-players'), roomStart: $('br-room-start'), roomNote: $('br-room-note'), roomLast: $('br-room-last'), roomLastList: $('br-room-last-list'),
-    cpuLevel: $('br-cpu-level'), cpuCount: $('br-cpu-count'), deskUrl: $('br-desk-url'),
+    cpuLevel: $('br-cpu-level'), cpuCount: $('br-cpu-count'), deskUrl: $('br-desk-url'), roomConn: $('br-room-conn'),
   };
   app.classList.toggle('touch', isPhone());
   const go = (fn) => (e) => { Sound.init(); Sound.resume(); fn(e); };
@@ -1147,7 +1201,11 @@ function setup() {
   $('br-desk-back').onclick = toHub;
   $('br-desk-keys').onclick = () => { allowKeyboard = true; showView('home'); };
   // any tap in the game may be the first one: iOS only shows its motion permission prompt from a tap
-  app.addEventListener('click', () => startTilt(), true);
+  app.addEventListener('click', () => { startTilt(); Sound.unlock(); }, true);
+  app.addEventListener('touchend', () => Sound.unlock(), true);
+  // a soft tick for menu buttons (not the gas and brake)
+  app.addEventListener('click', (e) => { const b = e.target.closest && e.target.closest('button'); if (b && !b.closest('.br-touch') && !b.disabled) Sound.tap(); });
+  $('br-rotate-back').onclick = toHub;
   $('br-go-mp').onclick = go(() => showView('mp'));
   $('br-go-garage').onclick = go(() => openGarage());
   $('br-worlds-back').onclick = () => showView('home');
@@ -1182,7 +1240,7 @@ function setup() {
   ui.rrAgain.onclick = () => {
     if (!S) return;
     if (S.mode === 'cpu') startCpuRace(S.levelId, S.cpus.length);
-    else if (S.mode === 'online') { closeModals(); Net.send({ t: 'start' }); }
+    else if (S.mode === 'online') Net.send({ t: 'start' });     // the countdown closes the sheet
   };
   ui.rrRoom.onclick = () => { exitPlay(); showView('mp'); };
   $('br-rr-leave').onclick = () => { if (S && S.mode === 'online') Net.send({ t: 'leave' }); roomState = null; exitPlay(); showView('mp'); };
@@ -1190,7 +1248,12 @@ function setup() {
   ui.mpName.oninput = () => { setName(ui.mpName.value); };
   ui.mpName.onchange = () => sendProfile();
   $('br-mp-create').onclick = () => { sendProfile(); Net.send({ t: 'create', level: ui.mpLevel.value }); };
-  const joinCode = () => { const c = ui.mpCode.value.trim().toUpperCase(); if (c) { sendProfile(); Net.send({ t: 'join', code: c }); } };
+  const joinCode = () => {
+    const c = ui.mpCode.value.trim().toUpperCase();
+    if (c.length !== 4) { toast('Room codes have 4 letters', 2000, 'small'); ui.mpCode.focus(); return; }
+    sendProfile(); Net.send({ t: 'join', code: c });
+  };
+  ui.mpCode.oninput = () => { const v = ui.mpCode.value.toUpperCase().replace(/[^A-Z]/g, '').slice(0, 4); if (v !== ui.mpCode.value) ui.mpCode.value = v; };
   $('br-mp-join').onclick = joinCode;
   ui.mpCode.onkeydown = (e) => { if (e.key === 'Enter') joinCode(); };
   $('br-mp-retry').onclick = () => { Net.close(); Net.connect(); renderMp(); };
@@ -1213,10 +1276,11 @@ function setup() {
     else if ((e.code === 'Enter' || e.code === 'Space') && !ui.crash.hidden) { e.preventDefault(); restart(); }
   });
   window.addEventListener('keyup', (e) => keys.delete(e.code));
-  window.addEventListener('blur', () => { keys.clear(); for (const k in touchCtl) touchCtl[k] = false; if (view === 'play' && S && S.mode === 'solo' && S.phase === 'run') pause(); });
+  const releaseAll = () => { keys.clear(); for (const k in touchCtl) touchCtl[k] = false; for (const el of document.querySelectorAll('.br-touch .on')) el.classList.remove('on'); };
+  window.addEventListener('blur', () => { releaseAll(); if (shouldAutoPause()) pause(); });
   document.addEventListener('visibilitychange', () => {
-    if (document.hidden) { keys.clear(); if (view === 'play' && S && S.mode === 'solo' && S.phase === 'run') pause(); }
-    else if (running) Net.wake();     // phones stop pages in the background, and the connection may have died
+    if (document.hidden) { releaseAll(); if (shouldAutoPause()) pause(); Sound.suspend(); }
+    else if (running) { Net.wake(); Sound.resume(); }    // phones stop pages in the background, and the connection may have died
   });
   window.addEventListener('pageshow', () => { if (running) Net.wake(); });
   // touch controls
@@ -1232,7 +1296,7 @@ function setup() {
   window.addEventListener('resize', () => {
     if (!running) return;
     resize();
-    if (isPhone() && innerHeight > innerWidth && view === 'play' && S && S.mode === 'solo' && S.phase === 'run') pause();
+    if (isPhone() && innerHeight > innerWidth && shouldAutoPause()) pause();
   });
   // Android and others send motion events without asking, so tilt can start now. iOS waits for the first tap.
   if (isPhone() && save.tilt && !(typeof DeviceOrientationEvent !== 'undefined' && typeof DeviceOrientationEvent.requestPermission === 'function')) startTilt();
@@ -1274,7 +1338,7 @@ function hide() {
   running = false; cancelAnimationFrame(raf);
   leaveFullscreen();
   Sound.engineOff();
-  if (S && S.mode === 'solo' && S.phase === 'run') { S.paused = true; }
+  if (view === 'play' && S) pause();
 }
 window.BikeRace = { show, hide, _debug: () => ({ S, attract, save, cam, C, Net, startSolo, startCpuRace, readInput, touchCtl, keys, tilt, tiltAngle, refreshControls, remotePose, roomState, inviteLink }) };
 })();

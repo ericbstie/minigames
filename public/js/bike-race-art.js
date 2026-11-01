@@ -35,58 +35,64 @@ const PAINTS = [
 ];
 const paintAt = (i) => PAINTS[((i % PAINTS.length) + PAINTS.length) % PAINTS.length];
 
+// Each world is a painted backdrop of flat parallax layers (far to near), with the track drawn over it as a thin
+// line. Layer fields: p parallax, base/amp baseline and height as a share of the screen, freq ridge width, color
+// and color2 top and bottom fill, rim the lit top edge, peaks/flat/round ridge shape, caps snow on the peaks,
+// deco something standing on the ridge every so many pixels.
 const THEMES = {
   clover: {
-    sky: ['#79c8ef', '#d9f4ff'], sun: { x: 0.8, y: 0.18, r: 0.06, c: '#fff6c4', glow: 'rgba(255,244,190,0.55)' }, clouds: '#ffffff',
+    sky: ['#5fb8ec', '#a9dcf5', '#e2f6fd'], sun: { x: 0.8, y: 0.17, r: 0.055, c: '#fff8cf', glow: 'rgba(255,246,196,0.55)' }, clouds: '#ffffff',
+    line: '#c9302a', lineEdge: '#5e1612',
     layers: [
-      { p: 0.06, base: 0.62, amp: 0.16, freq: 0.0025, color: '#b8e2d0', seed: 3 },
-      { p: 0.16, base: 0.7, amp: 0.12, freq: 0.005, color: '#97d39f', seed: 5, deco: 'tree', every: 70, dColor: '#7cbf84' },
-      { p: 0.32, base: 0.8, amp: 0.08, freq: 0.009, color: '#79c472', seed: 8, deco: 'windmill', every: 520, dColor: '#f4efe6' },
+      { p: 0.04, base: 0.56, amp: 0.2, freq: 0.0024, peaks: true, color: '#a6cfe4', color2: '#c6e4f0', caps: '#f2fafd', seed: 3 },
+      { p: 0.1, base: 0.65, amp: 0.12, freq: 0.0042, round: true, color: '#9fd39b', color2: '#88c48a', rim: '#c2ebb5', seed: 5, deco: 'tree', every: 44, dColor: '#6aae70' },
+      { p: 0.2, base: 0.75, amp: 0.09, freq: 0.0068, round: true, color: '#7cc46c', color2: '#61ad59', rim: '#a6de8c', seed: 8, deco: 'windmill', every: 430, dColor: '#f6f1e8' },
+      { p: 0.4, base: 0.87, amp: 0.06, freq: 0.011, round: true, color: '#4f9c4a', color2: '#3b823e', rim: '#72bd5f', seed: 9, deco: 'bush', every: 34, dColor: '#3c873e' },
     ],
-    ground: '#9b6a45', strata: '#875b3a', deep: '#6e472d', top: '#5bbd4f', topHi: '#8fe070', wall: '#86593a',
-    props: ['tuft', 'flower', 'tuft', 'bush', 'rock'], propColors: ['#4aa944', '#ff7aa8', '#ffd23f', '#3f9a44', '#c9b8a6'],
   },
   ember: {
-    sky: ['#ff9f6b', '#ffe2b0'], sun: { x: 0.22, y: 0.28, r: 0.075, c: '#fff1c9', glow: 'rgba(255,220,160,0.6)' }, clouds: '#ffe9d6',
+    sky: ['#e9737a', '#ffaf8f', '#ffe1b8'], sun: { x: 0.72, y: 0.34, r: 0.085, c: '#fff1d2', glow: 'rgba(255,228,186,0.6)' }, clouds: '#ffe4d2',
+    line: '#a8231b', lineEdge: '#4d0f0b',
     layers: [
-      { p: 0.06, base: 0.6, amp: 0.1, freq: 0.002, color: '#efb08d', seed: 11, flat: true },
-      { p: 0.15, base: 0.7, amp: 0.1, freq: 0.004, color: '#e3906a', seed: 12, deco: 'mesa', every: 260, dColor: '#e3906a' },
-      { p: 0.3, base: 0.82, amp: 0.05, freq: 0.01, color: '#cf7350', seed: 14, deco: 'spire', every: 150, dColor: '#c76a47' },
+      { p: 0.04, base: 0.58, amp: 0.13, freq: 0.0018, flat: true, color: '#e6a0a6', color2: '#f2bcb0', seed: 11 },
+      { p: 0.1, base: 0.68, amp: 0.1, freq: 0.0034, flat: true, color: '#d9806f', color2: '#e5997f', rim: '#f6b896', seed: 12, deco: 'arch', every: 330, dColor: '#d47766' },
+      { p: 0.2, base: 0.78, amp: 0.07, freq: 0.008, color: '#bf5a45', color2: '#a54a39', rim: '#e3876a', seed: 14, deco: 'hoodoo', every: 150, dColor: '#b8553f' },
+      { p: 0.4, base: 0.9, amp: 0.05, freq: 0.014, color: '#8c392d', color2: '#6c2a22', rim: '#b85b45', seed: 15, deco: 'rocks', every: 38, dColor: '#7a3127' },
     ],
-    ground: '#c0613a', strata: '#a9502f', deep: '#8a3f25', top: '#e98a55', topHi: '#ffb27c', wall: '#a9502f',
-    props: ['rock', 'shrub', 'rock', 'skull'], propColors: ['#d98a62', '#9a7a3c', '#b8714f', '#f4e6d4'],
   },
   frost: {
-    sky: ['#a9def7', '#f2fbff'], sun: { x: 0.7, y: 0.2, r: 0.05, c: '#ffffff', glow: 'rgba(255,255,255,0.6)' }, clouds: '#ffffff',
+    sky: ['#7cc6ef', '#bfe6f8', '#f0faff'], sun: { x: 0.68, y: 0.2, r: 0.045, c: '#ffffff', glow: 'rgba(255,255,255,0.6)' }, clouds: '#ffffff',
+    line: '#cf3530', lineEdge: '#5e1612',
     layers: [
-      { p: 0.06, base: 0.58, amp: 0.2, freq: 0.004, color: '#d8ecf7', seed: 21, peaks: true },
-      { p: 0.15, base: 0.68, amp: 0.16, freq: 0.006, color: '#b4d6ea', seed: 22, peaks: true },
-      { p: 0.32, base: 0.8, amp: 0.06, freq: 0.012, color: '#89b9d4', seed: 24, deco: 'pine', every: 40, dColor: '#5f93ad' },
+      { p: 0.04, base: 0.56, amp: 0.24, freq: 0.0034, peaks: true, color: '#c4dced', color2: '#d9eaf5', caps: '#ffffff', seed: 21 },
+      { p: 0.1, base: 0.66, amp: 0.18, freq: 0.0058, peaks: true, color: '#97bfd8', color2: '#b3d2e5', caps: '#f6fcff', seed: 22 },
+      { p: 0.2, base: 0.77, amp: 0.07, freq: 0.01, round: true, color: '#eef7fc', color2: '#d3e7f2', rim: '#ffffff', seed: 24, deco: 'pine', every: 24, dColor: '#4c84a1' },
+      { p: 0.4, base: 0.89, amp: 0.05, freq: 0.014, round: true, color: '#ffffff', color2: '#d8e9f3', rim: '#ffffff', seed: 25, deco: 'pine', every: 70, dColor: '#3a708c' },
     ],
-    ground: '#7e9fb8', strata: '#6f8fa8', deep: '#5a7890', top: '#ffffff', topHi: '#ffffff', wall: '#6f8fa8', topEdge: '#cfe6f5',
-    props: ['snow', 'pine', 'snow', 'rock'], propColors: ['#ffffff', '#4f8aa6', '#ffffff', '#9fb6c8'],
   },
   moon: {
-    sky: ['#0f0c26', '#2e2b63'], sun: { x: 0.78, y: 0.22, r: 0.07, c: '#5fb6ff', glow: 'rgba(110,180,255,0.35)', planet: true }, stars: true,
+    sky: ['#09081d', '#1b1844', '#383274'], sun: { x: 0.78, y: 0.22, r: 0.07, c: '#5fb6ff', glow: 'rgba(110,180,255,0.35)', planet: true }, stars: true,
+    line: '#ff5747', lineEdge: '#2a0710', halo: 'rgba(255,236,236,0.22)',
     layers: [
-      { p: 0.05, base: 0.66, amp: 0.1, freq: 0.003, color: '#3b3970', seed: 31 },
-      { p: 0.14, base: 0.74, amp: 0.08, freq: 0.006, color: '#56538c', seed: 32, deco: 'dome', every: 600, dColor: '#8a87c2' },
-      { p: 0.3, base: 0.83, amp: 0.05, freq: 0.012, color: '#6f6ca5', seed: 34, deco: 'antenna', every: 340, dColor: '#a9a6d6' },
+      { p: 0.04, base: 0.64, amp: 0.1, freq: 0.003, color: '#36336e', color2: '#2b2858', seed: 31 },
+      { p: 0.1, base: 0.72, amp: 0.08, freq: 0.006, color: '#4b4888', color2: '#3b3970', rim: '#6d6aaa', seed: 32, deco: 'dome', every: 560, dColor: '#8a87c2' },
+      { p: 0.2, base: 0.8, amp: 0.05, freq: 0.01, color: '#625f9e', color2: '#4e4b86', rim: '#8986c2', seed: 34, deco: 'antenna', every: 320, dColor: '#a9a6d6' },
+      { p: 0.4, base: 0.9, amp: 0.04, freq: 0.014, color: '#7a77b3', color2: '#5b5894', rim: '#a3a0d6', seed: 35, deco: 'crater', every: 16, dColor: '#5d5a97' },
     ],
-    ground: '#8d8aa8', strata: '#7d7a98', deep: '#625f7e', top: '#cfcde2', topHi: '#eceaf7', wall: '#7d7a98',
-    props: ['crater', 'rock', 'crater'], propColors: ['#77748f', '#a9a6c0', '#77748f'],
   },
   magma: {
-    sky: ['#2a0f14', '#8c2f1d'], sun: { x: 0.3, y: 0.3, r: 0.09, c: '#ff9a3c', glow: 'rgba(255,120,40,0.4)' }, embers: true,
+    sky: ['#1c080d', '#561916', '#a63d1d'], sun: { x: 0.3, y: 0.3, r: 0.09, c: '#ff9a3c', glow: 'rgba(255,120,40,0.4)' }, embers: true,
+    line: '#ff5a36', lineEdge: '#1c0606', halo: 'rgba(255,214,170,0.24)',
     layers: [
-      { p: 0.06, base: 0.6, amp: 0.14, freq: 0.003, color: '#4a1c1d', seed: 41, deco: 'volcano', every: 900, dColor: '#4a1c1d' },
-      { p: 0.15, base: 0.72, amp: 0.08, freq: 0.006, color: '#3a1718', seed: 42, deco: 'chimney', every: 300, dColor: '#2c1213' },
-      { p: 0.3, base: 0.82, amp: 0.05, freq: 0.012, color: '#2c1415', seed: 44 },
+      { p: 0.04, base: 0.6, amp: 0.14, freq: 0.003, color: '#4a1c1d', color2: '#3d1718', seed: 41, deco: 'volcano', every: 900, dColor: '#4a1c1d' },
+      { p: 0.1, base: 0.72, amp: 0.08, freq: 0.006, color: '#3a1718', color2: '#301314', rim: '#6a2a22', seed: 42, deco: 'chimney', every: 300, dColor: '#2c1213' },
+      { p: 0.2, base: 0.8, amp: 0.05, freq: 0.012, color: '#2c1415', color2: '#231011', rim: '#5a241c', seed: 44 },
+      { p: 0.4, base: 0.9, amp: 0.04, freq: 0.016, color: '#1f0e0f', color2: '#150a0b', rim: '#c8501f', seed: 45, deco: 'crack', every: 60, dColor: '#ff7a2f' },
     ],
-    ground: '#3d2b2e', strata: '#4a3236', deep: '#2a1d20', top: '#6b4a47', topHi: '#8f6660', wall: '#4a3236', cracks: '#ff7a2f',
-    props: ['ember', 'rock', 'pipe'], propColors: ['#ff8a3c', '#5b4140', '#7a6a66'],
   },
 };
+// the line colour for a stretch of track
+const ICE = { line: '#a8ecff', edge: '#2b6b8a' };
 
 // ---------- camera ----------
 class Camera {
@@ -100,7 +106,7 @@ class Camera {
 function drawSky(g, cam, theme, t) {
   const { W, H } = cam;
   const grad = g.createLinearGradient(0, 0, 0, H);
-  grad.addColorStop(0, theme.sky[0]); grad.addColorStop(1, theme.sky[1]);
+  theme.sky.forEach((c, i) => grad.addColorStop(i / (theme.sky.length - 1), c));
   g.fillStyle = grad; g.fillRect(0, 0, W, H);
   if (theme.stars) {
     g.fillStyle = '#fff';
@@ -134,6 +140,16 @@ function drawSky(g, cam, theme, t) {
     }
     g.globalAlpha = 1;
   }
+  if (theme.embers) {   // sparks drifting up from the lava
+    g.fillStyle = '#ffb347';
+    for (let i = 0; i < 26; i++) {
+      const k = (t * (0.05 + hash(i * 3) * 0.06) + hash(i * 11)) % 1;
+      const x = ((hash(i * 29) * W * 1.4 - cam.x * cam.ppm * 0.12 + Math.sin(t + i) * 12) % W + W) % W, y = H * (1 - k * 0.9);
+      g.globalAlpha = Math.sin(k * Math.PI) * 0.8;
+      g.fillRect(x, y, 2, 2);
+    }
+    g.globalAlpha = 1;
+  }
 }
 function blobs(g, list) {
   g.beginPath();
@@ -148,27 +164,54 @@ function cloud(g, x, y, s) {
   g.fill();
 }
 
+// a row of pointed mountains: each one a peak of its own height with straight-ish flanks
+function peaks(x, seed) {
+  const k = Math.floor(x);
+  let best = 0;
+  for (let j = k - 2; j <= k + 2; j++) {
+    const px = j + hash(j * 31 + seed) * 0.7, h = 0.35 + hash(j * 17 + seed) * 0.65, slope = 1.1 + hash(j * 7 + seed) * 0.8;
+    best = Math.max(best, h - Math.abs(x - px) * slope);
+  }
+  return Math.max(0, Math.min(1, best + (fbm(x * 5, seed) - 0.5) * 0.08));
+}
 function layerY(L, cam, px) {
-  let n = fbm(px * L.freq, L.seed);
-  if (L.peaks) n = 1 - Math.abs(n * 2 - 1);         // sharper ridges
-  if (L.flat) n = Math.round(n * 3) / 3;            // stepped plateaus
+  let n = L.peaks ? peaks(px * L.freq, L.seed) : fbm(px * L.freq, L.seed);
+  if (L.flat) n = Math.round((n - 0.15) * 4.5) / 3;   // stepped plateaus
+  if (L.round) n = 0.5 - 0.5 * Math.cos(n * Math.PI);   // soft rolling hills
   return cam.H * (L.base - L.amp * n);
 }
+// The scenery fills the whole screen, so the ground under the track is the backdrop showing through.
 function drawLayers(g, cam, theme, t) {
   const { W, H } = cam;
   const yShift = Math.max(-H * 0.08, Math.min(H * 0.08, cam.y * cam.ppm * 0.04));
   for (const L of theme.layers) {
     const off = cam.x * cam.ppm * L.p, dy = yShift * (L.p * 4);
-    g.fillStyle = L.color;
-    g.beginPath(); g.moveTo(0, H);
-    for (let x = 0; x <= W + 8; x += 8) g.lineTo(x, layerY(L, cam, x + off) + dy);
-    g.lineTo(W, H); g.closePath(); g.fill();
+    const top = H * (L.base - L.amp) + dy;
+    const fill = g.createLinearGradient(0, top, 0, H);
+    fill.addColorStop(0, L.color); fill.addColorStop(1, L.color2 || L.color);
+    const ridge = [];
+    for (let x = -8; x <= W + 8; x += 6) ridge.push(x, layerY(L, cam, x + off) + dy);
+    g.beginPath(); g.moveTo(-8, H + 2);
+    for (let i = 0; i < ridge.length; i += 2) g.lineTo(ridge[i], ridge[i + 1]);
+    g.lineTo(W + 8, H + 2); g.closePath();
+    g.fillStyle = fill; g.fill();
+    if (L.caps) {   // snow on everything above the snow line
+      g.save(); g.clip();
+      g.fillStyle = L.caps; g.fillRect(0, 0, W, H * (L.base - L.amp * 0.66) + dy);
+      g.restore();
+    }
+    if (L.rim) {
+      g.strokeStyle = L.rim; g.lineWidth = Math.max(1.5, H / 260); g.lineJoin = 'round';
+      g.beginPath();
+      for (let i = 0; i < ridge.length; i += 2) i ? g.lineTo(ridge[i], ridge[i + 1] + 1) : g.moveTo(ridge[i], ridge[i + 1] + 1);
+      g.stroke();
+    }
     if (L.deco) {
-      const k0 = Math.floor((off - 200) / L.every), k1 = Math.ceil((off + W + 200) / L.every);
+      const k0 = Math.floor((off - 260) / L.every), k1 = Math.ceil((off + W + 260) / L.every);
       for (let k = k0; k <= k1; k++) {
         if (hash(k * 97 + L.seed) < 0.45) continue;
         const px = k * L.every + hash(k * 13 + L.seed) * L.every * 0.6, x = px - off;
-        drawDeco(g, L.deco, x, layerY(L, cam, px) + dy + 4, L, hash(k * 7 + L.seed), t, cam);
+        drawDeco(g, L.deco, x, layerY(L, cam, px) + dy + 3, L, hash(k * 7 + L.seed), t, cam);
       }
     }
   }
@@ -178,16 +221,23 @@ function drawDeco(g, kind, x, y, L, r, t, cam) {
   g.fillStyle = L.dColor;
   switch (kind) {
     case 'tree': {
-      const h = (26 + r * 18) * s;
-      g.fillRect(x - 2 * s, y - h * 0.5, 4 * s, h * 0.5);
-      blobs(g, [[x, y - h * 0.62, h * 0.36], [x - h * 0.22, y - h * 0.45, h * 0.26], [x + h * 0.22, y - h * 0.48, h * 0.28]]);
+      const h = (24 + r * 16) * s;
+      g.fillRect(x - 1.5 * s, y - h * 0.5, 3 * s, h * 0.5);
+      blobs(g, [[x, y - h * 0.62, h * 0.34], [x - h * 0.2, y - h * 0.46, h * 0.24], [x + h * 0.2, y - h * 0.48, h * 0.26]]);
+      g.fillStyle = 'rgba(255,255,255,0.16)'; blobs(g, [[x - h * 0.1, y - h * 0.72, h * 0.14]]);
+      break;
+    }
+    case 'bush': {
+      const h = (10 + r * 10) * s;
+      blobs(g, [[x - h * 0.6, y - h * 0.2, h * 0.55], [x + h * 0.5, y - h * 0.25, h * 0.6], [x, y - h * 0.55, h * 0.6]]);
       break;
     }
     case 'pine': {
       const h = (30 + r * 26) * s;
-      g.beginPath(); g.moveTo(x, y - h); g.lineTo(x + h * 0.32, y - h * 0.1); g.lineTo(x - h * 0.32, y - h * 0.1); g.fill();
-      g.fillStyle = 'rgba(255,255,255,0.75)';
-      g.beginPath(); g.moveTo(x, y - h); g.lineTo(x + h * 0.12, y - h * 0.68); g.lineTo(x - h * 0.12, y - h * 0.68); g.fill();
+      g.beginPath(); g.moveTo(x, y - h); g.lineTo(x + h * 0.3, y - h * 0.08); g.lineTo(x - h * 0.3, y - h * 0.08); g.fill();
+      g.fillRect(x - 1.5 * s, y - h * 0.1, 3 * s, h * 0.12);
+      g.fillStyle = 'rgba(255,255,255,0.8)';
+      g.beginPath(); g.moveTo(x, y - h); g.lineTo(x + h * 0.11, y - h * 0.68); g.lineTo(x - h * 0.11, y - h * 0.68); g.fill();
       break;
     }
     case 'windmill': {
@@ -210,16 +260,41 @@ function drawDeco(g, kind, x, y, L, r, t, cam) {
       g.fillStyle = 'rgba(80,60,50,0.6)'; g.beginPath(); g.arc(cx, cy, 3.5 * s, 0, TAU); g.fill();
       break;
     }
-    case 'mesa': {
-      const w = (60 + r * 80) * s, h = (50 + r * 50) * s;
-      g.beginPath(); g.moveTo(x - w * 0.6, y); g.lineTo(x - w * 0.42, y - h); g.lineTo(x + w * 0.42, y - h); g.lineTo(x + w * 0.6, y); g.fill();
-      g.fillStyle = 'rgba(255,240,220,0.18)'; g.fillRect(x - w * 0.42, y - h, w * 0.84, 4 * s);
+    case 'arch': {   // a sandstone arch with sky showing through
+      const w = (70 + r * 50) * s, h = (46 + r * 30) * s, leg = w * 0.2;
+      g.beginPath();
+      g.moveTo(x - w / 2, y); g.lineTo(x - w / 2 + 4 * s, y - h * 0.8); g.quadraticCurveTo(x, y - h * 1.12, x + w / 2 - 4 * s, y - h * 0.8); g.lineTo(x + w / 2, y);
+      g.lineTo(x + w / 2 - leg, y); g.lineTo(x + w / 2 - leg, y - h * 0.4);
+      g.quadraticCurveTo(x, y - h * 0.9, x - w / 2 + leg, y - h * 0.4); g.lineTo(x - w / 2 + leg, y); g.closePath();
+      g.fill();
+      g.fillStyle = 'rgba(255,236,214,0.22)'; g.fillRect(x - w * 0.34, y - h * 0.94, w * 0.5, 3 * s);
       break;
     }
-    case 'spire': {
-      const h = (60 + r * 70) * s, w = (14 + r * 10) * s;
-      g.beginPath(); g.moveTo(x - w, y); g.lineTo(x - w * 0.55, y - h * 0.6); g.lineTo(x - w * 0.9, y - h); g.lineTo(x + w * 0.7, y - h); g.lineTo(x + w * 0.45, y - h * 0.55); g.lineTo(x + w, y); g.fill();
-      g.fillStyle = 'rgba(0,0,0,0.08)'; g.fillRect(x - w * 0.6, y - h * 0.45, w * 1.2, 3 * s); g.fillRect(x - w * 0.7, y - h * 0.8, w * 1.4, 3 * s);
+    case 'hoodoo': {   // a rock column with a cap balanced on top
+      const h = (46 + r * 46) * s, w = (9 + r * 6) * s;
+      g.beginPath(); g.moveTo(x - w * 1.3, y); g.lineTo(x - w * 0.7, y - h * 0.5); g.lineTo(x - w, y - h * 0.62); g.lineTo(x - w * 0.6, y - h); g.lineTo(x + w * 0.6, y - h);
+      g.lineTo(x + w * 0.9, y - h * 0.6); g.lineTo(x + w * 0.6, y - h * 0.48); g.lineTo(x + w * 1.3, y); g.fill();
+      g.beginPath(); g.ellipse(x, y - h - 4 * s, w * 1.5, 6 * s, 0, 0, TAU); g.fill();
+      g.fillStyle = 'rgba(0,0,0,0.1)'; g.fillRect(x - w * 0.8, y - h * 0.3, w * 1.6, 2.5 * s); g.fillRect(x - w * 0.7, y - h * 0.75, w * 1.4, 2.5 * s);
+      break;
+    }
+    case 'rocks': {
+      const h = (8 + r * 9) * s;
+      g.beginPath(); g.ellipse(x, y - h * 0.3, h * 1.1, h * 0.75, 0, Math.PI, 0); g.fill();
+      g.beginPath(); g.ellipse(x + h * 1.1, y - h * 0.15, h * 0.6, h * 0.45, 0, Math.PI, 0); g.fill();
+      break;
+    }
+    case 'crater': {
+      const w = (8 + r * 14) * s;
+      g.beginPath(); g.ellipse(x, y + w * 0.9, w, w * 0.32, 0, 0, TAU); g.fill();
+      g.fillStyle = 'rgba(255,255,255,0.14)'; g.beginPath(); g.ellipse(x, y + w * 0.9 + w * 0.12, w * 0.85, w * 0.18, 0, 0, Math.PI); g.fill();
+      break;
+    }
+    case 'crack': {   // glowing cracks in the near basalt
+      g.strokeStyle = L.dColor; g.lineWidth = 1.6 * s; g.globalAlpha = 0.5 + 0.3 * Math.sin(t * 2 + r * 9);
+      g.beginPath(); let cx = x, cy = y + 6 * s; g.moveTo(cx, cy);
+      for (let j = 1; j < 5; j++) { cx += (hash(Math.floor(r * 1e5) + j) - 0.5) * 16 * s; cy += 9 * s; g.lineTo(cx, cy); }
+      g.stroke(); g.globalAlpha = 1;
       break;
     }
     case 'dome': {
@@ -242,6 +317,8 @@ function drawDeco(g, kind, x, y, L, r, t, cam) {
       const gl = g.createRadialGradient(x, y - h, 2, x, y - h, 70 * s);
       gl.addColorStop(0, 'rgba(255,140,50,0.75)'); gl.addColorStop(1, 'rgba(255,80,30,0)');
       g.fillStyle = gl; g.beginPath(); g.arc(x, y - h, 70 * s, 0, TAU); g.fill();
+      g.strokeStyle = 'rgba(255,120,40,0.7)'; g.lineWidth = 3 * s;   // a lava run down the side
+      g.beginPath(); g.moveTo(x + w * 0.05, y - h); g.quadraticCurveTo(x + w * 0.2, y - h * 0.55, x + w * 0.16, y - h * 0.2); g.stroke();
       break;
     }
     case 'chimney': {
@@ -254,189 +331,97 @@ function drawDeco(g, kind, x, y, L, r, t, cam) {
   }
 }
 
-// ---------- terrain ----------
+// ---------- track ----------
+// The track is a thin red line over the scenery, nothing filled in under it. Pit walls and floors aren't drawn,
+// so a pit is simply a break in the line; lava sits in its gap (drawn after the bikes, so a bike sinks into it).
 function visibleRange(cam) { return [cam.wx(-60), cam.wx(cam.W + 60)]; }
-
-function drawTerrain(g, cam, level, theme, t, opts = {}) {
-  const P = level.ground, K = level.kinds;
+// which ground segments to leave out: pit walls and floors, and the tall walls that close off each end
+function hiddenSegments(level) {
+  if (level._hidden) return level._hidden;
+  const P = level.ground, K = level.kinds, hide = new Uint8Array(K.length);
+  for (let i = 0; i < K.length; i++) {
+    const ax = P[i * 2], ay = P[i * 2 + 1], bx = P[i * 2 + 2], by = P[i * 2 + 3];
+    if (K[i] === 'pit' || K[i] === 'lava') { hide[i] = 1; continue; }
+    if (Math.abs(bx - ax) < 0.01 && Math.abs(by - ay) > 20) { hide[i] = 1; continue; }
+    for (const pit of level.pits) if (Math.min(ax, bx) >= pit.x0 - 0.01 && Math.max(ax, bx) <= pit.x1 + 0.01 && Math.min(ay, by) <= pit.y + 0.01) { hide[i] = 1; break; }
+  }
+  return (level._hidden = hide);
+}
+function lineWidth(cam) { return Math.max(2.4, 0.08 * cam.ppm); }
+function drawTerrain(g, cam, level, theme) {
+  const P = level.ground, K = level.kinds, hide = hiddenSegments(level);
   const [x0, x1] = visibleRange(cam);
-  // index range of visible points (ground x is non-decreasing apart from walls)
-  let i0 = 0;
-  while (i0 + 2 < P.length && P[i0 + 2] < x0) i0 += 2;
-  let i1 = i0;
-  while (i1 < P.length - 2 && P[i1] <= x1) i1 += 2;
-  const bottom = cam.H + 20;
-  const pts = [];
-  for (let i = i0; i <= i1; i += 2) pts.push(cam.sx(P[i]), cam.sy(P[i + 1]));
-  // pits and lava behind the ground
-  for (const pit of level.pits) {
-    if (pit.x1 < x0 || pit.x0 > x1) continue;
-    const ax = cam.sx(pit.x0), bx = cam.sx(pit.x1), top = cam.sy(pit.top + 1), fl = cam.sy(pit.y);
-    // the far wall of the trench, fading in below the rim so it reads as a hole, not a window
-    const rim = cam.sy(pit.top - 0.4), wall = g.createLinearGradient(0, rim, 0, rim + 2.6 * cam.ppm);
-    wall.addColorStop(0, withAlpha(theme.deep, 0)); wall.addColorStop(1, withAlpha(theme.deep, 0.95));
-    g.fillStyle = wall; g.fillRect(ax, rim, bx - ax, fl - rim);
-    if (pit.kind === 'lava') {
-      const lg = g.createLinearGradient(0, fl - 80, 0, fl);
-      lg.addColorStop(0, 'rgba(255,120,40,0)'); lg.addColorStop(1, 'rgba(255,120,40,0.55)');
-      g.fillStyle = lg; g.fillRect(ax, top, bx - ax, fl - top);
-    } else {
-      g.fillStyle = 'rgba(30,15,20,0.25)'; g.fillRect(ax, fl - 40, bx - ax, 40);
-    }
-  }
-  // ground body
-  g.beginPath(); g.moveTo(pts[0], bottom);
-  for (let i = 0; i < pts.length; i += 2) g.lineTo(pts[i], pts[i + 1]);
-  g.lineTo(pts[pts.length - 2], bottom); g.closePath();
-  const gg = g.createLinearGradient(0, cam.sy(level.maxY), 0, cam.sy(level.minY - 12));
-  gg.addColorStop(0, theme.ground); gg.addColorStop(1, theme.deep);
-  g.fillStyle = gg; g.fill();
-  // strata: the outline shifted down a few times, clipped to the ground
-  g.save(); g.clip();
-  g.lineJoin = 'round';
-  const ppm = cam.ppm;
-  for (const [d, w, a] of [[1.1, 0.28, 0.55], [2.5, 0.5, 0.35], [4.6, 0.8, 0.25]]) {
-    g.strokeStyle = theme.strata; g.globalAlpha = a; g.lineWidth = w * ppm;
+  // index range of visible segments (ground x is non-decreasing)
+  let s0 = 0;
+  while (s0 + 1 < K.length && P[s0 * 2 + 2] < x0) s0++;
+  let s1 = s0;
+  while (s1 < K.length - 1 && P[s1 * 2] <= x1) s1++;
+  const w = lineWidth(cam), edge = Math.max(1, w * 0.3);
+  // one path per kind of stretch: ground in the world's red, ice in pale blue
+  const path = (want) => {
     g.beginPath();
-    for (let i = 0; i < pts.length; i += 2) { const y = pts[i + 1] + d * ppm; if (i) g.lineTo(pts[i], y); else g.moveTo(pts[i], y); }
-    g.stroke();
-  }
-  g.globalAlpha = 1;
-  if (theme.cracks) {   // glowing cracks in the basalt
-    g.strokeStyle = theme.cracks; g.lineWidth = Math.max(1.5, 0.06 * ppm); g.globalAlpha = 0.55 + 0.25 * Math.sin(t * 2);
-    const k0 = Math.floor(x0 / 7), k1 = Math.ceil(x1 / 7);
-    for (let k = k0; k <= k1; k++) {
-      if (hash(k * 3 + 1) < 0.5) continue;
-      const wx = k * 7 + hash(k) * 4, s = level.terrain.surface(wx);
-      if (!s) continue;
-      let x = cam.sx(wx), y = cam.sy(s.y) + 0.8 * ppm;
-      g.beginPath(); g.moveTo(x, y);
-      for (let j = 1; j < 4; j++) { x += (hash(k * 11 + j) - 0.5) * 0.9 * ppm; y += 0.55 * ppm; g.lineTo(x, y); }
-      g.stroke();
+    let open = false;
+    for (let i = s0; i <= s1; i++) {
+      if (hide[i] || (K[i] === 'ice') !== want) { open = false; continue; }
+      const ax = cam.sx(P[i * 2]), ay = cam.sy(P[i * 2 + 1]), bx = cam.sx(P[i * 2 + 2]), by = cam.sy(P[i * 2 + 3]);
+      if (!open) { g.moveTo(ax, ay); open = true; }
+      g.lineTo(bx, by);
     }
-    g.globalAlpha = 1;
-  }
-  if (theme.props.includes('crater')) {
-    g.fillStyle = 'rgba(60,58,90,0.35)';
-    const k0 = Math.floor(x0 / 5), k1 = Math.ceil(x1 / 5);
-    for (let k = k0; k <= k1; k++) {
-      const wx = k * 5 + hash(k * 5) * 3, s = level.terrain.surface(wx);
-      if (!s) continue;
-      g.beginPath(); g.ellipse(cam.sx(wx), cam.sy(s.y - 1.5 - hash(k) * 4), (0.3 + hash(k * 9) * 0.6) * ppm, (0.18 + hash(k * 9) * 0.3) * ppm, 0, 0, TAU); g.fill();
-    }
-  }
-  g.restore();
-  // top band
+  };
   g.lineCap = 'round'; g.lineJoin = 'round';
-  if (theme.topEdge) { g.strokeStyle = theme.topEdge; g.lineWidth = 0.5 * ppm; strokeTop(g, pts, K, i0, 0.12 * ppm); }
-  g.strokeStyle = theme.top; g.lineWidth = 0.36 * ppm; strokeTop(g, pts, K, i0, 0);
-  g.strokeStyle = theme.topHi; g.lineWidth = 0.09 * ppm; strokeTop(g, pts, K, i0, -0.1 * ppm);
-  // ice patches
-  g.strokeStyle = '#bff4ff'; g.lineWidth = 0.34 * ppm;
-  g.beginPath();
-  let on = false;
-  for (let i = 0; i + 2 < pts.length; i += 2) {
-    const k = K[(i0 + i) / 2];
-    if (k === 'ice') { if (!on) { g.moveTo(pts[i], pts[i + 1]); on = true; } g.lineTo(pts[i + 2], pts[i + 3]); } else on = false;
+  for (const icy of [false, true]) {
+    path(icy);
+    if (theme.halo) { g.strokeStyle = theme.halo; g.lineWidth = w + edge * 2 + 5; g.stroke(); }
+    g.strokeStyle = icy ? ICE.edge : theme.lineEdge; g.lineWidth = w + edge * 2; g.stroke();
+    g.strokeStyle = icy ? ICE.line : theme.line; g.lineWidth = w; g.stroke();
   }
-  g.stroke();
-  g.strokeStyle = 'rgba(255,255,255,0.9)'; g.lineWidth = 0.07 * ppm; g.stroke();
-  // lava surfaces
+}
+// lava pools in the gaps, drawn over the bikes
+function drawHazards(g, cam, level, t) {
+  const [x0, x1] = visibleRange(cam), ppm = cam.ppm;
   for (const pit of level.pits) {
     if (pit.kind !== 'lava' || pit.x1 < x0 || pit.x0 > x1) continue;
-    const ax = cam.sx(pit.x0 + 0.05), bx = cam.sx(pit.x1 - 0.05), y = cam.sy(pit.y + 2.2), fl = cam.sy(pit.y - 1);
-    const lg = g.createLinearGradient(0, y, 0, fl);
-    lg.addColorStop(0, '#ffd23f'); lg.addColorStop(0.25, '#ff8a2c'); lg.addColorStop(1, '#c4321d');
+    const ax = cam.sx(pit.x0), bx = cam.sx(pit.x1), y = cam.sy(pit.top - 1.4), bottom = cam.H + 4;
+    if (y > bottom) continue;
+    const glow = g.createLinearGradient(0, y - 2.2 * ppm, 0, y);
+    glow.addColorStop(0, 'rgba(255,140,50,0)'); glow.addColorStop(1, 'rgba(255,140,50,0.45)');
+    g.fillStyle = glow; g.fillRect(ax, y - 2.2 * ppm, bx - ax, 2.2 * ppm);
+    const lg = g.createLinearGradient(0, y, 0, y + 4.5 * ppm);
+    lg.addColorStop(0, '#ffd23f'); lg.addColorStop(0.12, '#ff8a2c'); lg.addColorStop(0.5, '#c4321d'); lg.addColorStop(1, '#5c140d');
     g.fillStyle = lg;
-    g.beginPath(); g.moveTo(ax, fl);
-    for (let x = ax; x <= bx; x += 6) g.lineTo(x, y + Math.sin(x * 0.05 + t * 3) * 0.12 * ppm);
-    g.lineTo(bx, y); g.lineTo(bx, fl); g.closePath(); g.fill();
+    g.beginPath(); g.moveTo(ax, bottom);
+    for (let x = ax; x <= bx; x += 5) g.lineTo(x, y + Math.sin(x * 0.05 + t * 3) * 0.1 * ppm);
+    g.lineTo(bx, y); g.lineTo(bx, bottom); g.closePath(); g.fill();
     g.fillStyle = 'rgba(255,240,170,0.85)';
     for (let k = 0; k < 4; k++) {
-      const ph = (t * 0.7 + k * 0.29 + pit.x0) % 1, bxp = lerp(ax, bx, hash(k * 7 + Math.floor(pit.x0)));
+      const ph = (t * 0.7 + k * 0.29 + pit.x0) % 1, bxp = lerp(ax + 8, bx - 8, hash(k * 7 + Math.floor(pit.x0)));
       g.beginPath(); g.arc(bxp, y - ph * 0.4 * ppm, (1 - ph) * 0.14 * ppm, 0, TAU); g.fill();
     }
   }
 }
-function strokeTop(g, pts, K, i0, dy) {
-  // stroke only the parts that face up (walls and pit floors get no grass/snow)
-  g.beginPath();
-  let drawing = false;
-  for (let i = 0; i + 2 < pts.length; i += 2) {
-    const dx = pts[i + 2] - pts[i], up = dx > Math.abs(pts[i + 3] - pts[i + 1]) * 0.5 && K[(i0 + i) / 2] !== 'pit' && K[(i0 + i) / 2] !== 'lava';
-    if (up) {
-      if (!drawing) { g.moveTo(pts[i], pts[i + 1] + dy); drawing = true; }
-      g.lineTo(pts[i + 2], pts[i + 3] + dy);
-    } else drawing = false;
-  }
-  g.stroke();
-}
 
-// small props standing on the track edge, behind the bikes
-function drawProps(g, cam, level, theme, t) {
-  const [x0, x1] = visibleRange(cam), ppm = cam.ppm, T = level.terrain;
-  const k0 = Math.floor(x0 / 2.6), k1 = Math.ceil(x1 / 2.6);
-  for (let k = k0; k <= k1; k++) {
-    if (hash(k * 19 + 3) < 0.55) continue;
-    const wx = k * 2.6 + hash(k * 23) * 1.6;
-    if (wx < 4 || Math.abs(wx - level.finishX) < 3) continue;
-    const s = T.surface(wx);
-    if (!s || s.kind !== 'ground' || Math.abs(s.angle) > 0.45) continue;
-    const i = Math.floor(hash(k * 29) * theme.props.length), kind = theme.props[i], col = theme.propColors[i];
-    const x = cam.sx(wx), y = cam.sy(s.y) + 0.05 * ppm, sc = (0.7 + hash(k * 31) * 0.6) * ppm;
-    g.fillStyle = col; g.strokeStyle = col;
-    switch (kind) {
-      case 'tuft':
-        g.lineWidth = 0.06 * ppm; g.lineCap = 'round'; g.beginPath();
-        for (let j = -2; j <= 2; j++) { g.moveTo(x + j * 0.06 * sc, y); g.lineTo(x + j * 0.13 * sc, y - (0.28 - Math.abs(j) * 0.05) * sc); }
-        g.stroke(); break;
-      case 'flower':
-        g.strokeStyle = '#4aa944'; g.lineWidth = 0.04 * ppm; g.beginPath(); g.moveTo(x, y); g.lineTo(x, y - 0.3 * sc); g.stroke();
-        g.fillStyle = col; for (let j = 0; j < 5; j++) { const a = j * TAU / 5; g.beginPath(); g.arc(x + Math.cos(a) * 0.07 * sc, y - 0.3 * sc + Math.sin(a) * 0.07 * sc, 0.055 * sc, 0, TAU); g.fill(); }
-        g.fillStyle = '#fff3b0'; g.beginPath(); g.arc(x, y - 0.3 * sc, 0.045 * sc, 0, TAU); g.fill(); break;
-      case 'bush':
-        blobs(g, [[x - 0.18 * sc, y - 0.12 * sc, 0.17 * sc], [x + 0.14 * sc, y - 0.14 * sc, 0.2 * sc], [x, y - 0.26 * sc, 0.18 * sc]]); break;
-      case 'rock': case 'snow': case 'crater':
-        g.beginPath(); g.ellipse(x, y - 0.06 * sc, 0.26 * sc, 0.16 * sc, 0, Math.PI, 0); g.fill();
-        g.fillStyle = 'rgba(255,255,255,0.3)'; g.beginPath(); g.ellipse(x - 0.07 * sc, y - 0.14 * sc, 0.08 * sc, 0.04 * sc, 0, 0, TAU); g.fill(); break;
-      case 'shrub':
-        g.lineWidth = 0.04 * ppm; g.beginPath();
-        for (let j = 0; j < 6; j++) { const a = -Math.PI / 2 + (j - 2.5) * 0.35; g.moveTo(x, y); g.lineTo(x + Math.cos(a) * 0.32 * sc, y + Math.sin(a) * 0.32 * sc); }
-        g.stroke(); break;
-      case 'skull':
-        g.beginPath(); g.ellipse(x, y - 0.06 * sc, 0.13 * sc, 0.09 * sc, 0, Math.PI, 0); g.fill();
-        g.fillStyle = '#7a4a3a'; g.fillRect(x - 0.07 * sc, y - 0.1 * sc, 0.035 * sc, 0.03 * sc); g.fillRect(x + 0.03 * sc, y - 0.1 * sc, 0.035 * sc, 0.03 * sc); break;
-      case 'pine':
-        g.beginPath(); g.moveTo(x, y - 1.1 * sc); g.lineTo(x + 0.35 * sc, y); g.lineTo(x - 0.35 * sc, y); g.fill();
-        g.fillStyle = '#fff'; g.beginPath(); g.moveTo(x, y - 1.1 * sc); g.lineTo(x + 0.12 * sc, y - 0.75 * sc); g.lineTo(x - 0.12 * sc, y - 0.75 * sc); g.fill(); break;
-      case 'ember':
-        g.globalAlpha = 0.5 + 0.5 * Math.sin(t * 3 + k);
-        g.beginPath(); g.arc(x, y - 0.08 * sc, 0.07 * sc, 0, TAU); g.fill(); g.globalAlpha = 1; break;
-      case 'pipe':
-        g.fillRect(x - 0.06 * sc, y - 0.7 * sc, 0.12 * sc, 0.7 * sc); g.fillRect(x - 0.12 * sc, y - 0.75 * sc, 0.24 * sc, 0.1 * sc); break;
-    }
-  }
-}
-
-// loops: a ring of track on struts
+// loops: a ring of the same line
 function drawLoops(g, cam, level, theme) {
-  const ppm = cam.ppm;
+  const ppm = cam.ppm, w = lineWidth(cam), edge = Math.max(1, w * 0.3);
   for (const L of level.loops) {
-    const x = cam.sx(L.cx), y = cam.sy(L.cy), r = L.r * ppm;
+    const x = cam.sx(L.cx), y = cam.sy(L.cy), r = (L.r + 0.01) * ppm;
     if (x + r < -50 || x - r > cam.W + 50) continue;
-    g.strokeStyle = theme.deep; g.lineWidth = 0.18 * ppm;
-    for (const a of [-0.5, 0.5]) { g.beginPath(); g.moveTo(x + Math.sin(a) * r, y - Math.cos(a) * r); g.lineTo(x + Math.sin(a) * r * 1.6, cam.sy(L.cy - L.r)); g.stroke(); }
-    g.strokeStyle = theme.wall; g.lineWidth = 0.5 * ppm; g.beginPath(); g.arc(x, y, r + 0.25 * ppm, 0, TAU); g.stroke();
-    g.strokeStyle = theme.top; g.lineWidth = 0.18 * ppm; g.beginPath(); g.arc(x, y, r + 0.06 * ppm, 0, TAU); g.stroke();
+    g.beginPath(); g.arc(x, y, r, 0, TAU);
+    if (theme.halo) { g.strokeStyle = theme.halo; g.lineWidth = w + edge * 2 + 5; g.stroke(); }
+    g.strokeStyle = theme.lineEdge; g.lineWidth = w + edge * 2; g.stroke();
+    g.strokeStyle = theme.line; g.lineWidth = w; g.stroke();
   }
 }
 
-// start line, checkpoints and the finish gate
+// start line, checkpoint flags and the chequered finish flag
 function drawMarkers(g, cam, level, t, showCheckpoints) {
   const ppm = cam.ppm, T = level.terrain;
-  const sy0 = cam.sy((T.surface(1.2) || { y: 0 }).y);
-  g.fillStyle = '#fff'; g.globalAlpha = 0.85;
-  g.fillRect(cam.sx(1.1), sy0 - 0.02 * ppm, 0.12 * ppm, 0.25 * ppm); g.globalAlpha = 1;
+  const sy0 = cam.sy((T.surface(0.6) || { y: 0 }).y), sx0 = cam.sx(0.6);
+  if (sx0 > -20 && sx0 < cam.W + 20) {   // a little start post
+    g.fillStyle = INK; g.fillRect(sx0 - 0.05 * ppm - 1, sy0 - 0.9 * ppm - 1, 0.1 * ppm + 2, 0.9 * ppm + 1);
+    g.fillStyle = '#ffffff'; g.fillRect(sx0 - 0.05 * ppm, sy0 - 0.9 * ppm, 0.1 * ppm, 0.9 * ppm);
+    g.fillStyle = '#43b05c'; g.beginPath(); g.arc(sx0, sy0 - 0.95 * ppm, 0.13 * ppm, 0, TAU); g.fill();
+  }
   if (showCheckpoints) for (const cx of level.checkpoints) {
     const s = T.surface(cx); if (!s) continue;
     const x = cam.sx(cx), y = cam.sy(s.y);
@@ -447,22 +432,28 @@ function drawMarkers(g, cam, level, t, showCheckpoints) {
   }
   const fx = level.finishX, s = T.surface(fx) || { y: 0 };
   const x = cam.sx(fx), y = cam.sy(s.y);
-  if (x < -6 * ppm || x > cam.W + 6 * ppm) return;
-  const h = 3.4 * ppm, w = 0.16 * ppm, half = 1.6 * ppm;
-  // posts
-  for (const px of [x - half * 0.25, x + half * 0.25]) {
-    g.fillStyle = INK; g.fillRect(px - w / 2 - 2, y - h - 2, w + 4, h + 2);
-    g.fillStyle = '#fdfbfd'; g.fillRect(px - w / 2, y - h, w, h);
-  }
-  // waving checker banner between and above the posts
-  const bw = half * 1.3, bh = 0.7 * ppm, cols = 8, rows = 2, cw = bw / cols, ch = bh / rows, bx = x - bw / 2, by = y - h - bh * 0.4;
-  g.fillStyle = INK; g.fillRect(bx - 3, by - 3, bw + 6, bh + 6);
+  if (x < -4 * ppm || x > cam.W + 4 * ppm) return;
+  // one tall pole with a chequered flag rippling in the wind
+  const h = 4.2 * ppm, pw = Math.max(3, 0.12 * ppm);
+  g.fillStyle = INK; g.fillRect(x - pw / 2 - 1.5, y - h - 1.5, pw + 3, h + 1.5);
+  const pole = g.createLinearGradient(x - pw / 2, 0, x + pw / 2, 0);
+  pole.addColorStop(0, '#f2eee8'); pole.addColorStop(1, '#b9b2aa');
+  g.fillStyle = pole; g.fillRect(x - pw / 2, y - h, pw, h);
+  g.fillStyle = '#ffd43b'; g.beginPath(); g.arc(x, y - h - 0.06 * ppm, 0.14 * ppm, 0, TAU); g.fill();
+  g.strokeStyle = INK; g.lineWidth = 1.5; g.stroke();
+  const cols = 6, rows = 4, fw = 1.9 * ppm, fh = 1.25 * ppm, cw = fw / cols, ch = fh / rows, top = y - h + 0.1 * ppm;
+  const wave = (i) => Math.sin(t * 5 - i * 0.9) * 0.08 * ppm * (i / cols);
+  // outline first, then the squares, each column bent by the wave
+  g.fillStyle = INK;
+  g.beginPath(); g.moveTo(x + pw / 2, top - 1.5);
+  for (let i = 1; i <= cols; i++) g.lineTo(x + pw / 2 + i * cw + 1.5 * (i === cols), top + wave(i) - 1.5);
+  for (let i = cols; i >= 0; i--) g.lineTo(x + pw / 2 + i * cw + 1.5 * (i === cols), top + fh + wave(i) + 1.5);
+  g.closePath(); g.fill();
   for (let i = 0; i < cols; i++) for (let j = 0; j < rows; j++) {
-    const wave = Math.sin(t * 4 + i * 0.7) * 0.06 * ppm;
+    const xa = x + pw / 2 + i * cw, xb = xa + cw, wa = wave(i), wb = wave(i + 1);
     g.fillStyle = (i + j) % 2 ? '#2b2b33' : '#ffffff';
-    g.fillRect(bx + i * cw, by + j * ch + wave, cw + 0.5, ch + 0.5);
+    g.beginPath(); g.moveTo(xa, top + j * ch + wa); g.lineTo(xb + 0.4, top + j * ch + wb); g.lineTo(xb + 0.4, top + (j + 1) * ch + wb + 0.4); g.lineTo(xa, top + (j + 1) * ch + wa + 0.4); g.closePath(); g.fill();
   }
-  g.fillStyle = '#ffd43b'; g.beginPath(); g.arc(x - half * 0.25, y - h - 0.1 * ppm, 0.12 * ppm, 0, TAU); g.arc(x + half * 0.25, y - h - 0.1 * ppm, 0.12 * ppm, 0, TAU); g.fill();
 }
 
 // ---------- bike and rider ----------
@@ -550,7 +541,7 @@ function drawBike(g, cam, pose, look, opts = {}) {
   const local = (wx, wy) => { const dx = wx - pose.x, dy = wy - pose.y; return [dx * ca - dy * sa, dx * sa + dy * ca]; };
   const T = shape.tall || 0;
   let rw, fw, rphi, fphi;
-  if (pose.wheels) { rw = local(pose.wheels[0][0], pose.wheels[0][1]); fw = local(pose.wheels[1][0], pose.wheels[1][1]); rphi = pose.wheels[0][2]; fphi = pose.wheels[1][2]; }
+  if (pose.wheels && !pose.loose) { rw = local(pose.wheels[0][0], pose.wheels[0][1]); fw = local(pose.wheels[1][0], pose.wheels[1][1]); rphi = pose.wheels[0][2]; fphi = pose.wheels[1][2]; }
   else { rw = [B.anchors[0][0], B.anchors[0][1] - 0.04]; fw = [B.anchors[1][0], B.anchors[1][1] - 0.04]; rphi = fphi = pose.phi || 0; }
   const ghost = opts.ghost;
   if (!pose.noBike) {
@@ -560,8 +551,7 @@ function drawBike(g, cam, pose, look, opts = {}) {
     capsule(g, 0.4, 0.3 + T, fw[0], fw[1], 0.065, shape.springs ? '#efedf2' : '#d8b45a');
     if (shape.springs) spring(g, fw[0] - 0.03 + (0.37 - fw[0]) * 0.2, fw[1] + 0.12 + (0.36 + T - fw[1]) * 0.2, 0.37 - (0.37 - fw[0]) * 0.12, 0.36 + T - (0.36 + T - fw[1]) * 0.12, 0.05, '#ffd23f');
     else capsule(g, 0.37, 0.36 + T, fw[0] - 0.03, fw[1] + 0.12, 0.05, '#efedf2');
-    wheel(g, rw[0], rw[1], r, rphi, shape, paint);
-    wheel(g, fw[0], fw[1], r, fphi, shape, paint);
+    if (!pose.loose) { wheel(g, rw[0], rw[1], r, rphi, shape, paint); wheel(g, fw[0], fw[1], r, fphi, shape, paint); }
     // engine, skid plate and exhaust
     poly(g, [[-0.22, -0.02], [0.18, -0.02], [0.2, -0.26], [-0.16, -0.28]], '#55505d');
     g.fillStyle = 'rgba(255,255,255,0.18)'; g.fillRect(-0.16, -0.12, 0.3, 0.035); g.fillRect(-0.16, -0.2, 0.3, 0.035);
@@ -659,6 +649,14 @@ function drawHelmet(g, x, y, paint) {
   g.beginPath(); g.moveTo(0.02, 0.17); g.lineTo(0.3, 0.13); g.lineTo(0.22, 0.08); g.lineTo(0.0, 0.12); g.closePath(); g.fill(); g.stroke();
   g.restore();
 }
+// a wheel that came off in a crash, rolling on its own
+function drawWheel(g, cam, x, y, phi, look, alpha = 1) {
+  const shape = SHAPES[look.bike] || SHAPES.scout, paint = look.paint || PAINTS[0];
+  g.save(); g.globalAlpha = alpha;
+  g.translate(cam.sx(x), cam.sy(y)); g.scale(cam.ppm, -cam.ppm);
+  wheel(g, 0, 0, C.BASE.radius, phi, shape, paint);
+  g.restore();
+}
 // the rider tumbling free after a crash
 function drawRagdoll(g, cam, R, paint) {
   const ppm = cam.ppm;
@@ -744,8 +742,9 @@ function drawThumb(canvas, world, level) {
   cam.x = x + 4; cam.y = s.y + 2.6;
   drawSky(g, cam, theme, 0); drawLayers(g, cam, theme, 0);
   drawLoops(g, cam, level, theme);
-  drawTerrain(g, cam, level, theme, 0); drawProps(g, cam, level, theme, 0);
+  drawTerrain(g, cam, level, theme);
+  drawHazards(g, cam, level, 0);
 }
 
-window.BikeRaceArt = { THEMES, PAINTS, paintAt, Camera, drawSky, drawLayers, drawTerrain, drawProps, drawLoops, drawMarkers, drawBike, drawRagdoll, drawTag, Particles, drawThumb, INK, hash };
+window.BikeRaceArt = { THEMES, PAINTS, paintAt, Camera, drawSky, drawLayers, drawTerrain, drawHazards, drawLoops, drawMarkers, drawBike, drawWheel, drawRagdoll, drawTag, Particles, drawThumb, INK, hash };
 })();

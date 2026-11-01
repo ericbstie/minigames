@@ -168,7 +168,7 @@ async function run(output) {
   a.drain(); b.drain(); c.drain();
   a.close();
   room = await b.next('room', m => m.players.find(p => p.id === wa.id).away);
-  ok(room && room.host === wa.id, 'a dropped host is shown as away and keeps the room', room);
+  ok(room && room.players.length === 3 && room.host !== wa.id && room.players.find(p => p.id === room.host && !p.away), 'a dropped host is shown as away, keeps their place, and hands host to someone still here', room);
   const a2 = wsRider();
   await a2.opened;
   a2.send({ t: 'hello', name: 'Annie', paint: 3, bike: 'comet', key: wa.key });

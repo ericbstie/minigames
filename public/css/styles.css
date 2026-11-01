@@ -62,7 +62,8 @@ button:focus-visible { outline: 3px solid #fff; outline-offset: 3px; }
 .sheet { width: min(340px, 100%); background: var(--tile); border-radius: 26px; padding: 22px 20px 20px; text-align: center;
   box-shadow: 0 8px 0 var(--tile-edge), 0 20px 40px rgba(80,30,20,0.3); animation: pop 0.28s cubic-bezier(.2,1.5,.5,1) both; }
 @keyframes pop { from { transform: scale(0.7); opacity: 0; } }
-@media (prefers-reduced-motion: reduce) { .sheet, #result .sheet, .badge svg, .badge .rays, #result.lose .badge svg { animation: none !important; } .card { transition: none; } }
+@media (prefers-reduced-motion: reduce) {
+  .sheet, #result .sheet, .badge svg, .badge .rays, #result.lose .badge svg { animation: none !important; } .card { transition: none; } }
 .sheet h2 { margin: 0 0 8px; font-size: 38px; line-height: 1.05; text-wrap: balance; }
 .sheet p { margin: 0 auto 18px; font: 600 15px/1.45 system-ui, sans-serif; color: #7c6870; max-width: 28ch; }
 .btns { display: grid; gap: 14px; }
@@ -228,10 +229,12 @@ button:focus-visible { outline: 3px solid #fff; outline-offset: 3px; }
 @media (prefers-reduced-motion: reduce) { .ws-win, .ws-card, .ws-star svg { animation: none; } }
 
 /* main menu */
-#hub { position: absolute; inset: 0; overflow-y: auto; display: flex; flex-direction: column; align-items: center; justify-content: center;
+/* centred with auto margins rather than justify-content, so a menu taller than the screen scrolls from its top */
+#hub { position: absolute; inset: 0; overflow-y: auto; display: flex; flex-direction: column; align-items: center;
   padding-block: 28px 32px; padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px));
   background: radial-gradient(70% 55% at 50% 52%, var(--bg-hi) 0%, var(--bg) 100%); }
-#hub h1 { margin: 0 0 22px; font-size: clamp(40px, 10vw, 60px); line-height: 1; text-align: center; text-wrap: balance; }
+#hub h1 { margin: auto 0 22px; font-size: clamp(40px, 10vw, 60px); line-height: 1; text-align: center; text-wrap: balance; }
+#hub .hub-cards { margin-bottom: auto; }
 .hub-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(240px, 100%), 1fr)); gap: 20px; width: 100%; max-width: 1200px; }
 .hub-card { display: grid; gap: 12px; padding: 12px 12px 18px; border: 0; cursor: pointer; text-align: center; min-width: 0; color: inherit;
   border-radius: 26px; background: var(--tile); box-shadow: 0 8px 0 var(--tile-edge), 0 14px 22px rgba(120, 60, 40, 0.2); transition: transform 0.12s ease; }
@@ -255,7 +258,10 @@ button:focus-visible { outline: 3px solid #fff; outline-offset: 3px; }
 .br-screen h1 { margin: 0 0 14px; font-size: clamp(40px, 10vw, 60px); line-height: 1; text-align: center; text-wrap: balance; }
 .br-screen .tally { margin: 0 0 20px; }
 .br-home-col { flex: 1; justify-content: center; max-width: 420px; }
+.br-brand, .br-home-main, .br-head { display: flex; flex-direction: column; align-items: center; }
+.br-home-main { width: 100%; }
 .br-logo { font-size: clamp(56px, 15vw, 92px) !important; transform: rotate(-4deg); margin-bottom: 18px !important; }
+.br-logo span { display: inline-block; }
 .br-menu { display: grid; gap: 16px; width: 100%; max-width: 320px; }
 .br-menu .b { font-size: 28px; padding: 15px 16px 17px; }
 .br-how { margin: 22px 0 0; font: 600 14px/1.5 system-ui, sans-serif; color: #7c5a4d; text-align: center; max-width: 34ch; text-wrap: balance; }
@@ -266,6 +272,8 @@ button:focus-visible { outline: 3px solid #fff; outline-offset: 3px; }
 .br-menu .b.soon::after { content: "Coming soon"; position: absolute; right: -8px; top: -10px; font: 400 13px/1 var(--display); color: #fff; -webkit-text-stroke: 0;
   background: #e8463c; padding: 5px 8px 6px; border-radius: 99px; transform: rotate(6deg); box-shadow: 0 2px 0 #a52a24; }
 
+.br-screen:not([hidden]) > *, .br-rotate > * { animation: brin 0.22s ease-out both; }
+@keyframes brin { from { opacity: 0; transform: translateY(8px); } }
 /* world cards */
 .br-world-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(220px, 100%), 1fr)); gap: 18px; width: 100%; }
 .br-world { position: relative; display: grid; gap: 8px; padding: 10px 10px 14px; border: 0; cursor: pointer; text-align: center; color: inherit; border-radius: 24px;
@@ -301,6 +309,7 @@ button:focus-visible { outline: 3px solid #fff; outline-offset: 3px; }
 .br-small { font-size: 13px !important; }
 .br-field { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: 0 0 12px; flex-wrap: wrap; }
 .br-field > span { font: 700 14px/1.2 system-ui, sans-serif; color: #7c6870; }
+.br-panel > .br-field:last-child { margin-bottom: 0; }
 .br-field input, .br-panel select, .br-row input { box-sizing: border-box; font: 700 17px/1 system-ui, sans-serif; color: var(--ink); background: #f4eef3; border: 2px solid #e2d8e0; border-radius: 12px; padding: 10px 12px; min-width: 0; }
 .br-field input { flex: 1 1 160px; max-width: 260px; }
 .br-panel select { width: 100%; max-width: 100%; margin: 0 0 12px; }
@@ -446,6 +455,7 @@ button:focus-visible { outline: 3px solid #fff; outline-offset: 3px; }
 .br-code { font: 400 22px/1 var(--display); color: #8d7f86; }
 .br-code b { font-weight: 400; font-size: 40px; letter-spacing: 0.1em; margin-left: 6px; vertical-align: -6px; }
 .br-big { font: 400 22px/1.2 var(--display) !important; color: var(--ink) !important; margin: 0 !important; }
+.br-conn { grid-column: 1 / -1; margin: -10px 0 8px; font: 600 12px/1.3 system-ui, sans-serif; color: #9a7a6c; text-align: center; }
 .br-note { margin: 0 0 14px; font: 600 14px/1.4 system-ui, sans-serif; color: #7c5a4d; text-align: center; }
 .br-room-btns { width: 100%; max-width: 360px; margin-bottom: 24px; justify-self: center; }
 #br-mp-lobby, #br-mp-room { width: 100%; }
@@ -477,7 +487,9 @@ button:focus-visible { outline: 3px solid #fff; outline-offset: 3px; }
 .br-pos { font-size: 26px; line-height: 1; padding: 9px 14px 10px; border-radius: 99px; background: rgba(48, 34, 38, 0.6); }
 .br-progress { position: absolute; left: 50%; transform: translateX(-50%); bottom: calc(14px + env(safe-area-inset-bottom, 0px)); width: min(420px, 60vw); height: 18px; pointer-events: none; }
 #br-app.touch .br-progress { bottom: auto; top: calc(80px + env(safe-area-inset-top, 0px)); }
-#br-app.touch .br-toast { top: auto; bottom: calc(30px + env(safe-area-inset-bottom, 0px)); left: 170px; right: 170px; padding-inline: 0; }
+/* on a phone, tips and toasts sit low in the middle, clear of the gas and brake caps (tilt) or the four buttons */
+#br-app.touch .br-toast { top: auto; bottom: calc(30px + env(safe-area-inset-bottom, 0px)); left: 124px; right: 136px; padding-inline: 0; }
+#br-app.touch:not(.tilt-on) .br-toast, #br-app.touch:not(.tilt-on) .br-tipbar { left: 192px; right: 222px; }
 #br-app.touch .br-center.ready { top: calc(104px + env(safe-area-inset-top, 0px)); }
 .br-track { position: absolute; left: 0; right: 0; top: 7px; height: 4px; border-radius: 4px; background: rgba(255, 255, 255, 0.55); box-shadow: 0 1px 0 rgba(40, 20, 20, 0.3); }
 .br-flag { position: absolute; right: -8px; top: 0; width: 12px; height: 12px; border-radius: 2px; background: conic-gradient(#2b2b33 0 25%, #fff 0 50%, #2b2b33 0 75%, #fff 0); background-size: 6px 6px; box-shadow: 0 0 0 2px var(--ink); }
@@ -489,7 +501,7 @@ button:focus-visible { outline: 3px solid #fff; outline-offset: 3px; }
 .br-center.ready b { color: var(--gold); }
 .br-center .br-lvl, .br-center .br-best { display: block; font-size: 0.5em; margin-bottom: 8px; }
 .br-center .br-best { margin: 10px 0 0; color: #fff3b0; }
-.br-tipbar { position: absolute; left: 170px; right: 170px; bottom: calc(34px + env(safe-area-inset-bottom, 0px)); text-align: center; pointer-events: none;
+.br-tipbar { position: absolute; left: 124px; right: 136px; bottom: calc(34px + env(safe-area-inset-bottom, 0px)); text-align: center; pointer-events: none;
   font: 700 15px/1.35 system-ui, sans-serif; color: #fff; text-shadow: 0 1px 3px rgba(40, 20, 20, 0.85); text-wrap: balance; }
 .br-center.count { font-size: clamp(90px, 22vw, 170px); top: 22%; }
 .br-center.count.go { color: var(--gold); }
@@ -526,6 +538,15 @@ button:focus-visible { outline: 3px solid #fff; outline-offset: 3px; }
 .br-touch.tilt .gas .cap { right: max(16px, env(safe-area-inset-right, 0px)); width: 104px; height: 104px; font-size: 26px; background: rgba(99, 201, 94, 0.55); box-shadow: inset 0 0 0 3px rgba(255, 255, 255, 0.7); }
 .br-touch.tilt .on .cap { transform: scale(0.92); background: rgba(48, 34, 38, 0.7); }
 .br-touch.tilt .gas.on .cap { background: rgba(63, 154, 68, 0.85); }
+/* the brake is red in both layouts; before the start each half of the screen is tinted to show what it does */
+.br-touch .brake, .br-touch.tilt .brake .cap { background: rgba(214, 58, 48, 0.5); box-shadow: inset 0 0 0 3px rgba(255, 255, 255, 0.62); }
+.br-touch .brake.on, .br-touch.tilt .brake.on .cap { background: rgba(170, 38, 30, 0.82); }
+.br-touch.tilt .brake, .br-touch.tilt .gas { transition: background-color 0.4s; }
+.br-touch.tilt.ready .brake { background: linear-gradient(90deg, rgba(214, 58, 48, 0.2), rgba(214, 58, 48, 0.04)); }
+.br-touch.tilt.ready .gas { background: linear-gradient(270deg, rgba(99, 201, 94, 0.22), rgba(99, 201, 94, 0.04)); }
+.br-touch.tilt.ready .gas::before { content: ''; position: absolute; left: 0; top: 4%; bottom: 4%; border-left: 2px dashed rgba(255, 255, 255, 0.55); }
+.br-touch.tilt.ready .cap { animation: brcap 1.4s ease-in-out infinite; }
+@keyframes brcap { 50% { transform: scale(1.07); } }
 
 /* held upright, ask for sideways (phones only) */
 .br-rotate { display: none; position: absolute; inset: 0; z-index: 20; flex-direction: column; align-items: center; justify-content: center; gap: 18px;
@@ -552,6 +573,8 @@ button:focus-visible { outline: 3px solid #fff; outline-offset: 3px; }
 #br-app .sheet p { margin-bottom: 14px; }
 .br-toggles { display: grid; gap: 2px; margin: 0 0 16px; text-align: left; }
 .br-toggles .br-field { margin: 0; padding: 6px 4px; }
+.br-toggles .br-field small { display: block; margin-top: 2px; font: 600 12px/1.2 system-ui, sans-serif; color: #b0656a; }
+.br-toggles .br-field small:empty { display: none; }
 .br-crash .sheet { background: var(--lose-sheet); box-shadow: 0 8px 0 var(--lose-edge), 0 20px 40px rgba(20, 10, 30, 0.4); animation: cddrop 0.5s ease-out both; }
 .br-crash h2 { color: #d9d2e3; -webkit-text-stroke-color: var(--lose-ink); }
 .br-crash p { color: var(--lose-ink); }
@@ -596,6 +619,7 @@ button:focus-visible { outline: 3px solid #fff; outline-offset: 3px; }
   #br-app .sheet .b { font-size: 22px; padding: 10px 14px 12px; }
   .br-toggles { margin-bottom: 10px; }
   .br-toggles .br-field { padding: 3px 4px; }
+  #br-app.touch:not(.tilt-on) .br-toast, #br-app.touch:not(.tilt-on) .br-tipbar { left: 172px; right: 196px; }
 }
 /* short, wide screens (phones held sideways): two-column sheets so nothing needs scrolling */
 @media (max-height: 520px) and (min-width: 560px) {
@@ -605,6 +629,55 @@ button:focus-visible { outline: 3px solid #fff; outline-offset: 3px; }
   #br-pausemenu .br-toggles { margin: 0; }
   #br-result .sheet p { margin-bottom: 10px; }
   #br-result .br-unlock { margin-bottom: 0; }
+  #br-raceresult .sheet { width: min(640px, 100%); display: grid; grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr); column-gap: 22px; align-items: center; align-content: center; }
+  #br-raceresult .sheet > * { grid-column: 1; }
+  #br-raceresult .sheet > .btns { grid-column: 2; grid-row: 1 / span 3; }
+  #br-raceresult .br-standings { margin-bottom: 0; }
+  #br-raceresult .br-note { margin: 10px 0 0; }
+}
+/* Phones held sideways: the menus are laid out to fit the screen, not to scroll. The title shares a row with
+   its star count or status, the home menu sits beside the logo, and worlds and levels are strips that slide sideways. */
+@media (orientation: landscape) and (max-height: 520px) {
+  .br-screen { padding-top: calc(12px + env(safe-area-inset-top, 0px)); padding-bottom: calc(12px + env(safe-area-inset-bottom, 0px)); }
+  .br-head { flex-direction: row; justify-content: center; gap: 12px; min-height: 48px; margin: 0 0 12px; padding-inline: 116px; box-sizing: border-box; width: 100%; }
+  .br-screen .br-head h1 { margin: 0; font-size: clamp(28px, 5vw, 40px); white-space: nowrap; }
+  .br-screen .br-head .tally { margin: 0; font-size: 20px; padding: 5px 14px 5px 8px; flex: none; }
+  .br-head .tally svg { width: 22px; height: 22px; }
+  .br-head .br-status { margin: 0; flex: none; }
+  #br-levels .br-sub2 { display: none; }
+  /* home: logo and stars on the left, the menu on the right */
+  .br-home-col { flex-direction: row; align-items: center; justify-content: center; gap: clamp(20px, 6vw, 64px); max-width: 860px; }
+  .br-brand { flex: none; }
+  .br-logo { font-size: clamp(60px, 21vh, 86px) !important; line-height: 0.92 !important; margin-bottom: 14px !important; }
+  .br-logo span { display: block; }
+  .br-logo span + span { margin-left: 0.5em; }
+  .br-home-col .tally { margin-bottom: 0; }
+  .br-home-main { flex: 0 1 340px; width: auto; min-width: 0; }
+  .br-home-main .br-menu { max-width: none; }
+  .br-how { margin-top: 14px; font-size: 13px; }
+  /* worlds and levels: one row of cards that slides sideways */
+  #br-worlds .br-col, #br-levels .br-col { max-width: none; }
+  .br-world-cards, .br-level-grid { display: flex; gap: 14px; max-width: none; overflow-x: auto; overscroll-behavior-x: contain; touch-action: pan-x pan-y;
+    scroll-snap-type: x proximity; scrollbar-width: none; padding: 2px 4px 14px; margin: 0 -4px; width: calc(100% + 8px); box-sizing: border-box; }
+  .br-world-cards::-webkit-scrollbar, .br-level-grid::-webkit-scrollbar { display: none; }
+  .br-world-cards > :first-child, .br-level-grid > :first-child { margin-left: auto; }
+  .br-world-cards > :last-child, .br-level-grid > :last-child { margin-right: auto; }
+  .br-world { flex: 0 0 clamp(172px, 27vw, 232px); scroll-snap-align: center; }
+  .br-level { flex: 0 0 clamp(104px, 14.2vw, 128px); scroll-snap-align: center; }
+  .br-level .lv { display: none; }
+  .br-level .n { font-size: 44px; }
+}
+@media (orientation: landscape) and (max-height: 360px) {
+  .br-world { flex-basis: clamp(156px, 25vw, 200px); gap: 6px; }
+  .br-world .nm { font-size: 23px; }
+  .br-world .ds { font-size: 12px; min-height: 2.6em; }
+  .br-level { padding: 10px 8px 12px; }
+  .br-level .n { font-size: 38px; }
+  .br-menu { gap: 10px; }
+  .br-menu .b { font-size: 22px; padding: 10px 14px 12px; }
+  .br-standings li { padding: 6px 10px; font-size: 15px; }
+  .br-standings .pl { font-size: 19px; }
+  .br-standings { gap: 6px; }
 }
 @media (max-height: 360px) { .br-center { font-size: 28px; } #br-app.touch .br-center.ready { top: calc(96px + env(safe-area-inset-top, 0px)); } }
-@media (prefers-reduced-motion: reduce) { .br-center.pop, .br-toast.show, .br-rstar.on, .br-crash .sheet, .br-new, .br-menu .b.has-new::after, .br-unlock.fresh { animation: none; } .br-toast.show { opacity: 1; } }
+@media (prefers-reduced-motion: reduce) { .br-screen:not([hidden]) > *, .br-rotate > *, .br-center.pop, .br-toast.show, .br-rstar.on, .br-crash .sheet, .br-new, .br-menu .b.has-new::after, .br-unlock.fresh, .br-touch.tilt.ready .cap { animation: none; } .br-toast.show { opacity: 1; } }
