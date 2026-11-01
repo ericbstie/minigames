@@ -1,0 +1,1004 @@
+// Bike Race: menus, the play loop, ghosts, saving, sound, tilt/touch input, races against
+// computer riders and live races through the race server. Exposes window.BikeRace { show, hide }.
+(() => {
+'use strict';
+const C = window.BikeRaceCore, A = window.BikeRaceArt, Net = window.BikeRaceNet;
+const $ = (id) => document.getElementById(id);
+const STEP = C.STEP;
+const fmt = (t) => (t == null || !isFinite(t)) ? '--' : t.toFixed(2);
+const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const ordinal = (n) => n + (['th', 'st', 'nd', 'rd'][(n % 100 - 20) % 10] || ['th', 'st', 'nd', 'rd'][n % 100] || 'th');
+const isTouch = () => matchMedia('(pointer: coarse)').matches || 'ontouchstart' in window;
+// Steps 3 (garage) and 4 (multiplayer) of the plan switch these on. Their code is drafted below but not finished.
+const FEATURES = { garage: false, multiplayer: false };
+// ?autopilot lets the computer rider drive your bike (used by the browser tests)
+const AUTOPILOT = /[?&]autopilot\b/.test(location.search);
+// The game is made for phones held sideways. On a computer it shows a "play on your phone" screen, unless the
+// player picks "Try it with the keyboard" there, or the address has ?autopilot or ?keyboard (for testing).
+let allowKeyboard = AUTOPILOT || /[?&]keyboard\b/.test(location.search);
+const isPhone = () => isTouch();
+
+// ------------------------------------------------------------------------------------------------
+// Saved progress
+const SAVE_KEY = 'bikerace.v1', GHOST_KEY = 'bikerace.ghost.v1.';
+const defaults = () => ({ best: {}, stars: {}, bike: 'scout', paint: 0, name: '', ghost: true, sound: true, tilt: true, cpu: 2, lastWorld: 'clover' });
+let save = defaults();
+try { save = Object.assign(defaults(), JSON.parse(localStorage.getItem(SAVE_KEY) || '{}')); } catch (e) {}
+const persist = () => { try { localStorage.setItem(SAVE_KEY, JSON.stringify(save)); } catch (e) {} };
+function loadGhost(id) {
+  try { const g = JSON.parse(localStorage.getItem(GHOST_KEY + id) || 'null'); return g && g.f ? { time: g.time, frames: C.decodeGhost(g.f) } : null; } catch (e) { return null; }
+}
+function saveGhost(id, time, frames) {
+  try { localStorage.setItem(GHOST_KEY + id, JSON.stringify({ time, f: C.encodeGhost(frames) })); } catch (e) {}
+}
+const totalStars = () => C.LEVELS.reduce((n, L) => n + (save.stars[L.id] || 0), 0);
+const worldStars = (w) => w.levels.reduce((n, L) => n + (save.stars[L.id] || 0), 0);
+const finished = (id) => save.best[id] > 0;
+function worldUnlocked(w) {
+  const i = C.WORLDS.indexOf(w);
+  return i <= 0 || finished(C.WORLDS[i - 1].levels[C.WORLDS[i - 1].levels.length - 1].id);
+}
+function levelUnlocked(L) {
+  const w = C.WORLDS.find(x => x.id === L.world);
+  return worldUnlocked(w) && (L.index === 0 || finished(w.levels[L.index - 1].id));
+}
+const bikeUnlocked = (b) => totalStars() >= b.stars;
+const myLook = () => ({ bike: save.bike, paint: A.paintAt(save.paint), name: save.name || 'You' });
+
+const builtLevels = new Map();
+function getLevel(id) {
+  if (!builtLevels.has(id)) builtLevels.set(id, C.buildLevel(C.worldOf(id), C.levelById(id)));
+  return builtLevels.get(id);
+}
+function nextLevelId(id) {
+  const i = C.LEVELS.findIndex(L => L.id === id);
+  return i >= 0 && i + 1 < C.LEVELS.length ? C.LEVELS[i + 1].id : null;
+}
+
+// ------------------------------------------------------------------------------------------------
+// Sound: a small WebAudio engine hum, crash, blips and a finish jingle. Muted with the HUD button.
+const Sound = {
+  ctx: null, master: null, eng: null,
+  init() {
+    if (this.ctx) return;
+    const AC = window.AudioContext || window.webkitAudioContext;
+    if (!AC) return;
+    try { this.ctx = new AC(); } catch (e) { return; }
+    this.master = this.ctx.createGain(); this.master.gain.value = save.sound ? 0.6 : 0; this.master.connect(this.ctx.destination);
+  },
+  resume() { if (this.ctx && this.ctx.state === 'suspended') this.ctx.resume(); },
+  setOn(on) { if (this.master) this.master.gain.setTargetAtTime(on ? 0.6 : 0, this.ctx.currentTime, 0.05); },
+  engineOn() {
+    if (!this.ctx || this.eng) return;
+    const c = this.ctx, o1 = c.createOscillator(), o2 = c.createOscillator(), f = c.createBiquadFilter(), gn = c.createGain();
+    o1.type = 'sawtooth'; o2.type = 'square'; o2.detune.value = -1200;
+    f.type = 'lowpass'; f.frequency.value = 700; f.Q.value = 2;
+    gn.gain.value = 0;
+    const g2 = c.createGain(); g2.gain.value = 0.35;
+    o1.connect(f); o2.connect(g2); g2.connect(f); f.connect(gn); gn.connect(this.master);
+    o1.start(); o2.start();
+    this.eng = { o1, o2, f, gn };
+  },
+  engine(rpm, throttle, on) {
+    if (!this.eng) return;
+    const t = this.ctx.currentTime, fr = 38 + rpm * 120 + throttle * 14;
+    this.eng.o1.frequency.setTargetAtTime(fr, t, 0.05); this.eng.o2.frequency.setTargetAtTime(fr, t, 0.05);
+    this.eng.f.frequency.setTargetAtTime(500 + rpm * 900 + throttle * 500, t, 0.08);
+    this.eng.gn.gain.setTargetAtTime(on ? 0.045 + throttle * 0.05 : 0, t, 0.08);
+  },
+  engineOff() {
+    if (!this.eng) return;
+    const e = this.eng; this.eng = null;
+    e.gn.gain.setTargetAtTime(0, this.ctx.currentTime, 0.05);
+    setTimeout(() => { try { e.o1.stop(); e.o2.stop(); } catch (er) {} }, 300);
+  },
+  noise(dur, from, to, vol) {
+    if (!this.ctx) return;
+    const c = this.ctx, n = Math.floor(c.sampleRate * dur), buf = c.createBuffer(1, n, c.sampleRate), d = buf.getChannelData(0);
+    for (let i = 0; i < n; i++) d[i] = (Math.random() * 2 - 1) * (1 - i / n);
+    const s = c.createBufferSource(), f = c.createBiquadFilter(), gn = c.createGain();
+    s.buffer = buf; f.type = 'lowpass'; f.frequency.setValueAtTime(from, c.currentTime); f.frequency.exponentialRampToValueAtTime(to, c.currentTime + dur);
+    gn.gain.value = vol; s.connect(f); f.connect(gn); gn.connect(this.master); s.start();
+  },
+  blip(freq, dur = 0.12, type = 'triangle', vol = 0.18, delay = 0) {
+    if (!this.ctx) return;
+    const c = this.ctx, o = c.createOscillator(), gn = c.createGain(), t = c.currentTime + delay;
+    o.type = type; o.frequency.value = freq;
+    gn.gain.setValueAtTime(0, t); gn.gain.linearRampToValueAtTime(vol, t + 0.01); gn.gain.exponentialRampToValueAtTime(0.001, t + dur);
+    o.connect(gn); gn.connect(this.master); o.start(t); o.stop(t + dur + 0.05);
+  },
+  crash() { this.noise(0.6, 2400, 120, 0.5); this.blip(110, 0.3, 'square', 0.12); },
+  land(hard) { this.noise(0.12, 500, 80, 0.15 + hard * 0.25); },
+  flip() { this.blip(660, 0.1); this.blip(990, 0.16, 'triangle', 0.18, 0.08); },
+  count(go) { this.blip(go ? 880 : 440, go ? 0.35 : 0.15, 'square', 0.12); },
+  finish() { [523, 659, 784, 1046].forEach((f, i) => this.blip(f, 0.22, 'triangle', 0.2, i * 0.09)); },
+};
+
+// ------------------------------------------------------------------------------------------------
+// Input. On a phone you lean the bike by turning the phone like a steering wheel, and hold the right half of
+// the screen for gas and the left half for brake. Lean arrow buttons appear only when tilt can't be used: no
+// motion sensor, motion access declined (iOS asks once, on a tap), tilt switched off in the pause menu, or a
+// page that isn't https or localhost (browsers only send motion events to secure pages).
+// The keyboard works too, for testing on a computer.
+const keys = new Set();
+const touchCtl = { gas: false, brake: false, back: false, fwd: false };
+const KEYMAP = { ArrowUp: 'gas', KeyW: 'gas', Space: 'gas', ArrowDown: 'brake', KeyS: 'brake', ArrowLeft: 'back', KeyA: 'back', ArrowRight: 'fwd', KeyD: 'fwd' };
+const TILT_FULL = 24, TILT_DEAD = 2.5;     // degrees of turn for full lean, and the dead zone around level
+const DEG = Math.PI / 180;
+// state: idle (not started) | asking (iOS prompt open) | waiting (listening, no reading yet) | on | denied | nosensor | insecure
+const tilt = { state: 'idle', angle: 0, lean: 0, asked: false, told: '', timer: 0 };
+function readInput() {
+  const k = (n) => [...keys].some(c => KEYMAP[c] === n) || touchCtl[n];
+  let lean = (k('back') ? 1 : 0) - (k('fwd') ? 1 : 0);
+  if (!lean && useTilt()) lean = tilt.lean;
+  return { gas: k('gas') ? 1 : 0, brake: k('brake') ? 1 : 0, lean: Math.max(-1, Math.min(1, lean)) };
+}
+const anyControl = () => { const i = readInput(); return i.gas || i.brake || (i.lean && !useTilt()); };
+const useTilt = () => isPhone() && save.tilt && tilt.state === 'on';
+function screenAngle() {
+  const a = screen.orientation && typeof screen.orientation.angle === 'number' ? screen.orientation.angle : (window.orientation || 0);
+  return ((a % 360) + 360) % 360;
+}
+// How far the phone is turned from level, in degrees, anticlockwise positive. Works out which way is down in
+// screen coordinates from the orientation angles, so it doesn't matter how far the phone is tipped back.
+function tiltAngle(beta, gamma, screenDeg) {
+  const b = beta * DEG, gm = gamma * DEG, th = screenDeg * DEG;
+  const dx = Math.sin(gm) * Math.cos(b), dy = -Math.sin(b);                       // down, in phone coordinates
+  const sx = dx * Math.cos(th) - dy * Math.sin(th), sy = dx * Math.sin(th) + dy * Math.cos(th);   // down, on screen
+  if (Math.hypot(sx, sy) < 0.25) return null;                                     // lying flat: no clear answer
+  return Math.atan2(-sx, -sy) / DEG;
+}
+function onOrientation(e) {
+  if (e.beta == null || e.gamma == null) return;
+  const a = tiltAngle(e.beta, e.gamma, screenAngle());
+  if (tilt.state === 'waiting' || tilt.state === 'nosensor') { tilt.state = 'on'; clearTimeout(tilt.timer); refreshControls(); }   // a slow sensor can still switch tilt on
+  if (a == null) return;
+  tilt.angle = a;
+  const m = Math.max(0, Math.abs(a) - TILT_DEAD) / (TILT_FULL - TILT_DEAD);
+  tilt.lean = Math.sign(a) * Math.min(1, m);     // turning the phone anticlockwise leans the bike back (anticlockwise)
+}
+function listenTilt() {
+  window.removeEventListener('deviceorientation', onOrientation);
+  window.addEventListener('deviceorientation', onOrientation);
+  if (tilt.state !== 'on') {
+    tilt.state = 'waiting';
+    clearTimeout(tilt.timer);
+    tilt.timer = setTimeout(() => { if (tilt.state === 'waiting') { tilt.state = 'nosensor'; refreshControls(); } }, 1500);
+  }
+}
+// Call from a tap or click: iOS shows its motion permission prompt only from inside one.
+function startTilt() {
+  if (!isPhone() || !save.tilt || ['on', 'waiting', 'asking', 'denied'].includes(tilt.state)) return;
+  if (!window.isSecureContext) { tilt.state = 'insecure'; refreshControls(); return; }
+  if (typeof DeviceOrientationEvent === 'undefined') { tilt.state = 'nosensor'; refreshControls(); return; }
+  if (typeof DeviceOrientationEvent.requestPermission === 'function') {
+    if (tilt.asked) return;
+    tilt.asked = true; tilt.state = 'asking';
+    DeviceOrientationEvent.requestPermission()
+      .then((r) => { if (r === 'granted') listenTilt(); else tilt.state = 'denied'; refreshControls(); })
+      .catch(() => { tilt.state = 'denied'; refreshControls(); });
+  } else listenTilt();
+  refreshControls();
+}
+function setTilt(on) {
+  save.tilt = on; persist();
+  if (on) startTilt();
+  refreshControls(); syncToggles();
+}
+// Picks the touch layout: two big halves (tilt) or the four buttons (no tilt), and says once why tilt is off.
+function refreshControls() {
+  if (!ui.touch) return;
+  const tiltOn = useTilt() || (save.tilt && ['waiting', 'asking'].includes(tilt.state));
+  ui.touch.classList.toggle('tilt', tiltOn);
+  ui.touch.classList.toggle('buttons', !tiltOn);
+  if (!isPhone() || !save.tilt || tilt.told === tilt.state || view !== 'play') return;
+  const why = { denied: 'Motion access is off, so lean with the arrows. To tilt, allow motion for this site and reload.',
+    insecure: 'Tilt needs an https address. Lean with the arrows for now.',
+    nosensor: 'No tilt sensor found. Lean with the arrows.' }[tilt.state];
+  if (why) { tilt.told = tilt.state; ui.tipbar.hidden = true; toast(why, 4200, 'small'); }
+}
+
+// ------------------------------------------------------------------------------------------------
+// Canvas, camera and the main loop
+let app, canvas, g, dpr = 1;
+const cam = new A.Camera();
+const particles = new A.Particles();
+let running = false, raf = 0, last = 0, acc = 0, clockT = 0;
+let view = 'home';      // home | worlds | levels | garage | mp | play
+let S = null;           // the session being played
+let attract = null;     // the computer rider behind the menus
+let started = false;
+
+function resize() {
+  dpr = Math.min(2, window.devicePixelRatio || 1);
+  const w = app.clientWidth || window.innerWidth, h = app.clientHeight || window.innerHeight;
+  canvas.width = Math.round(w * dpr); canvas.height = Math.round(h * dpr);
+  cam.W = w; cam.H = h;
+}
+function basePpm() { return Math.max(16, Math.min(72, Math.min(cam.H / 10.5, cam.W / 16))); }
+
+function frame(now) {
+  if (!running) return;
+  raf = requestAnimationFrame(frame);
+  const dt = Math.min(0.1, Math.max(0, (now - last) / 1000)); last = now; clockT += dt;
+  const sess = view === 'play' ? S : attract;
+  if (sess) {
+    if (!sess.paused) {
+      acc += dt;
+      let n = 0;
+      while (acc >= STEP && n < 24) { update(sess); acc -= STEP; n++; }
+      if (n >= 24) acc = 0;
+      particles.step(dt, sess.level.gravity);
+      sessionTimers(sess, dt);
+    }
+    followCamera(sess, dt);
+    draw(sess);
+  }
+  if (view === 'play' && S) hud();
+  else Sound.engine(0, 0, false);
+}
+
+function followCamera(sess, dt, snap) {
+  const b = sess.me, c = b.c;
+  const ppmT = basePpm() * (1 / (1 + 0.22 * Math.min(1, b.airborne / 0.8)) - Math.min(0.12, Math.max(0, c.vx - 8) * 0.012));
+  const k = snap ? 1 : 1 - Math.exp(-dt * 2.2);
+  cam.ppm += (ppmT - cam.ppm) * k;
+  const lead = Math.max(-2, Math.min(5, c.vx * 0.3));
+  const tx = c.x + lead + cam.W * 0.1 / cam.ppm, ty = c.y + 1.2 + Math.max(-1.5, Math.min(1.5, c.vy * 0.08));
+  const kx = snap ? 1 : 1 - Math.exp(-dt * 7), ky = snap ? 1 : 1 - Math.exp(-dt * 4);
+  cam.x += (tx - cam.x) * kx; cam.y += (ty - cam.y) * ky;
+}
+
+// ------------------------------------------------------------------------------------------------
+// Sessions
+function makeSession(mode, levelId, opts = {}) {
+  const def = C.levelById(levelId), world = C.worldOf(levelId), level = getLevel(levelId);
+  const sim = new C.Sim(level);
+  const look = mode === 'attract' ? { bike: save.bike, paint: A.paintAt(save.paint), name: '' } : myLook();
+  const me = sim.addBike(look.bike, { id: 'me' });
+  me.look = look;
+  const sess = {
+    mode, levelId, def, world, level, theme: A.THEMES[world.id], sim, me,
+    phase: mode === 'attract' ? 'run' : 'ready', paused: false,
+    ghost: null, rec: [], recNext: 0, cpus: [], remote: new Map(),
+    countdown: 0, crashTimer: 0, finishTimer: 0, respawnTimer: 0, sendTimer: 0, lastCount: -1,
+    results: null, finishedSent: false, flash: [],
+  };
+  if (mode === 'attract') me.running = true;
+  if (mode === 'solo' && save.ghost) sess.ghost = loadGhost(levelId);
+  return sess;
+}
+
+function update(sess) {
+  const me = sess.me;
+  if (sess.mode === 'attract') me.input = C.botInput(me);
+  else if (sess.phase === 'run' && !me.crashed && !me.finished) me.input = AUTOPILOT ? C.botInput(me) : readInput();
+  else me.input = { gas: 0, brake: 0, lean: 0 };
+  if (sess.mode === 'solo' && sess.phase === 'ready' && (anyControl() || AUTOPILOT) && !anyModalOpen()) startClock(sess);
+  for (const cpu of sess.cpus) cpu.bike.input = sess.phase === 'run' ? C.botInput(cpu.bike, cpu.cfg) : { gas: 0, brake: 0, lean: 0 };
+  sess.sim.step();
+  // ghost recording while the clock runs
+  if (me.running && !me.finished && !me.crashed && sess.mode === 'solo') {
+    while (me.time >= sess.recNext) { sess.rec.push([me.c.x, me.c.y, me.c.a]); sess.recNext += 1 / C.POSE_HZ; }
+  }
+  // dust from the rear wheel
+  const R = me.wheels[0];
+  if (R.contact && me.input.gas && me.speed > 1.5 && Math.random() < 0.25 && sess.mode !== 'attract') {
+    particles.dust(R.x - 0.3, R.y - 0.25, -1 - Math.random(), 0.5, dustColor(sess), 1);
+  }
+  for (const e of me.events) onEvent(sess, me, e);
+  me.events.length = 0;
+  for (const cpu of sess.cpus) {
+    for (const e of cpu.bike.events) if (e.type === 'crash') cpu.respawnAt = 1.2;
+    cpu.bike.events.length = 0;
+  }
+}
+function dustColor(sess) { return { clover: '#c8a27a', ember: '#e8b48c', frost: '#ffffff', moon: '#d8d6ea', magma: '#8a6a66' }[sess.world.id]; }
+
+function onEvent(sess, me, e) {
+  if (sess.mode === 'attract') {
+    if (e.type === 'crash' || e.type === 'finish') sess.restartIn = e.type === 'crash' ? 1.5 : 2.5;
+    return;
+  }
+  if (e.type === 'flip') {
+    toast(`${e.n > 1 ? e.n + 'x ' : ''}${e.back ? 'Backflip' : 'Frontflip'}! −${(0.5 * e.n).toFixed(1)}s`);
+    Sound.flip();
+    particles.burst(me.c.x, me.c.y + 1, ['#ffd43b', '#fff3b0'], 10, 4, 'star');
+  } else if (e.type === 'land') {
+    Sound.land(e.hard);
+    for (const W of me.wheels) particles.dust(W.x, W.y - 0.3, me.c.vx * 0.2, 0.6, dustColor(sess), 3 + Math.round(e.hard * 5), 0.22);
+  } else if (e.type === 'crash') {
+    Sound.crash();
+    const [hx, hy] = me.toWorld(0.1, 1.0);
+    particles.burst(hx, hy, e.kind === 'lava' ? ['#ff8a2c', '#ffd23f', '#c4321d'] : ['#ffd43b', '#ffffff'], 14, 5, 'star');
+    particles.dust(me.c.x, me.c.y, 0, 1, e.kind === 'lava' ? '#5b4140' : dustColor(sess), 10, 0.35);
+    if (sess.mode === 'solo') { sess.phase = 'crashed'; sess.crashTimer = 1.1; }
+    else sess.respawnTimer = 1.2;
+  } else if (e.type === 'finish') {
+    Sound.finish();
+    particles.burst(sess.level.finishX, me.c.y + 3, ['#e8463c', '#ffd43b', '#43b05c', '#3a7bd5', '#ec6fa4', '#ffffff'], 70, 9);
+    if (sess.mode === 'solo') soloFinished(sess);
+    else if (sess.mode === 'cpu') { sess.finishTimer = 1.3; center(`${ordinal(cpuPlace(sess))}!`, 'big'); }
+    else if (sess.mode === 'online') {
+      if (!sess.finishedSent) { Net.send({ t: 'finish', time: me.finishTime }); sess.finishedSent = true; }
+      center(`${fmt(me.finishTime)}s`, 'big'); setTimeout(() => { if (S === sess && !sess.results) center('Waiting for the others…', 'small'); }, 1600);
+    }
+  }
+}
+
+// timers that run once per frame
+function sessionTimers(sess, dt) {
+  if (sess.mode === 'attract') {
+    if (sess.restartIn != null && (sess.restartIn -= dt) <= 0) newAttract(true);
+    return;
+  }
+  const me = sess.me;
+  if (sess.phase === 'countdown') {
+    sess.countdown -= dt;
+    const n = Math.ceil(sess.countdown);
+    if (n !== sess.lastCount) {
+      sess.lastCount = n;
+      if (n > 0) { center(String(n), 'count'); Sound.count(false); }
+      else { center('GO!', 'count go'); Sound.count(true); startClock(sess); setTimeout(() => { if (S === sess) center(''); }, 700); }
+    }
+  }
+  if (sess.crashTimer > 0 && (sess.crashTimer -= dt) <= 0) showCrash();
+  if (sess.finishTimer > 0 && (sess.finishTimer -= dt) <= 0) {
+    if (sess.mode === 'solo') showResult(sess);
+    else if (sess.mode === 'cpu') showCpuResults(sess);
+  }
+  if (sess.respawnTimer > 0 && (sess.respawnTimer -= dt) <= 0) {
+    const cp = me.checkpoint > 0 ? sess.level.checkpoints[me.checkpoint - 1] : 0;
+    me.respawn(cp);
+  }
+  for (const cpu of sess.cpus) if (cpu.respawnAt > 0 && (cpu.respawnAt -= dt) <= 0) {
+    const b = cpu.bike; b.respawn(b.checkpoint > 0 ? sess.level.checkpoints[b.checkpoint - 1] : 0);
+  }
+  if (sess.mode === 'online' && me.running) {
+    sess.sendTimer -= dt;
+    if (sess.sendTimer <= 0) {
+      sess.sendTimer = 1 / C.POSE_HZ;
+      const p = me.pose();
+      Net.send({ t: 'state', p: [+p[0].toFixed(2), +p[1].toFixed(2), +p[2].toFixed(3), +p[3].toFixed(2), +p[4].toFixed(2), p[5]] });
+    }
+  }
+}
+
+function startClock(sess) {
+  sess.phase = 'run';
+  sess.me.running = true;
+  for (const cpu of sess.cpus) cpu.bike.running = true;
+  if (sess.mode === 'solo') center('');
+  Sound.init(); Sound.resume(); Sound.engineOn();
+}
+
+// ------------------------------------------------------------------------------------------------
+// Drawing
+function draw(sess) {
+  const theme = sess.theme, t = clockT;
+  g.setTransform(dpr, 0, 0, dpr, 0, 0);
+  A.drawSky(g, cam, theme, t);
+  A.drawLayers(g, cam, theme, t);
+  A.drawLoops(g, cam, sess.level, theme);
+  A.drawTerrain(g, cam, sess.level, theme, t);
+  A.drawProps(g, cam, sess.level, theme, t);
+  A.drawMarkers(g, cam, sess.level, t, sess.mode === 'online' || sess.mode === 'cpu');
+  // ghost of the best run
+  if (sess.ghost && sess.ghost.frames.length) {
+    const f = ghostPose(sess.ghost.frames, sess.me.running ? sess.me.time : 0);
+    A.drawBike(g, cam, f, { bike: save.bike, paint: { body: '#ffffff', dark: '#d9d4e4', suit: '#e8e3f2', helmet: '#ffffff' } }, { alpha: 0.38, ghost: true });
+  }
+  // computer riders and other players
+  for (const cpu of sess.cpus) drawSimBike(cpu.bike, cpu.look, 0.85);
+  const now = performance.now() / 1000;
+  for (const [id, r] of sess.remote) {
+    const p = remotePose(r, now - 0.12);
+    if (!p) continue;
+    if (p.crashed) { r.wasCrashed = true; continue; }
+    A.drawBike(g, cam, p, r.look, { alpha: 0.85 });
+  }
+  drawSimBike(sess.me, sess.me.look, 1);
+  particles.draw(g, cam);
+  // name tags
+  if (sess.mode === 'cpu' || sess.mode === 'online') {
+    for (const cpu of sess.cpus) if (!cpu.bike.crashed) A.drawTag(g, cam, cpu.bike.c.x, cpu.bike.c.y, cpu.look.name, cpu.look.paint.body);
+    for (const [, r] of sess.remote) { const p = remotePose(r, now - 0.12); if (p && !p.crashed) A.drawTag(g, cam, p.x, p.y, r.look.name, r.look.paint.body); }
+  }
+}
+function drawSimBike(b, look, alpha) {
+  const pose = { x: b.c.x, y: b.c.y, a: b.c.a, lean: b.leanVis, wheels: b.wheels.map(W => [W.x, W.y, W.phi]), noRider: !!b.rider };
+  A.drawBike(g, cam, pose, look, { alpha });
+  if (b.rider) A.drawRagdoll(g, cam, b.rider, look.paint);
+}
+function ghostPose(frames, t) {
+  const f = t * C.POSE_HZ, i = Math.max(0, Math.min(frames.length - 1, Math.floor(f))), j = Math.min(frames.length - 1, i + 1), k = Math.max(0, Math.min(1, f - i));
+  const a = frames[i], b = frames[j];
+  const x = a[0] + (b[0] - a[0]) * k;
+  return { x, y: a[1] + (b[1] - a[1]) * k, a: a[2] + C.wrapAngle(b[2] - a[2]) * k, phi: -x / C.BASE.radius, lean: 0 };
+}
+function remotePose(r, t) {
+  const buf = r.buf;
+  if (!buf.length) return null;
+  let i = buf.length - 1;
+  while (i > 0 && buf[i - 1].t > t) i--;
+  const b = buf[i], a = buf[Math.max(0, i - 1)];
+  const span = b.t - a.t, k = span > 0 ? Math.max(0, Math.min(1, (t - a.t) / span)) : 1;
+  const P = a.p, Q = b.p;
+  return { x: P[0] + (Q[0] - P[0]) * k, y: P[1] + (Q[1] - P[1]) * k, a: P[2] + C.wrapAngle(Q[2] - P[2]) * k, phi: P[3] + (Q[3] - P[3]) * k, lean: Q[4], crashed: !!(Q[5] & 1), finished: !!(Q[5] & 2) };
+}
+
+// ------------------------------------------------------------------------------------------------
+// HUD
+let hudCache = {};
+function setText(el, key, text) { if (hudCache[key] !== text) { hudCache[key] = text; el.textContent = text; } }
+function hud() {
+  const s = S, me = s.me;
+  const t = me.finished ? me.finishTime : me.clock;
+  setText(ui.time, 'time', fmt(t));
+  // progress dots
+  const L = s.level.finishX, pct = (x) => Math.max(0, Math.min(100, x / L * 100)).toFixed(1) + '%';
+  ui.dotMe.style.left = pct(me.c.x);
+  if (s.ghost && s.ghost.frames.length) { ui.dotGhost.hidden = false; ui.dotGhost.style.left = pct(ghostPose(s.ghost.frames, me.running ? me.time : 0).x); }
+  else ui.dotGhost.hidden = true;
+  const others = [];
+  for (const cpu of s.cpus) others.push({ x: cpu.bike.c.x, color: cpu.look.paint.body, fin: cpu.bike.finished, ft: cpu.bike.finishTime });
+  const now = performance.now() / 1000;
+  for (const [, r] of s.remote) { const p = remotePose(r, now); if (p) others.push({ x: p.x, color: r.look.paint.body, fin: r.finishTime != null, ft: r.finishTime }); }
+  while (ui.dotsOthers.children.length < others.length) { const d = document.createElement('span'); d.className = 'br-dot'; ui.dotsOthers.appendChild(d); }
+  while (ui.dotsOthers.children.length > others.length) ui.dotsOthers.lastChild.remove();
+  others.forEach((o, i) => { const d = ui.dotsOthers.children[i]; d.style.left = pct(o.x); d.style.background = o.color; });
+  if (s.mode === 'cpu' || s.mode === 'online') {
+    const all = [{ x: me.c.x, fin: me.finished, ft: me.finishTime, me: true }, ...others];
+    all.sort((a, b) => (a.fin && b.fin) ? a.ft - b.ft : a.fin ? -1 : b.fin ? 1 : b.x - a.x);
+    setText(ui.pos, 'pos', `${ordinal(all.findIndex(a => a.me) + 1)} / ${all.length}`);
+  }
+  // engine sound follows the rear wheel
+  const R = me.wheels[0];
+  Sound.engine(Math.min(1, Math.abs(R.om) / me.s.maxSpin), me.input.gas, me.running && !me.crashed && !me.finished && !s.paused);
+}
+let toastTimer = 0;
+function toast(text, ms = 1800, cls = '') {
+  ui.toast.textContent = text;
+  ui.toast.className = 'br-toast outlined' + (cls ? ' ' + cls : '');
+  ui.toast.style.animationDuration = ms + 'ms';
+  void ui.toast.offsetWidth; ui.toast.classList.add('show');
+  clearTimeout(toastTimer); toastTimer = setTimeout(() => ui.toast.classList.remove('show'), ms);
+}
+function center(text, cls = '', tip = '') {
+  ui.tipbar.textContent = tip; ui.tipbar.hidden = !tip;
+  ui.center.className = 'br-center outlined ' + cls;
+  ui.center.innerHTML = text;
+  if (cls.includes('count')) { void ui.center.offsetWidth; ui.center.classList.add('pop'); }
+}
+
+// ------------------------------------------------------------------------------------------------
+// Single player
+function startSolo(levelId) {
+  closeModals();
+  S = makeSession('solo', levelId);
+  save.lastWorld = S.world.id; persist();
+  enterPlay();
+  const best = save.best[levelId];
+  const how = isPhone() ? 'Hold <b>GAS</b> to start' : 'Press <b>↑</b> to start';
+  const tip = isPhone() && save.tilt && tilt.state !== 'denied' && tilt.state !== 'insecure' && tilt.state !== 'nosensor' && Object.keys(save.best).length < 3
+    ? 'Turn your phone like a steering wheel to lean the bike.' : '';
+  center(`<span class="br-lvl">${esc(S.world.name)} ${S.def.index + 1} · ${esc(S.def.name)}</span>${how}${best ? `<span class="br-best">Best ${fmt(best)}s</span>` : ''}`, 'ready', tip);
+  ui.sub.textContent = `${S.world.name} ${S.def.index + 1}`;
+}
+function restart() {
+  if (!S) return;
+  if (S.mode === 'solo') startSolo(S.levelId);
+  else if (S.mode === 'cpu') startCpuRace(S.levelId, S.cpus.length);
+}
+function soloFinished(sess) {
+  const id = sess.levelId, time = sess.me.finishTime, prev = save.best[id];
+  const stars = C.starsFor(sess.def, time), prevStars = save.stars[id] || 0;
+  sess.newBest = !prev || time < prev - 1e-9;
+  sess.prevBest = prev;
+  sess.stars = stars;
+  const unlockedBefore = C.BIKES.filter(bikeUnlocked).length;
+  if (sess.newBest) { save.best[id] = time; saveGhost(id, time, sess.rec); }
+  save.stars[id] = Math.max(prevStars, stars);
+  persist();
+  sess.newBike = C.BIKES.filter(bikeUnlocked).length > unlockedBefore ? C.BIKES.filter(bikeUnlocked).pop() : null;
+  sess.phase = 'finished';
+  sess.finishTimer = 1.2;
+}
+function showResult(sess) {
+  const def = sess.def, time = sess.me.finishTime, stars = sess.stars;
+  ui.resStars.forEach((el, i) => { el.classList.toggle('on', i < stars); el.style.animationDelay = (0.15 + i * 0.18) + 's'; });
+  ui.resTitle.textContent = stars === 3 ? 'Perfect run!' : 'Level cleared!';
+  ui.resTime.textContent = fmt(time) + 's';
+  ui.resBest.textContent = fmt(save.best[def.id]) + 's';
+  ui.resNew.hidden = !sess.newBest || !sess.prevBest;
+  let hint = stars < 3 ? `Finish under ${fmt(stars < 2 ? C.twoStarTime(def) : def.par)}s for ${stars < 2 ? 2 : 3} stars.` : `Under par (${fmt(def.par)}s). Nice riding.`;
+  if (sess.me.flips) hint += ` ${sess.me.flips} flip${sess.me.flips > 1 ? 's' : ''} took off ${(sess.me.flips * 0.5).toFixed(1)}s.`;
+  if (sess.newBike && FEATURES.garage) hint += ` New bike unlocked: ${sess.newBike.name}!`;
+  ui.resHint.textContent = hint;
+  const nxt = nextLevelId(def.id);
+  ui.resNext.hidden = !nxt || !levelUnlocked(C.levelById(nxt));
+  ui.resNext.textContent = nxt && C.levelById(nxt).world !== def.world ? 'Next world' : 'Next level';
+  openModal(ui.result);
+}
+function showCrash() {
+  if (!S || S.mode !== 'solo') return;
+  const tips = ['Lean back (←) in the air if the nose drops, forward (→) if it rises.', 'Land with both wheels at the same time for a smooth touchdown.', 'Ease off the gas before big bumps.', 'Lean the way the ground slopes where you will land.', 'Flips take 0.5s off your time each, if you land them.'];
+  ui.crashText.textContent = tips[Math.floor(Math.random() * tips.length)];
+  if (S.me.crashKind === 'lava') ui.crashTitle.textContent = 'Too hot!';
+  else if (S.me.crashKind === 'fall' || S.me.crashKind === 'pit') ui.crashTitle.textContent = 'Down the pit!';
+  else ui.crashTitle.textContent = 'Wipeout!';
+  openModal(ui.crash);
+}
+
+// ------------------------------------------------------------------------------------------------
+// Races against computer riders (works without any server)
+const CPU_NAMES = ['Pip', 'Rusty', 'Juno', 'Mako', 'Zed', 'Fern', 'Bolt', 'Kiko'];
+function startCpuRace(levelId, n) {
+  closeModals();
+  S = makeSession('cpu', levelId);
+  n = Math.max(1, Math.min(3, n | 0));
+  const bikes = ['scout', 'hopper', 'twister', 'bulldog', 'comet'];
+  const skills = [{ maxSpeed: 13.6, kp: 2.2 }, { maxSpeed: 14.6, kp: 2.4 }, { maxSpeed: 15.4, kp: 2.6 }];
+  const names = CPU_NAMES.slice().sort(() => Math.random() - 0.5);
+  for (let i = 0; i < n; i++) {
+    const bike = S.sim.addBike(bikes[(i * 2 + 1) % bikes.length], { id: 'cpu' + i, x: 0 });
+    const look = { bike: bike.type.id, paint: A.paintAt(save.paint + 2 + i * 2), name: names[i] };
+    S.cpus.push({ bike, look, cfg: skills[(3 - n + i) % 3], respawnAt: 0 });
+  }
+  enterPlay();
+  ui.sub.textContent = `${S.world.name} ${S.def.index + 1} · ${n + 1} riders`;
+  beginCountdown(S);
+}
+function beginCountdown(sess) { sess.phase = 'countdown'; sess.countdown = 3; sess.lastCount = -1; }
+function cpuPlace(sess) { return 1 + sess.cpus.filter(c => c.bike.finished && c.bike.finishTime < sess.me.finishTime).length; }
+function showCpuResults(sess) {
+  // let the computer riders finish in fast-forward
+  for (let k = 0; k < 120 * 90 && sess.cpus.some(c => !c.bike.finished); k++) {
+    for (const cpu of sess.cpus) {
+      cpu.bike.input = C.botInput(cpu.bike, cpu.cfg);
+      if (cpu.bike.crashed && cpu.bike.time - cpu.bike.crashAt > 1.2) cpu.bike.respawn(cpu.bike.checkpoint > 0 ? sess.level.checkpoints[cpu.bike.checkpoint - 1] : 0);
+    }
+    sess.me.frozen = true;
+    sess.sim.step();
+  }
+  sess.me.frozen = false;
+  const rows = [{ name: myLook().name, color: myLook().paint.body, time: sess.me.finishTime, me: true },
+    ...sess.cpus.map(c => ({ name: c.look.name, color: c.look.paint.body, time: c.bike.finished ? c.bike.finishTime : null }))];
+  showStandings(rows, 'cpu');
+}
+function showStandings(rows, mode) {
+  rows.sort((a, b) => (a.time == null) - (b.time == null) || (a.time || 0) - (b.time || 0));
+  const myPlace = rows.findIndex(r => r.me) + 1;
+  ui.rrTitle.textContent = myPlace === 1 ? 'You won!' : myPlace ? `${ordinal(myPlace)} place` : 'Race over';
+  ui.rrList.innerHTML = rows.map((r, i) => `<li class="${r.me ? 'me' : ''}"><span class="pl">${i + 1}</span><span class="sw" style="background:${esc(r.color)}"></span><span class="nm">${esc(r.name)}</span><span class="tm">${r.time == null ? 'DNF' : fmt(r.time) + 's'}</span></li>`).join('');
+  const host = mode === 'online' && roomState && roomState.host === Net.id;
+  ui.rrAgain.hidden = mode === 'online' && !host;
+  ui.rrAgain.textContent = 'Race again';
+  ui.rrRoom.textContent = mode === 'online' ? 'Back to room' : 'Change track';
+  ui.rrWait.hidden = !(mode === 'online' && !host);
+  openModal(ui.raceResult);
+  if (myPlace === 1) particles.burst(S.me.c.x, S.me.c.y + 2, ['#ffd43b', '#e8463c', '#43b05c', '#3a7bd5'], 50, 8);
+}
+
+// ------------------------------------------------------------------------------------------------
+// Live races through the race server
+let roomState = null, roomsList = [], pendingJoin = null, listTimer = 0;
+Net.on((m) => {
+  switch (m.t) {
+    case 'status':
+      renderMpStatus();
+      if (m.status === 'online') { sendProfile(); Net.send({ t: 'list' }); }
+      if (m.status === 'offline') {
+        roomState = null;
+        if (S && S.mode === 'online' && view === 'play') { toast('Lost the race server'); setTimeout(() => { if (S && S.mode === 'online') { exitPlay(); showView('mp'); } }, 1500); }
+      }
+      renderMp();
+      break;
+    case 'welcome':
+      sendProfile();
+      if (pendingJoin) { Net.send({ t: 'join', code: pendingJoin }); pendingJoin = null; }
+      else Net.send({ t: 'list' });
+      break;
+    case 'rooms': roomsList = Array.isArray(m.rooms) ? m.rooms : []; renderMp(); break;
+    case 'room': {
+      const wasState = roomState && roomState.state;
+      roomState = m;
+      if (view === 'mp') renderMp();
+      if (S && S.mode === 'online') syncRemoteLooks(S);
+      if (wasState === 'results' && m.state === 'lobby' && view === 'play' && S && S.mode === 'online' && ui.raceResult.hidden) { /* stays until the player leaves the results */ }
+      break;
+    }
+    case 'left': roomState = null; if (view === 'play' && S && S.mode === 'online') { exitPlay(); } showView('mp'); break;
+    case 'error': toast(m.msg || 'Something went wrong'); if (view === 'mp') renderMp(); break;
+    case 'countdown': startOnlineRace(m); break;
+    case 'state': {
+      if (!S || S.mode !== 'online' || !S.remote.has(m.id) || !Array.isArray(m.p)) break;
+      const r = S.remote.get(m.id), now = performance.now() / 1000;
+      r.buf.push({ t: now, p: m.p });
+      while (r.buf.length > 30) r.buf.shift();
+      break;
+    }
+    case 'finished': {
+      if (!S || S.mode !== 'online') break;
+      const r = S.remote.get(m.id);
+      if (r) { r.finishTime = m.time; toast(`${r.look.name} finished · ${fmt(m.time)}s`); }
+      break;
+    }
+    case 'results': {
+      if (!S || S.mode !== 'online') break;
+      S.results = m.results;
+      const rows = (m.results || []).map(r => ({ name: r.name, color: A.paintAt(r.paint).body, time: r.time, me: r.id === Net.id }));
+      setTimeout(() => { if (S && S.mode === 'online') { center(''); showStandings(rows, 'online'); } }, S.me.finished ? 600 : 0);
+      break;
+    }
+  }
+});
+function sendProfile() { Net.send({ t: 'hello', name: (save.name || '').trim() || 'Rider', paint: save.paint, bike: save.bike }); }
+function startOnlineRace(m) {
+  if (!roomState || !Array.isArray(m.racers) || !m.racers.includes(Net.id) || !C.levelById(m.level)) return;
+  closeModals();
+  S = makeSession('online', m.level);
+  for (const id of m.racers) if (id !== Net.id) S.remote.set(id, { buf: [], look: { bike: 'scout', paint: A.paintAt(0), name: '?' }, finishTime: null });
+  syncRemoteLooks(S);
+  enterPlay();
+  ui.sub.textContent = `${S.world.name} ${S.def.index + 1} · Room ${roomState.code}`;
+  beginCountdown(S);
+  S.countdown = Math.max(1, (m.seconds || 3));
+}
+function syncRemoteLooks(sess) {
+  if (!roomState) return;
+  for (const p of roomState.players || []) {
+    const r = sess.remote.get(p.id);
+    if (r) r.look = { bike: C.bikeById(p.bike).id, paint: A.paintAt(p.paint), name: p.name };
+  }
+}
+
+// ------------------------------------------------------------------------------------------------
+// Menus
+let ui = {};
+const VIEWS = ['home', 'worlds', 'levels', 'garage', 'mp', 'desktop'];
+function showView(v) {
+  if (!isPhone() && !allowKeyboard && v !== 'play') v = 'desktop';
+  view = v;
+  for (const id of VIEWS) $('br-' + id).hidden = id !== v;
+  ui.hud.hidden = v !== 'play';
+  ui.touch.hidden = v !== 'play' || !isPhone();
+  ui.center.hidden = v !== 'play';
+  if (v !== 'play') { Sound.engineOff(); center(''); if (!attract) newAttract(); }
+  if (v === 'home') renderHome();
+  if (v === 'desktop') ui.deskUrl.textContent = location.origin + location.pathname + '#bike-race';
+  if (v === 'worlds') renderWorlds();
+  if (v === 'garage') renderGarage();
+  if (v === 'mp') { Net.connect(); renderMp(); clearInterval(listTimer); listTimer = setInterval(() => { if (view === 'mp' && !roomState) Net.send({ t: 'list' }); }, 3000); }
+  else clearInterval(listTimer);
+  const scr = $('br-' + v); if (scr) scr.scrollTop = 0;
+}
+function enterPlay() {
+  hudCache = {};
+  particles.list.length = 0;
+  view = 'play';
+  for (const id of VIEWS) $('br-' + id).hidden = true;
+  ui.hud.hidden = false; ui.center.hidden = false;
+  ui.touch.hidden = !isPhone();
+  refreshControls();
+  ui.pos.hidden = S.mode === 'solo';
+  ui.retry.hidden = S.mode === 'online';
+  followCamera(S, 0, true);
+  cam.ppm = basePpm();
+  acc = 0;
+  hud();
+}
+function exitPlay() {
+  closeModals();
+  if (S && S.mode === 'online' && roomState) { /* stay in the room */ }
+  S = null; Sound.engineOff();
+}
+function newAttract(random) {
+  const pool = C.LEVELS.filter(levelUnlocked);
+  let L = pool.filter(l => l.world === save.lastWorld);
+  if (!L.length) L = pool;
+  const pick = random ? L[Math.floor(Math.random() * L.length)] : L[0];
+  attract = makeSession('attract', pick.id);
+  followCamera(attract, 0, true);
+  cam.ppm = basePpm();
+}
+
+const starSvg = (on) => `<svg viewBox="0 0 24 24" class="${on ? 'star-on' : 'star-off'}" aria-hidden="true"><path d="M12.0 2.3 L14.9 8.8 L22.0 9.6 L16.8 14.3 L18.2 21.3 L12.0 17.8 L5.8 21.3 L7.2 14.3 L2.0 9.6 L9.1 8.8 Z"/></svg>`;
+const lockSvg = `<svg viewBox="0 0 24 24" class="br-lock" aria-hidden="true"><rect x="5" y="10.5" width="14" height="10" rx="2.5"/><path d="M8 10.5V8a4 4 0 0 1 8 0v2.5" fill="none" stroke-width="2.6"/></svg>`;
+
+function renderHome() {
+  ui.homeStars.textContent = `${totalStars()} / ${C.LEVELS.length * 3}`;
+  for (const [id, on] of [['br-go-mp', FEATURES.multiplayer], ['br-go-garage', FEATURES.garage]]) {
+    const b = $(id); b.disabled = !on; b.classList.toggle('soon', !on);
+  }
+  ui.homeHow.innerHTML = isPhone()
+    ? 'Hold the right side of the screen for <b>GAS</b> and the left side to <b>BRAKE</b>. Turn the phone like a steering wheel to lean the bike.'
+    : 'Keyboard test mode: <b>↑</b> gas · <b>↓</b> brake · <b>←</b> lean back · <b>→</b> lean forward · <b>R</b> restart · <b>Esc</b> pause';
+}
+function renderWorlds() {
+  ui.worldsStars.textContent = `${totalStars()} / ${C.LEVELS.length * 3}`;
+  ui.worldCards.innerHTML = '';
+  C.WORLDS.forEach((w, i) => {
+    const open = worldUnlocked(w);
+    const b = document.createElement('button');
+    b.type = 'button'; b.className = 'br-world' + (open ? '' : ' locked');
+    b.disabled = !open;
+    b.innerHTML = `<canvas width="320" height="200"></canvas><div class="nm outlined">${esc(w.name)}</div><div class="ds">${esc(open ? w.blurb : 'Finish ' + C.WORLDS[i - 1].name + ' to unlock')}</div>
+      <div class="br-wstars">${starSvg(true)}<span>${worldStars(w)} / ${w.levels.length * 3}</span></div>${open ? '' : lockSvg}`;
+    b.onclick = () => { save.lastWorld = w.id; persist(); renderLevels(w); showLevels(); };
+    ui.worldCards.appendChild(b);
+    requestAnimationFrame(() => A.drawThumb(b.querySelector('canvas'), w, getLevel(w.levels[Math.min(2, w.levels.length - 1)].id)));
+  });
+}
+function showLevels() { view = 'levels'; for (const id of VIEWS) $('br-' + id).hidden = id !== 'levels'; $('br-levels').scrollTop = 0; }
+function renderLevels(w) {
+  ui.levelsTitle.textContent = w.name;
+  ui.levelsSub.textContent = w.blurb;
+  ui.levelGrid.innerHTML = '';
+  w.levels.forEach((L, i) => {
+    const open = levelUnlocked(L), st = save.stars[L.id] || 0, best = save.best[L.id];
+    const b = document.createElement('button');
+    b.type = 'button'; b.className = 'card br-level' + (open ? '' : ' locked'); b.disabled = !open;
+    b.innerHTML = `<div class="lv">Level ${i + 1}</div><div class="n outlined">${i + 1}</div><div class="nm2">${esc(L.name)}</div>
+      <div class="br-lstars">${[0, 1, 2].map(k => starSvg(k < st)).join('')}</div><div class="bt">${best ? 'Best ' + fmt(best) + 's' : open ? 'Par ' + fmt(L.par) + 's' : ''}</div>${open ? '' : lockSvg}`;
+    b.onclick = () => startSolo(L.id);
+    ui.levelGrid.appendChild(b);
+  });
+}
+
+function renderGarage() {
+  ui.name.value = save.name || '';
+  ui.garageStars.textContent = `${totalStars()} / ${C.LEVELS.length * 3}`;
+  ui.bikes.innerHTML = '';
+  for (const b of C.BIKES) {
+    const open = bikeUnlocked(b), st = C.bikeStats(b);
+    const el = document.createElement('button');
+    el.type = 'button'; el.className = 'card br-bike' + (save.bike === b.id ? ' sel' : '') + (open ? '' : ' locked');
+    el.disabled = !open;
+    el.setAttribute('aria-pressed', save.bike === b.id ? 'true' : 'false');
+    el.innerHTML = `<canvas width="300" height="190"></canvas><div class="nm outlined">${esc(b.name)}</div><div class="ds">${esc(open ? b.blurb : 'Unlocks at ' + b.stars + ' stars')}</div>
+      <div class="br-stats">${[['Speed', st.speed], ['Grip', st.grip], ['Spin', st.spin], ['Air', st.air]].map(([k, v]) => `<div><span>${k}</span><i><b style="width:${Math.round(20 + v * 80)}%"></b></i></div>`).join('')}</div>${open ? '' : lockSvg}`;
+    el.onclick = () => { save.bike = b.id; persist(); renderGarage(); if (Net.status === 'online') sendProfile(); newAttract(); };
+    ui.bikes.appendChild(el);
+    requestAnimationFrame(() => drawBikePreview(el.querySelector('canvas'), b.id, save.paint));
+  }
+  ui.paints.innerHTML = '';
+  A.PAINTS.forEach((p, i) => {
+    const s = document.createElement('button');
+    s.type = 'button'; s.className = 'br-paint' + (i === save.paint ? ' sel' : ''); s.style.background = p.body;
+    s.setAttribute('aria-label', p.id + ' paint'); s.setAttribute('aria-pressed', i === save.paint ? 'true' : 'false');
+    s.onclick = () => { save.paint = i; persist(); renderGarage(); if (Net.status === 'online') sendProfile(); if (attract) attract.me.look = { ...attract.me.look, paint: A.paintAt(i) }; };
+    ui.paints.appendChild(s);
+  });
+  ui.tiltRow.hidden = !isPhone();
+  syncToggles();
+}
+function drawBikePreview(cv, bikeId, paint) {
+  const gg = cv.getContext('2d'), c2 = new A.Camera();
+  c2.W = cv.width; c2.H = cv.height; c2.ppm = cv.height / 2.5; c2.x = 0; c2.y = 0.25;
+  gg.clearRect(0, 0, cv.width, cv.height);
+  gg.fillStyle = 'rgba(59,35,38,0.12)'; gg.beginPath(); gg.ellipse(cv.width / 2, c2.sy(-0.78), cv.width * 0.36, 7, 0, 0, Math.PI * 2); gg.fill();
+  A.drawBike(gg, c2, { x: 0, y: 0, a: 0, lean: 0, phi: 0.4 }, { bike: bikeId, paint: A.paintAt(paint) });
+}
+
+function levelOptions(sel, selected) {
+  sel.innerHTML = C.WORLDS.map(w => `<optgroup label="${esc(w.name)}">${w.levels.map((L, i) => `<option value="${L.id}"${L.id === selected ? ' selected' : ''}>${i + 1}. ${esc(L.name)}</option>`).join('')}</optgroup>`).join('');
+}
+function renderMpStatus() {
+  const s = Net.status;
+  ui.mpStatus.dataset.state = s;
+  ui.mpStatusText.textContent = s === 'online' ? 'Connected to the race server' : s === 'connecting' ? 'Looking for the race server…' : 'No race server found';
+}
+function renderMp() {
+  if (!ui.mpLobby) return;
+  renderMpStatus();
+  const online = Net.status === 'online';
+  ui.mpLobby.hidden = !online || !!roomState;
+  ui.mpRoom.hidden = !online || !roomState;
+  ui.mpOffline.hidden = Net.status !== 'offline';
+  ui.mpName.value = document.activeElement === ui.mpName ? ui.mpName.value : (save.name || '');
+  if (!ui.cpuLevel.options.length) levelOptions(ui.cpuLevel, C.LEVELS.find(levelUnlocked).id);
+  [...ui.cpuCount.children].forEach(b => b.setAttribute('aria-pressed', String(+b.dataset.n === save.cpu)));
+  if (online && !roomState) {
+    if (!ui.mpLevel.options.length) levelOptions(ui.mpLevel, 'clover-1');
+    const open = roomsList.filter(r => r.state === 'lobby' && r.count < 6);
+    ui.mpRooms.innerHTML = open.length ? open.map(r => {
+      const L = C.levelById(r.level), w = L && C.worldOf(r.level);
+      return `<li><span class="code">${esc(r.code)}</span><span class="who"><b>${esc(r.host)}</b><small>${w ? esc(w.name + ' ' + (L.index + 1)) : ''} · ${r.count} rider${r.count > 1 ? 's' : ''}</small></span><button class="b sky outlined" type="button" data-code="${esc(r.code)}">Join</button></li>`;
+    }).join('') : '<li class="empty">No open rooms yet. Start one and share the code.</li>';
+    ui.mpRooms.querySelectorAll('button[data-code]').forEach(b => b.onclick = () => Net.send({ t: 'join', code: b.dataset.code }));
+  }
+  if (online && roomState) {
+    const r = roomState, host = r.host === Net.id;
+    ui.roomCode.textContent = r.code;
+    const L = C.levelById(r.level), w = L && C.worldOf(r.level);
+    ui.roomLevel.hidden = !host; ui.roomLevelText.hidden = host;
+    if (host) { if (ui.roomLevel.dataset.for !== r.code || ui.roomLevel.value !== r.level) { levelOptions(ui.roomLevel, r.level); ui.roomLevel.dataset.for = r.code; } }
+    ui.roomLevelText.textContent = L ? `${w.name} ${L.index + 1} · ${L.name}` : r.level;
+    ui.roomPlayers.innerHTML = (r.players || []).map(p => `<li><span class="sw" style="background:${A.paintAt(p.paint).body}"></span><span class="nm">${esc(p.name)}${p.id === Net.id ? ' <small>(you)</small>' : ''}${p.id === r.host ? ' <small>host</small>' : ''}</span><span class="bk">${esc(C.bikeById(p.bike).name)}</span><span class="wn">${p.wins || 0} win${p.wins === 1 ? '' : 's'}</span></li>`).join('');
+    ui.roomStart.hidden = !host;
+    ui.roomNote.textContent = r.state === 'race' || r.state === 'countdown' ? 'A race is on. You will join the next one.' : host ? ((r.players || []).length > 1 ? 'Everyone is here? Start the race.' : 'Share the code or link. You can also start alone to warm up.') : 'Waiting for the host to start the race.';
+  }
+}
+
+// ------------------------------------------------------------------------------------------------
+// Modals
+function openModal(m) { m.hidden = false; const b = m.querySelector('.b.go:not([hidden]), .b:not([hidden])'); if (b && !isPhone()) setTimeout(() => b.focus(), 50); }
+function closeModals() { for (const m of [ui.pause, ui.crash, ui.result, ui.raceResult]) m.hidden = true; }
+const anyModalOpen = () => [ui.pause, ui.crash, ui.result, ui.raceResult].some(m => !m.hidden);
+function pause() {
+  if (!S || anyModalOpen()) return;
+  if (S.mode !== 'online') S.paused = true;
+  ui.pauseText.textContent = S.mode === 'online' ? 'The race keeps going while this menu is open.' : `${S.world.name} ${S.def.index + 1} · ${S.def.name}` + (save.best[S.levelId] && S.mode === 'solo' ? ` · Best ${fmt(save.best[S.levelId])}s` : '');
+  ui.pRestart.hidden = S.mode === 'online';
+  ui.pLevels.textContent = S.mode === 'solo' ? 'Levels' : 'Leave race';
+  ui.pGhostRow.hidden = S.mode !== 'solo';
+  syncToggles();
+  openModal(ui.pause);
+}
+function resume() { closeModals(); if (S) { S.paused = false; last = performance.now(); } }
+function syncToggles() {
+  for (const [el, on] of [[ui.tGhost, save.ghost], [ui.tSound, save.sound], [ui.tTilt, save.tilt], [ui.pTilt, save.tilt]]) if (el) el.setAttribute('aria-pressed', String(!!on));
+  if (ui.soundBtn) ui.soundBtn.setAttribute('aria-pressed', String(!!save.sound));
+  if (ui.pTiltRow) ui.pTiltRow.hidden = !isPhone();
+}
+function leaveToMenu() {
+  const mode = S && S.mode, w = S && S.world;
+  exitPlay();
+  if (mode === 'solo') { renderLevels(w); showView('levels'); showLevels(); }
+  else showView(mode === 'online' || mode === 'cpu' ? 'mp' : 'home');
+}
+
+// ------------------------------------------------------------------------------------------------
+function setup() {
+  app = $('br-app'); canvas = $('br-canvas'); g = canvas.getContext('2d');
+  ui = {
+    hud: $('br-hud'), time: $('br-time'), sub: $('br-sub'), pos: $('br-pos'), retry: $('br-retry'), soundBtn: $('br-sound'),
+    dotMe: $('br-dot-me'), dotGhost: $('br-dot-ghost'), dotsOthers: $('br-dots'),
+    center: $('br-center'), toast: $('br-toast'), touch: $('br-touch'), tipbar: $('br-tipbar'),
+    homeStars: $('br-home-stars'), homeHow: $('br-home-how'),
+    worldCards: $('br-world-cards'), worldsStars: $('br-worlds-stars'),
+    levelsTitle: $('br-levels-title'), levelsSub: $('br-levels-sub'), levelGrid: $('br-level-grid'),
+    bikes: $('br-bikes'), paints: $('br-paints'), name: $('br-name'), garageStars: $('br-garage-stars'), tiltRow: $('br-tilt-row'), tTilt: $('br-t-tilt'),
+    pause: $('br-pausemenu'), pauseText: $('br-pause-text'), pRestart: $('br-p-restart'), pLevels: $('br-p-levels'), tGhost: $('br-t-ghost'), tSound: $('br-t-sound'), pGhostRow: $('br-p-ghost-row'), pTilt: $('br-p-tilt'), pTiltRow: $('br-p-tilt-row'),
+    crash: $('br-crash'), crashTitle: $('br-crash-title'), crashText: $('br-crash-text'),
+    result: $('br-result'), resStars: [...document.querySelectorAll('#br-result .br-rstar')], resTitle: $('br-res-title'), resTime: $('br-res-time'), resBest: $('br-res-best'), resNew: $('br-res-new'), resHint: $('br-res-hint'), resNext: $('br-res-next'),
+    raceResult: $('br-raceresult'), rrTitle: $('br-rr-title'), rrList: $('br-rr-list'), rrAgain: $('br-rr-again'), rrRoom: $('br-rr-room'), rrWait: $('br-rr-wait'),
+    mpStatus: $('br-mp-status'), mpStatusText: $('br-mp-status-text'), mpName: $('br-mp-name'), mpLobby: $('br-mp-lobby'), mpRoom: $('br-mp-room'), mpOffline: $('br-mp-offline'),
+    mpLevel: $('br-mp-level'), mpRooms: $('br-mp-rooms'), mpCode: $('br-mp-code'),
+    roomCode: $('br-room-code'), roomLevel: $('br-room-level'), roomLevelText: $('br-room-level-text'), roomPlayers: $('br-room-players'), roomStart: $('br-room-start'), roomNote: $('br-room-note'),
+    cpuLevel: $('br-cpu-level'), cpuCount: $('br-cpu-count'), deskUrl: $('br-desk-url'),
+  };
+  app.classList.toggle('touch', isPhone());
+  const go = (fn) => (e) => { Sound.init(); Sound.resume(); fn(e); };
+  // home
+  const toHub = () => { leaveFullscreen(); if (window.GameHub) window.GameHub.menu(); };
+  $('br-home-back').onclick = toHub;
+  $('br-go-solo').onclick = go(() => { goFullscreen(); showView('worlds'); });
+  $('br-desk-back').onclick = toHub;
+  $('br-desk-keys').onclick = () => { allowKeyboard = true; showView('home'); };
+  // any tap in the game may be the first one: iOS only shows its motion permission prompt from a tap
+  app.addEventListener('click', () => startTilt(), true);
+  $('br-go-mp').onclick = go(() => showView('mp'));
+  $('br-go-garage').onclick = go(() => showView('garage'));
+  $('br-worlds-back').onclick = () => showView('home');
+  $('br-levels-back').onclick = () => showView('worlds');
+  $('br-garage-back').onclick = () => showView('home');
+  $('br-mp-back').onclick = () => { if (roomState) Net.send({ t: 'leave' }); roomState = null; showView('home'); };
+  // garage
+  const setName = (v) => { save.name = v.replace(/[\u0000-\u001f]/g, '').slice(0, 16); persist(); };
+  ui.name.oninput = () => setName(ui.name.value);
+  ui.name.onchange = () => { if (Net.status === 'online') sendProfile(); };
+  ui.tTilt.onclick = () => setTilt(!save.tilt);
+  // play HUD
+  $('br-pause').onclick = () => pause();
+  ui.retry.onclick = () => restart();
+  ui.soundBtn.onclick = () => { save.sound = !save.sound; persist(); Sound.init(); Sound.setOn(save.sound); syncToggles(); };
+  // pause menu
+  $('br-p-resume').onclick = () => resume();
+  ui.pRestart.onclick = () => restart();
+  ui.pLevels.onclick = () => { if (S && S.mode === 'online') Net.send({ t: 'leave' }); leaveToMenu(); };
+  ui.tGhost.onclick = () => { save.ghost = !save.ghost; persist(); if (S && S.mode === 'solo') S.ghost = save.ghost ? loadGhost(S.levelId) : null; syncToggles(); };
+  ui.tSound.onclick = () => { save.sound = !save.sound; persist(); Sound.init(); Sound.setOn(save.sound); syncToggles(); };
+  ui.pTilt.onclick = () => setTilt(!save.tilt);
+  // crash and result
+  $('br-crash-retry').onclick = () => restart();
+  $('br-crash-levels').onclick = () => leaveToMenu();
+  ui.resNext.onclick = () => { const n = nextLevelId(S.levelId); if (n) startSolo(n); };
+  $('br-res-retry').onclick = () => restart();
+  $('br-res-levels').onclick = () => leaveToMenu();
+  // race results
+  ui.rrAgain.onclick = () => {
+    if (!S) return;
+    if (S.mode === 'cpu') startCpuRace(S.levelId, S.cpus.length);
+    else if (S.mode === 'online') { closeModals(); Net.send({ t: 'start' }); }
+  };
+  ui.rrRoom.onclick = () => { exitPlay(); showView('mp'); };
+  $('br-rr-leave').onclick = () => { if (S && S.mode === 'online') Net.send({ t: 'leave' }); roomState = null; exitPlay(); showView('mp'); };
+  // multiplayer lobby
+  ui.mpName.oninput = () => { setName(ui.mpName.value); };
+  ui.mpName.onchange = () => sendProfile();
+  $('br-mp-create').onclick = () => { sendProfile(); Net.send({ t: 'create', level: ui.mpLevel.value }); };
+  const joinCode = () => { const c = ui.mpCode.value.trim().toUpperCase(); if (c) { sendProfile(); Net.send({ t: 'join', code: c }); } };
+  $('br-mp-join').onclick = joinCode;
+  ui.mpCode.onkeydown = (e) => { if (e.key === 'Enter') joinCode(); };
+  $('br-mp-retry').onclick = () => { Net.close(); Net.connect(); };
+  ui.roomLevel.onchange = () => Net.send({ t: 'level', level: ui.roomLevel.value });
+  ui.roomStart.onclick = () => Net.send({ t: 'start' });
+  $('br-room-leave').onclick = () => { Net.send({ t: 'leave' }); roomState = null; renderMp(); };
+  $('br-room-copy').onclick = async () => {
+    const link = `${location.origin}${location.pathname}#bike-race/${roomState ? roomState.code : ''}`;
+    try { await navigator.clipboard.writeText(link); toastMenu('Invite link copied'); } catch (e) { prompt('Copy this link', link); }
+  };
+  ui.cpuCount.querySelectorAll('button').forEach(b => b.onclick = () => { save.cpu = +b.dataset.n; persist(); renderMp(); });
+  $('br-cpu-start').onclick = go(() => startCpuRace(ui.cpuLevel.value, save.cpu));
+  // keyboard
+  window.addEventListener('keydown', (e) => {
+    if (!running || view !== 'play') return;
+    if (e.target && /INPUT|SELECT|TEXTAREA/.test(e.target.tagName)) return;
+    Sound.init(); Sound.resume();
+    if (KEYMAP[e.code]) { keys.add(e.code); e.preventDefault(); }
+    if (e.repeat) return;
+    if (e.code === 'Escape' || e.code === 'KeyP') { e.preventDefault(); if (!ui.pause.hidden) resume(); else pause(); }
+    else if (e.code === 'KeyR' && S && S.mode !== 'online') { e.preventDefault(); restart(); }
+    else if ((e.code === 'Enter' || e.code === 'Space') && !ui.crash.hidden) { e.preventDefault(); restart(); }
+  });
+  window.addEventListener('keyup', (e) => keys.delete(e.code));
+  window.addEventListener('blur', () => { keys.clear(); for (const k in touchCtl) touchCtl[k] = false; if (view === 'play' && S && S.mode === 'solo' && S.phase === 'run') pause(); });
+  document.addEventListener('visibilitychange', () => { if (document.hidden) { keys.clear(); if (view === 'play' && S && S.mode === 'solo' && S.phase === 'run') pause(); } });
+  // touch controls
+  for (const [id, k] of [['br-tgas', 'gas'], ['br-tbrake', 'brake'], ['br-tback', 'back'], ['br-tfwd', 'fwd']]) {
+    const el = $(id);
+    const on = (e) => { e.preventDefault(); Sound.init(); Sound.resume(); touchCtl[k] = true; el.classList.add('on'); try { el.setPointerCapture(e.pointerId); } catch (er) {} };
+    const off = (e) => { touchCtl[k] = false; el.classList.remove('on'); };
+    el.addEventListener('pointerdown', on); el.addEventListener('pointerup', off); el.addEventListener('pointercancel', off); el.addEventListener('lostpointercapture', off);
+    el.addEventListener('contextmenu', (e) => e.preventDefault());
+  }
+  // tapping the screen retries after a crash
+  canvas.addEventListener('pointerdown', () => { Sound.init(); Sound.resume(); });
+  window.addEventListener('resize', () => {
+    if (!running) return;
+    resize();
+    if (isPhone() && innerHeight > innerWidth && view === 'play' && S && S.mode === 'solo' && S.phase === 'run') pause();
+  });
+  // Android and others send motion events without asking, so tilt can start now. iOS waits for the first tap.
+  if (isPhone() && save.tilt && !(typeof DeviceOrientationEvent !== 'undefined' && typeof DeviceOrientationEvent.requestPermission === 'function')) startTilt();
+  started = true;
+}
+let menuToastTimer = 0;
+function toastMenu(text) { toast(text); ui.toast.hidden = false; }
+
+// Android: play fullscreen and locked sideways. (iPhones can't do either from a web page.)
+function goFullscreen() {
+  const el = document.documentElement;
+  if (!isPhone() || document.fullscreenElement || !el.requestFullscreen) return;
+  el.requestFullscreen({ navigationUI: 'hide' })
+    .then(() => screen.orientation && screen.orientation.lock ? screen.orientation.lock('landscape') : null)
+    .catch(() => {});
+}
+function leaveFullscreen() { if (document.fullscreenElement && document.exitFullscreen) document.exitFullscreen().catch(() => {}); }
+function show() {
+  if (!started) setup();
+  resize();
+  const h = location.hash.slice(1), m = /^bike-race\/([A-Za-z]{4})$/.exec(h);
+  if (!running) {
+    running = true; last = performance.now();
+    raf = requestAnimationFrame(frame);
+  }
+  if (m) {
+    pendingJoin = m[1].toUpperCase();
+    try { history.replaceState(null, '', location.pathname + location.search + '#bike-race'); } catch (e) {}
+    if (Net.status === 'online' && Net.id) { Net.send({ t: 'join', code: pendingJoin }); pendingJoin = null; }
+    showView('mp');
+  } else if (view === 'play' && S) {
+    // coming back to a game in progress
+  } else showView(view === 'play' ? 'home' : view);
+}
+function hide() {
+  running = false; cancelAnimationFrame(raf);
+  leaveFullscreen();
+  Sound.engineOff();
+  if (S && S.mode === 'solo' && S.phase === 'run') { S.paused = true; }
+}
+window.BikeRace = { show, hide, _debug: () => ({ S, attract, save, cam, C, Net, startSolo, startCpuRace, readInput, touchCtl, keys, tilt, tiltAngle, refreshControls }) };
+})();
