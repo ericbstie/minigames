@@ -75,11 +75,22 @@ that stretch plus the old road, so its march gets longer, through the king's lan
 keep the road they started on. `tools/check-castle-world.mjs` checks that nearly every outpost built on a front's
 road clears that front's camp.
 
+## Balance
+
+`tools/play-castle-defender.js` plays the real page like a person: the king rides to coins and stands on pads
+to buy (through the gates, round the buildings), buying the cheapest pad it can afford. With it the castle holds
+about 11:10 to 12:15 and the border gets about 110 to 135 paces out with 10 or 11 outposts; the game from before the
+open world held about 11:00 to 11:45 with the same player. Building outposts last (`turtle`) lasts about as long,
+and rushing them before weapons (`expand`) falls before 5 minutes, just as rushing the old outer towers did. So
+pushing out costs no survival time and is the way the world opens up. Enemies from a camp 2 tiers out have about
+2.6 times the hit points and 2.1 times the coins of ones from home.
+
 ## Checks
 
 ```sh
-node tools/check-castle-world.mjs           # the world functions, in Node
-node tools/test-castle-defender-browser.js  # the real page in headless Chromium (Playwright); --keep saves screenshots
+node tools/check-castle-world.mjs                   # the world functions, in Node
+node tools/test-castle-defender-browser.js          # the real page in headless Chromium (Playwright); --keep saves screenshots
+node tools/play-castle-defender.js 15 balanced --check   # a headless play-through, a line per game minute
 ```
 
 The browser test loads three.js from its CDN; `CD_THREE=/path/to/three.module.js` serves a local copy instead.

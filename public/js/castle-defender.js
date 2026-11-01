@@ -70,7 +70,7 @@ const FRONTS = [
   { id: 'E', road: P0, open: 0 },
   { id: 'NE', road: P1, open: 8 },
   { id: 'SE', road: P2, open: 20 },
-  { id: 'N', road: [[4, -88], [8, -76], [16, -66], [24, -59], ...P1], own: 5, open: 'cannon' },
+  { id: 'N', road: [[4, -88], [8, -76], [14, -66], [18, -56], [22, -46], ...P1.slice(2)], own: 6, open: 'cannon' },   // round the NE camp
   { id: 'S', road: [[16, 92], [10, 78], [16, 64], [13, 52], [19, 38], ...P2.slice(3)], own: 6, open: 'outpost' },
 ];
 // enemies get tougher and richer the further out their camp is; their biome sets their colours and pace
@@ -1138,7 +1138,7 @@ function newGame() {
     stats: { maxEnemies: 0 },
     // the open world: the land claimed, the enemy fronts, and spots kept clear of decor
     claims: [{ x: HOME.x, z: HOME.z, r: CLAIM_HOME, shown: CLAIM_HOME }], fronts: [], clear: [], outposts: 0, fieldCannons: 0, siteSeq: 0,
-    rand: mulberry((Math.random() * 2147483647) | 0), reach: CLAIM_HOME, posts: [],
+    rand: mulberry((Math.random() * 2147483647) | 0), reach: CLAIM_HOME, posts: [], toastQ: [], toastT: 0,
   };
   // the barracks stands from the start
   const bk = makeBuilding(BARRACKS[0], BARRACKS[1], Math.PI / 4, barracksGeo, 1, 0, 3.5);
@@ -2448,10 +2448,14 @@ function updateHud(force) {
   ui.coins.classList.toggle('spend', G.spentFlash > 0);
   ui.coins.classList.toggle('gain', G.spentFlash <= 0 && G.gainFlash > 0);
 }
+// messages at the top of the screen, one after the other
 function toast(msg) {
+  if (G.toastT > 0) { if (!G.toastQ.includes(msg)) G.toastQ.push(msg); return; }
+  G.toastT = 2.6;
   const t = ui.toast; if (!t) return;
   t.textContent = msg; t.classList.remove('show'); void t.offsetWidth; t.classList.add('show');
 }
+function updateToasts(dt) { if ((G.toastT -= dt) <= 0 && G.toastQ.length) toast(G.toastQ.shift()); }
 const clock = (t) => `${Math.floor(t / 60)}:${String(Math.floor(t % 60)).padStart(2, '0')}`;
 function gameOver() {
   if (G.over) return;
@@ -2530,6 +2534,7 @@ function step(dt) {
   updatePads(dt);
   for (const s of G.segs) { if (s.hitT > 0) s.hitT -= dt; else if (s.alive && s.hp < s.max) s.hp = Math.min(s.max, s.hp + s.max * 0.006 * dt); }
   G.spentFlash = Math.max(0, G.spentFlash - dt); G.gainFlash = Math.max(0, G.gainFlash - dt);
+  updateToasts(dt);
   G.stats.maxEnemies = Math.max(G.stats.maxEnemies, G.enemies.length);
   updateFx(dt);
 }
