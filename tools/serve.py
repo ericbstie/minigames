@@ -72,7 +72,7 @@ def clean_name(v):
 
 
 def clean_int(v, lo, hi, default=0):
-    return max(lo, min(hi, int(v))) if isinstance(v, (int, float)) and not isinstance(v, bool) and v == v else default
+    return max(lo, min(hi, int(v))) if number(v) else default
 
 
 def clean_bike(v):
@@ -148,6 +148,8 @@ class Lobby:
 
     def handle(self, conn, msg):
         t = msg.get("t")
+        if not isinstance(t, str):
+            return
         if t == "ping":
             conn.send({"t": "pong", "c": msg.get("c") if number(msg.get("c")) else 0})
         elif t == "hello":
@@ -195,9 +197,13 @@ class Lobby:
         if p is None or p.conn is not conn:
             return
         p.conn = None
-        if p.room:
-            log(f"{p.name} dropped out of room {p.room.code}, keeping their place for {AWAY:g} s")
-            p.room.broadcast(p.room.public())
+        room = p.room
+        if room:
+            log(f"{p.name} dropped out of room {room.code}, keeping their place for {AWAY:g} s")
+            # a host who drops out between races hands over straight away, so the others can still start one
+            if room.host == p.id and room.state == "lobby":
+                self.pass_host(room)
+            room.broadcast(room.public())
         p.away_timer = asyncio.get_running_loop().call_later(AWAY, self.expire, p)
 
     def expire(self, p):
@@ -264,10 +270,19 @@ class Lobby:
             del self.rooms[room.code]
             log(f"room {room.code} closed")
             return
-        if room.host == p.id:   # the next rider to have joined takes over, preferring one who is connected
-            room.host = next((q.id for q in room.players.values() if q.conn), next(iter(room.players)))
+        if room.host == p.id:
+            self.pass_host(room)
         room.broadcast(room.public())
         self.check_done(room)
+
+    @staticmethod
+    def pass_host(room):
+        """The next rider to have joined takes over, preferring one who is connected."""
+        old = room.host
+        room.host = next((q.id for q in room.players.values() if q.conn and q.id != old),
+                         next((q for q in room.players if q != old), old))
+        if room.host != old:
+            log(f"{room.players[room.host].name} is now host of room {room.code}")
 
     def on_level(self, p, msg):
         room, level = p.room, clean_level(msg.get("level"))
@@ -354,6 +369,8 @@ class Lobby:
         if len(rows) > 1 and rows[0]["time"] is not None and rows[0]["id"] in room.players:
             room.players[rows[0]["id"]].wins += 1
         room.state, room.ends_at, room.racers, room.last = "lobby", None, {}, rows
+        if room.host in room.players and room.players[room.host].conn is None:
+            self.pass_host(room)
         room.broadcast({"t": "results", "level": room.level, "results": rows})
         room.broadcast(room.public())
         log(f"room {room.code} results: " + ", ".join(f"{r['name']} {r['time']:.2f}" if r["time"] is not None else f"{r['name']} DNF" for r in rows))
@@ -462,7 +479,10 @@ class Server:
 
     def message(self, conn, msg):
         if isinstance(msg, dict) and conn.allow():
-            self.lobby.handle(conn, msg)
+            try:
+                self.lobby.handle(conn, msg)
+            except Exception as e:      # log it and carry on: one bad message shouldn't end anyone's race
+                log(f"error handling {str(msg.get('t'))[:20]!r}: {e!r}")
 
     async def websocket(self, reader, writer, method, headers):
         key = headers.get("sec-websocket-key", "")
@@ -593,7 +613,7 @@ class Server:
                     return await respond(writer, 400, keep=False)
                 if not 0 <= length <= MAX_BODY:
                     return await respond(writer, 413, keep=False)
-                body = await reader.readexactly(length) if length else b""
+                body = await asyncio.wait_for(reader.readexactly(length), KEEP_ALIVE) if length else b""
                 path = urllib.parse.urlsplit(target).path
                 if path == "/ws":
                     return await self.websocket(reader, writer, method, headers)
@@ -605,7 +625,7 @@ class Server:
                     await serve_file(writer, method, path, headers, keep)
                 if not keep:
                     return
-        except (asyncio.IncompleteReadError, ConnectionError, OSError):
+        except (asyncio.IncompleteReadError, asyncio.TimeoutError, ConnectionError, OSError):
             pass
         finally:
             try:

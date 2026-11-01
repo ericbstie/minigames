@@ -197,6 +197,7 @@
   </section>
 
   <div class="br-rotate" id="br-rotate" aria-live="polite">
+    <button class="hub-back outlined" id="br-rotate-back" type="button">Games</button>
     <svg viewBox="0 0 64 64" aria-hidden="true"><rect x="20" y="8" width="24" height="44" rx="5"/><path d="M48 46a18 18 0 0 0 4-14" class="arr"/><path d="M47 30.5l5 1.6 1.6-5" class="arr"/></svg>
     <p class="outlined">Turn your phone sideways</p>
   </div>
@@ -204,22 +205,28 @@
   <section class="br-screen" id="br-home">
     <button class="hub-back outlined" id="br-home-back" type="button">Games</button>
     <div class="br-col br-home-col">
-      <h1 class="outlined br-logo">Bike Race</h1>
-      <div class="tally outlined"><svg viewBox="0 0 24 24" class="star-on" aria-hidden="true"><path d="M12.0 2.3 L14.9 8.8 L22.0 9.6 L16.8 14.3 L18.2 21.3 L12.0 17.8 L5.8 21.3 L7.2 14.3 L2.0 9.6 L9.1 8.8 Z"/></svg><span id="br-home-stars">0 / 90</span></div>
+      <div class="br-brand">
+        <h1 class="outlined br-logo"><span>Bike</span> <span>Race</span></h1>
+        <div class="tally outlined"><svg viewBox="0 0 24 24" class="star-on" aria-hidden="true"><path d="M12.0 2.3 L14.9 8.8 L22.0 9.6 L16.8 14.3 L18.2 21.3 L12.0 17.8 L5.8 21.3 L7.2 14.3 L2.0 9.6 L9.1 8.8 Z"/></svg><span id="br-home-stars">0 / 90</span></div>
+      </div>
+      <div class="br-home-main">
       <div class="br-menu">
         <button class="b go outlined" id="br-go-solo" type="button">Single player</button>
         <button class="b sky outlined" id="br-go-mp" type="button">Multiplayer</button>
         <button class="b plain outlined" id="br-go-garage" type="button">Garage</button>
       </div>
       <p class="br-how" id="br-home-how"></p>
+      </div>
     </div>
   </section>
 
   <section class="br-screen" id="br-worlds" hidden>
     <button class="hub-back outlined" id="br-worlds-back" type="button">Back</button>
     <div class="br-col">
-      <h1 class="outlined">Pick a world</h1>
-      <div class="tally outlined"><svg viewBox="0 0 24 24" class="star-on" aria-hidden="true"><path d="M12.0 2.3 L14.9 8.8 L22.0 9.6 L16.8 14.3 L18.2 21.3 L12.0 17.8 L5.8 21.3 L7.2 14.3 L2.0 9.6 L9.1 8.8 Z"/></svg><span id="br-worlds-stars">0 / 90</span></div>
+      <div class="br-head">
+        <h1 class="outlined">Pick a world</h1>
+        <div class="tally outlined"><svg viewBox="0 0 24 24" class="star-on" aria-hidden="true"><path d="M12.0 2.3 L14.9 8.8 L22.0 9.6 L16.8 14.3 L18.2 21.3 L12.0 17.8 L5.8 21.3 L7.2 14.3 L2.0 9.6 L9.1 8.8 Z"/></svg><span id="br-worlds-stars">0 / 90</span></div>
+      </div>
       <div class="br-world-cards" id="br-world-cards"></div>
     </div>
   </section>
@@ -227,7 +234,10 @@
   <section class="br-screen" id="br-levels" hidden>
     <button class="hub-back outlined" id="br-levels-back" type="button">Worlds</button>
     <div class="br-col">
-      <h1 class="outlined" id="br-levels-title">World</h1>
+      <div class="br-head">
+        <h1 class="outlined" id="br-levels-title">World</h1>
+        <div class="tally outlined"><svg viewBox="0 0 24 24" class="star-on" aria-hidden="true"><path d="M12.0 2.3 L14.9 8.8 L22.0 9.6 L16.8 14.3 L18.2 21.3 L12.0 17.8 L5.8 21.3 L7.2 14.3 L2.0 9.6 L9.1 8.8 Z"/></svg><span id="br-levels-stars">0 / 18</span></div>
+      </div>
       <p class="br-sub2" id="br-levels-sub"></p>
       <div class="br-level-grid" id="br-level-grid"></div>
     </div>
@@ -260,8 +270,10 @@
   <section class="br-screen" id="br-mp" hidden>
     <button class="hub-back outlined" id="br-mp-back" type="button">Back</button>
     <div class="br-col">
-      <h1 class="outlined">Multiplayer</h1>
-      <div class="br-status" id="br-mp-status" data-state="idle"><span class="dot"></span><span id="br-mp-status-text">Looking for the race server…</span></div>
+      <div class="br-head">
+        <h1 class="outlined">Multiplayer</h1>
+        <div class="br-status" id="br-mp-status" data-state="idle"><span class="dot"></span><span id="br-mp-status-text">Looking for the race server…</span></div>
+      </div>
       <div class="br-panel" id="br-mp-name-panel"><label class="br-field"><span>Your name</span><input id="br-mp-name" type="text" maxlength="16" autocomplete="nickname" placeholder="Rider" spellcheck="false"></label></div>
 
       <div id="br-mp-lobby" hidden>
@@ -298,6 +310,7 @@
           <button class="b plain outlined" id="br-room-leave" type="button">Leave room</button>
         </div>
         <div class="br-panel" id="br-room-last" hidden><h3>Last race</h3><ol class="br-standings" id="br-room-last-list"></ol></div>
+        <p class="br-conn" id="br-room-conn"></p>
       </div>
 
       <div class="br-panel br-offline" id="br-mp-offline" hidden>
@@ -323,7 +336,7 @@
       <div class="br-toggles">
         <div class="br-field" id="br-p-ghost-row"><span>Ghost of best run</span><button class="br-toggle" id="br-t-ghost" type="button" aria-pressed="true"><i></i></button></div>
         <div class="br-field"><span>Sound</span><button class="br-toggle" id="br-t-sound" type="button" aria-pressed="true"><i></i></button></div>
-        <div class="br-field" id="br-p-tilt-row"><span>Tilt the phone to lean</span><button class="br-toggle" id="br-p-tilt" type="button" aria-pressed="false"><i></i></button></div>
+        <div class="br-field" id="br-p-tilt-row"><span>Tilt the phone to lean<small id="br-p-tilt-why"></small></span><button class="br-toggle" id="br-p-tilt" type="button" aria-pressed="false"><i></i></button></div>
       </div>
       <div class="btns">
         <button class="b go outlined" id="br-p-resume" type="button">Resume</button>
