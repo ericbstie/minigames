@@ -69,10 +69,12 @@ function bot(strategy: string): void {
       k = G.king;
     // buy the cheapest pad there are coins for (outposts weighted by strategy), else pick up the nearest coin;
     // weapons cost twice what they did when these weights were set, so the forge counts half as much to keep them
-    // coming in the same order
+    // coming in the same order, and with coins for the forge four times over the next weapon comes first
     const outpostWeight = ({ expand: 0.5, turtle: 6 } as Record<string, number>)[strategy] || 1.1;
     const weight = (p: { id: string; cost: number }) =>
-      p.cost * (p.id.startsWith('outpost') ? outpostWeight : p.id === 'forge' ? 0.4 : p.id === 'recruit' ? 0.8 : 1);
+      p.id === 'forge' && p.cost * 4 <= G.coins
+        ? 0
+        : p.cost * (p.id.startsWith('outpost') ? outpostWeight : p.id === 'forge' ? 0.4 : p.id === 'recruit' ? 0.8 : 1);
     const want = G.pads
       .filter((p) => p.visibleNow && p.cost - p.paid > 0 && p.cost - p.paid <= G.coins)
       .sort((a, b) => weight(a) - weight(b))[0];

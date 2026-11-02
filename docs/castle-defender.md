@@ -184,12 +184,13 @@ With bosses the bot held 11:21, 11:48 and 11:11 (12:19 and 11:01 without them, t
 came, three a game, without the castle losing hit points to one: the 3:00 boss falls at the walls within about a
 minute of coming, most of it the walk in, and its 900 or so coins buy the next weapon early.
 
-Doubling the weapon prices (with bazookas) took that to 10:34 and 11:04 with bosses (10:50 and 10:54 before them),
-with 9 or 10 outposts and the border about 115 paces out, once the player counts the forge half as much as before so
-the weapons still come in the same order; left at the old weighting the player puts weapons off and falls before 5
-minutes. The bot doesn't get to
-bazookas (it has about 70,000 coins at 10 minutes, and spends them on cheaper pads), but handed them at 9 minutes
-it still stands at 15, so they are a big step up for a player who saves for them.
+Weapons cost twice what they did since bazookas came. Left at its old weighting the bot puts weapons off and falls
+before 5 minutes, so it counts the forge half as much as before, keeping the weapons coming in the same order, and
+goes for the forge first once it has the coins for it four times over. With bosses, the gold boys and that player
+the castle still stands at 15 minutes (two runs, 13 outposts, the border 137 paces out): bazookas come at about 9
+to 10 minutes and the +1s after them. Without the four-times rule the bot never gets to bazookas, riding from one
+cheaper pad to the next with 650,000 to 950,000 coins, and falls at about 11:06; before the gold boys came, doubled
+prices held 10:34 and 11:04 with bosses, and handed bazookas at 9 minutes the bot stood at 15.
 
 ## Checks
 
