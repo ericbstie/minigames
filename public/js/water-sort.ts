@@ -936,6 +936,16 @@ export const game: Game = {
     });
     yield* animate(frame);
   }),
+  // on the menu's card: the levels finished, and the level left unfinished
+  progress: Effect.gen(function* () {
+    const saved = new Set([...done, ...(yield* load(DONE_KEY, Done, () => []))]),
+      n = LEVELS.filter((_L, i) => saved.has(i + 1)).length,
+      playing = yield* load<Play | null>(PLAY_KEY, Play, () => null);
+    return [
+      ...(n ? [`${n} of ${LEVELS.length} stars`] : []),
+      ...(playing ? [`Level ${playing.level} in progress`] : []),
+    ];
+  }),
 };
 
 // What the browser tests read

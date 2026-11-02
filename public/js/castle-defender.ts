@@ -7014,6 +7014,12 @@ export const game: HubGame = {
     yield* Effect.addFinalizer(() => saveIfMoved);
     yield* animate(frame);
   }),
+  // on the menu's card: the game left in progress and how long the castle has held in it, and its longest
+  progress: Effect.gen(function* () {
+    const saved = yield* load<SavedWorld | null>(WORLD_KEY, SavedWorld, () => null),
+      best = yield* load(BEST_TIME, BestTime, () => 0);
+    return [...(saved ? [`Game in progress (${clock(saved.t)})`] : []), ...(best > 0 ? [`Best ${clock(best)}`] : [])];
+  }),
 };
 // for tests/browser/castle-defender.test.ts and tools/play-castle-defender.ts
 function debug() {
