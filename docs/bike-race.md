@@ -104,6 +104,7 @@ tests/browser/bike-race-editor.test.ts   phone-sized browser tests for the level
 tests/browser/bike-race-online.test.ts   live races between phones in the browser, and the no-server fallback
 tests/race-server.test.ts     the race server's messages, without a browser
 tests/race-lobby.test.ts      the rooms on Effect's TestClock: whole races with the real timings, no waiting
+tests/bike-race-net.test.ts   the game's reconnect schedule, on a TestClock
 tools/render-bike-race-card.ts    redraws the menu card picture with the game's own drawing code
 ```
 
@@ -283,9 +284,10 @@ The game connects when Multiplayer opens, and drops the connection when you leav
   after the page was allowed. Which one is in use: `Net.transport` (`bike-race-net.ts`).
 - The game pings every 5 s. The server drops a connection that says nothing for 30 s; the game drops one that
   hears nothing for 15 s, and checks straight away when the page shows again.
-- A dropped connection retries by itself (`Net.retrying`, "Reconnecting…"). `welcome` hands out a key, kept in
-  sessionStorage, and `hello` sends it back, so the server gives the rider their place back if they return within
-  45 s (`AWAY`). The same key from a second connection takes over and the first gets `replaced`.
+- A dropped connection retries by itself (`Net.retrying`, "Reconnecting…"): six tries, 1, 2, 4, 8 and 8 s apart
+  (`reconnectSchedule`), and then it is offline. `welcome` hands out a key, kept in sessionStorage, and `hello`
+  sends it back, so the server gives the rider their place back if they return within 45 s (`AWAY`). The same key
+  from a second connection takes over and the first gets `replaced`.
 - The server refuses a WebSocket or stream from a page on another site (the Origin must match the Host).
 
 ### Messages
