@@ -2,8 +2,8 @@
 // plain functions (no three.js, no game state) so tests can check them without a browser.
 //
 // The first time the border reaches a land's distance from home, that land opens and something new shows up in it.
-// The first land brings shops: lots for sale beside the outposts, where the king buys a business that fills its till
-// with coins.
+// The first land brings shops: lots for sale beside the outposts, where the king buys a business that makes his army
+// stronger and fills its till with coins.
 import { BIOME, type Biome, HOME, type Pt } from './castle-defender-world';
 
 export interface Land {
@@ -28,20 +28,25 @@ export function threatLevel(t: number): number {
 }
 
 // ----- shops
-// A lot for sale shows beside each outpost once the first land is open. Buying it opens a shop, which fills its till
-// with coins for the king (or a gold boy) to come and empty; it holds TILL_SECONDS of takings and then stops filling.
-// Upgrades on the same pad make it earn more. Shops further out, in richer land, earn more for the same price.
+// A lot for sale shows beside each outpost once the first land is open. Buying it opens a shop, which makes the
+// whole army stronger (a richer kingdom arms its people better: every shop level adds TRADE to the damage everything
+// of the king's does) and fills its till with coins for the king to come and take; a till holds TILL_SECONDS of
+// takings and then stops filling. Upgrades on the same pad add to both. Shops further out, in richer land, take more
+// for the same price.
 export const SHOP_MAX = 5;
 export const TILL_SECONDS = 75;
-export const LOT_COST = 3000,
-  LOT_GROW = 1.45,
-  SHOP_UP = 2, // each level costs this many times the one before (from the lot's price)
-  SHOP_GAIN = 2.2, // and earns this many times as much
-  SHOP_PAYBACK = 60; // a first-level shop earns its lot's price back in this many seconds (in home land)
+export const TRADE = 0.1;
+export const LOT_COST = 20000,
+  LOT_GROW = 1.5,
+  SHOP_UP = 2.5, // each level costs this many times the one before (from the lot's price)
+  SHOP_GAIN = 2.2, // and takes this many times as much
+  SHOP_PAYBACK = 120; // a first-level shop takes its lot's price in this many seconds (in home land)
 /** The price of the `n`-th lot for sale (counting from 0) */
 export const lotPrice = (n: number) => Math.round(LOT_COST * Math.pow(LOT_GROW, n));
 /** The price of a shop's next level, from the level it has (1 to SHOP_MAX - 1) and its lot's price */
 export const shopUpPrice = (lot: number, lv: number) => Math.round(lot * Math.pow(SHOP_UP, lv));
+/** How much harder everything of the king's hits with shops at these levels (1: no shops) */
+export const tradeMight = (levels: readonly number[]) => 1 + TRADE * levels.reduce((n, lv) => n + lv, 0);
 /** How rich the land is at a spot: 1 near home, more the further out */
 export const landWealth = (x: number, z: number) =>
   1 + 0.35 * Math.max(0, (Math.hypot(x - HOME.x, z - HOME.z) - 62) / 32);

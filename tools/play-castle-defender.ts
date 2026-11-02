@@ -78,14 +78,24 @@ function bot(strategy: string): void {
   window.__think = () => {
     const G = d.G,
       k = G.king;
-    // buy the cheapest pad there are coins for (outposts weighted by strategy), else pick up the nearest coin;
-    // weapons cost twice what they did when these weights were set, so the forge counts half as much to keep them
-    // coming in the same order, and with coins for the forge four times over the next weapon comes first
+    // buy the cheapest pad there are coins for (outposts weighted by strategy, shops counted at a fifth of their
+    // price, for what they bring), else pick up the nearest coin; weapons cost twice what they did when these weights
+    // were set, so the forge counts half as much to keep them coming in the same order, and with coins for the forge
+    // four times over the next weapon comes first
     const outpostWeight = ({ expand: 0.5, turtle: 6 } as Record<string, number>)[strategy] || 1.1;
     const weight = (p: { id: string; cost: number }) =>
       p.id === 'forge' && p.cost * 4 <= G.coins
         ? 0
-        : p.cost * (p.id.startsWith('outpost') ? outpostWeight : p.id === 'forge' ? 0.4 : p.id === 'recruit' ? 0.8 : 1);
+        : p.cost *
+          (p.id.startsWith('outpost')
+            ? outpostWeight
+            : p.id.startsWith('shop')
+              ? 0.2
+              : p.id === 'forge'
+                ? 0.4
+                : p.id === 'recruit'
+                  ? 0.8
+                  : 1);
     const want = G.pads
       .filter((p) => p.visibleNow && p.cost - p.paid > 0 && p.cost - p.paid <= G.coins)
       .sort((a, b) => weight(a) - weight(b))[0];
@@ -109,7 +119,7 @@ function bot(strategy: string): void {
       }
       // a shop's till worth the ride (a full one more so) beats a coin as far away
       let till = false;
-      for (const s of d.shops()) {
+      for (const s of d.shops ? d.shops() : []) {
         const tl = s.till;
         if (!s.lv || tl.value < Math.max(150, tl.cap * 0.3)) continue;
         const v =
@@ -218,7 +228,7 @@ function bot(strategy: string): void {
     G.input.x = L > 0.3 ? dx / L : 0;
     G.input.z = L > 0.3 ? dz / L : 0;
     while (B.outposts.length < G.outposts) B.outposts.push(Math.round(G.t));
-    while (B.lands.length < G.land) B.lands.push(Math.round(G.t));
+    while (B.lands.length < (G.land ?? 0)) B.lands.push(Math.round(G.t));
   };
 }
 // runs in the page: a minute of play, then the state
@@ -253,8 +263,8 @@ function minute() {
       .join(''),
     reach: Math.round(G.reach),
     bosses: `${G.boss.slain}/${G.boss.came}`, // beaten / come
-    land: G.land,
-    shops: G.shops.map((s) => s.lv).join(''),
+    land: G.land ?? 0,
+    shops: (G.shops ?? []).map((s) => s.lv).join(''),
     camps: d
       .fronts()
       .filter((f) => f.open)

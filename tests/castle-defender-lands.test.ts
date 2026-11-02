@@ -50,21 +50,25 @@ describe('Shops', () => {
     expect(L.lotPrice(0)).toBe(L.LOT_COST);
     for (let n = 1; n < 12; n++) expect(L.lotPrice(n)).toBeGreaterThan(L.lotPrice(n - 1));
   });
-  test('each level costs more than the one before and earns more for what it costs', () => {
+  test('each level costs more than the one before, and takes more', () => {
     const lot = L.lotPrice(2);
     let price = lot;
     for (let lv = 1; lv < L.SHOP_MAX; lv++) {
       const up = L.shopUpPrice(lot, lv);
       expect(up).toBeGreaterThan(price);
-      // the extra coins a second the level brings, for each coin it costs, don't drop off
-      const gain = L.shopRate(lot, lv + 1, 1) - L.shopRate(lot, lv, 1);
-      expect(gain / up).toBeGreaterThanOrEqual(L.shopRate(lot, 1, 1) / lot / 2);
+      expect(L.shopRate(lot, lv + 1, 1)).toBeGreaterThan(L.shopRate(lot, lv, 1) * 2);
       price = up;
     }
   });
   test('a first level shop in home land pays its lot back in SHOP_PAYBACK seconds', () => {
     const lot = L.lotPrice(0);
     expect(L.shopRate(lot, 1, L.landWealth(4, 0)) * L.SHOP_PAYBACK).toBeCloseTo(lot, 6);
+  });
+  test("every shop level makes everything of the king's hit TRADE harder, adding up", () => {
+    expect(L.tradeMight([])).toBe(1);
+    expect(L.tradeMight([0, 0])).toBe(1);
+    expect(L.tradeMight([1])).toBeCloseTo(1 + L.TRADE, 9);
+    expect(L.tradeMight([5, 3, 0, 2])).toBeCloseTo(1 + 10 * L.TRADE, 9);
   });
   test('land further out is richer', () => {
     expect(L.landWealth(4, 0)).toBe(1);

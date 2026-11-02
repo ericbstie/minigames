@@ -53,6 +53,8 @@ import {
   shopRate,
   landWealth,
   closestOnRoad,
+  tradeMight,
+  TRADE,
 } from './castle-defender-lands';
 import { GameHub, type Game as HubGame } from './hub';
 import { animate, forget, listen, load, type PageServices, run, runSync, save } from './page';
@@ -2559,6 +2561,7 @@ interface Game {
   lockLands?: boolean; // the lands stay shut (the play-through's control run)
   shops: Shop[];
   lotSeq: number;
+  might: number; // how much harder than its weapon everything of the king's hits (shops)
   posts: Post[];
   toastQ: string[];
   toastT: number;
@@ -4150,6 +4153,7 @@ function newGame() {
     land: 0,
     shops: [],
     lotSeq: 0,
+    might: 1,
     posts: [],
     toastQ: [],
     toastT: 0,
@@ -5124,15 +5128,20 @@ function buyShop(s: Shop): void {
     s.b = makeShop(s);
     celebrate(s.x, s.z, shopH(1), false);
     bigText(name, s.x, 5.5, s.z);
-    if (G.shops.filter((o) => o.lv).length === 1) toast('Your first shop! Ride over its till to take what it makes.');
+    if (G.shops.filter((o) => o.lv).length === 1)
+      toast('Shops make your army stronger. Ride over a till to take its coins.');
   } else {
     s.lv++;
     upgradeBuilding(s.b!, s.lv);
     s.b!.h = shopH(s.lv);
     bigText(`${name}, level ${s.lv}`, s.x, 6, s.z);
   }
+  setMight();
+  floatText(`+${Math.round(TRADE * 100)}% damage`, s.x, 4.2, s.z, '#7dff6a', true);
+  for (const f of G.followers) burst(f.x, 1, f.z, 3, '#ffd84a');
   refreshObstacles();
 }
+const setMight = () => (G.might = tradeMight(G.shops.map((o) => o.lv)));
 // the tills fill, up to what they hold, and the king empties the one he rides over
 function updateShops(dt: number): void {
   const k = G.king;
@@ -5848,7 +5857,7 @@ function hitCastle(dmg: number, x: number, z: number): void {
 }
 function damageEnemy(e: Enemy, dmg: number): void {
   if (e.hp <= 0) return;
-  e.hp -= dmg;
+  e.hp -= dmg * G.might;
   e.hitFlash = 1;
   if (e.hp <= 0) {
     G.kills++;
@@ -7712,6 +7721,7 @@ function restoreGame(w: SavedWorld): void {
     if (sh.lv) sh.b = makeShop(sh);
     sh.till.value = Math.min(o.till, sh.lv ? tillCap(sh) : 0);
   }
+  setMight();
   refreshPosts();
   G.castle.max = castleMaxHp();
   G.castle.hp = Math.min(w.castle, G.castle.max);

@@ -655,19 +655,29 @@ describe('The first land past the border: shops', () => {
           return s.till.cap / 75;
         };
         const rates = [rate()],
+          might = [d.G.might],
           heights = [d.G.buildings.find((b) => b.fn.name.startsWith('shopGeo'))!.h];
         for (let lv = 2; lv <= 5; lv++) {
           d.buy(id);
           d.advance(1.5);
           rates.push(rate());
+          might.push(d.G.might);
           heights.push(d.G.buildings.find((b) => b.fn.name.startsWith('shopGeo'))!.h);
         }
-        return { rates, heights, lv: d.shops().find((o) => o.id === id)!.lv, pad: d.pads().some((p) => p.id === id) };
+        return {
+          rates,
+          might,
+          heights,
+          lv: d.shops().find((o) => o.id === id)!.lv,
+          pad: d.pads().some((p) => p.id === id),
+        };
       },
       first.id,
     );
     expect(got.lv).toBe(5);
     for (let i = 1; i < got.rates.length; i++) expect(got.rates[i]!).toBeGreaterThan(got.rates[i - 1]! * 2);
+    // the only shop: 10% more damage a level, from the first
+    expect(got.might.map((m) => Math.round(m * 100))).toEqual([110, 120, 130, 140, 150]);
     expect(got.heights[4]).toBeGreaterThan(got.heights[0]!);
     expect(got.pad).toBe(false); // nothing left to buy there
     await shot(page, 'shop-top-level');
