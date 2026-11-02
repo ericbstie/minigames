@@ -24,11 +24,11 @@ player's page, and that nobody can reach files on the computer running the serve
 | 1   | Medium   | One device can take every race connection and room, and fill the memory      | Fixed     |
 | 2   | Low      | A rider's pose of 1 to 8 numbers is passed on; other games read 6            | Fixed     |
 | 3   | Low      | A website open on the same computer can use the race server (DNS rebinding)  | Fixed     |
-| 4   | Low      | No Content-Security-Policy behind the hand-escaped HTML                      | To fix    |
-| 5   | Low      | Bun's development server runs on any address, not just this computer         | To fix    |
+| 4   | Low      | No Content-Security-Policy behind the hand-escaped HTML                      | Fixed     |
+| 5   | Low      | Bun's development server runs on any address, not just this computer         | Fixed     |
 | 6   | Low      | Rider names can carry C1 control characters and text-direction overrides     | Fixed     |
 | 7   | Low      | A host can pick a track that doesn't exist, and nobody in the room can race  | Fixed     |
-| 8   | Low      | The phone server's certificate is never renewed                              | To fix    |
+| 8   | Low      | The phone server's certificate is never renewed                              | Fixed     |
 | 9   | Info     | A POST whose body can't be read fails as a defect, and errors use Bun's page | Fixed     |
 | 10  | Info     | Finish times and poses are each rider's own word                             | By design |
 | 11  | Info     | Room codes aren't secret                                                     | Accepted  |
@@ -86,7 +86,8 @@ It is a `<meta>` tag, because Bun serves the bundled page itself and takes no he
 build needs it too. The exceptions are for the development server: Bun adds one small inline script there (allowed
 by its hash) and loads changed modules from `blob:` URLs, which only a script already on the page can make.
 `'unsafe-inline'` for styles is for the `style` attributes the screens set, which can't run code. `ws:` and `wss:`
-are there because older Safari doesn't count a WebSocket to the same address as `'self'`.
+are there because older Safari doesn't count a WebSocket to the same address as `'self'`. The browser tests now count
+anything the policy blocks as a page error, so a change that needs more is caught.
 
 ### 5. Bun's development server runs on any address (Low)
 
@@ -121,7 +122,7 @@ Reading a POST's body used `Effect.promise`, so a body that couldn't be read (th
 defect, and anything thrown in a request went to Bun's default error response, which on the development server is
 a page with the stack trace. Fix: an unreadable body is a 400, and a server error is a plain 500 with no details.
 
-### 10. Finish times and poses are each rider's own word (accepted)
+### 10. Finish times and poses are each rider's own word (by design)
 
 Each phone simulates its own bike, and its finish time is on its own race clock, so that lag never changes results
 (docs/bike-race.md). A changed copy of the game can therefore claim any time over 0 and win, or put its bike

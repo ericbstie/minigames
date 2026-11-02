@@ -73,7 +73,8 @@ mise run phone
 
 This serves the site over https on your Wi-Fi, with the race server, and prints the address to open on the phone
 (port 8443). Friends on the same Wi-Fi open the same address to race you. It makes a self-signed certificate in
-`.cert/` the first time, using the `openssl` command, so each phone warns that the connection is not private.
+`.cert/` the first time, using the `openssl` command, so each phone warns that the connection is not private. (It
+makes a new one when that one runs out within 30 days, and phones warn again then.)
 That is expected here: tap "Advanced" then "Proceed" on Android, or "Show Details" then "visit this website" on
 iPhone. `mise run app` works too, but it only listens on this computer, and over plain http a phone falls back to
 the lean buttons.
@@ -279,8 +280,9 @@ A ghost needs its `f`; one saved before ghosts had a `bike` is drawn on Scout.
 
 `server/serve.ts` is one Bun process behind both mise tasks. It serves the page (Bun bundles `public/index.html`
 with its scripts, styles and pictures) and runs the rooms, which live in `server/race.ts`. `bun server/serve.ts`
-listens on 127.0.0.1:8000 and rebuilds the page when a file changes; `--https` listens on every address on port
-8443 with the certificate in `.cert/`, and bundles the page once. `PORT` and `HOST` change either. It prints a
+listens on 127.0.0.1:8000 and rebuilds the page when a file changes (only while it listens on this computer alone:
+with `HOST` set to a network address it bundles the page once); `--https` listens on every address on port 8443 with
+the certificate in `.cert/`, and bundles the page once. `PORT` and `HOST` change either. It prints a
 line for each room opened, joined and closed, each race and its results.
 
 The server only keeps rooms and passes messages on. Every phone runs its own bike in its own simulation, sends

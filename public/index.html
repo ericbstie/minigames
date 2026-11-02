@@ -3,6 +3,16 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
+    <!--
+      What the page may load (docs/security-audit.md, finding 4): its own scripts, styles, fonts and pictures, and
+      connections to its own server. blob: and the sha256 are for Bun's development server only, which loads changed
+      modules from blob: URLs and adds one small inline script. A new Bun may change that script: the browser's
+      console then names the hash it wants instead.
+    -->
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; script-src 'self' blob: 'sha256-ES8VF47udzjVFFPh4RhgcgjUrADRd1Ef0GD9UagS2mY='; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self' ws: wss:; object-src 'none'; base-uri 'none'; form-action 'none'"
+    />
     <title>Pick a Game</title>
     <link rel="icon" href="data:," />
     <link rel="stylesheet" href="css/base.css" />

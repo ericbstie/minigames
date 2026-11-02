@@ -127,6 +127,12 @@ export class Page {
       const text: string = d.exception?.description ?? d.text;
       if (!ignoreErrors?.test(text)) page.errors.push(text.split('\n')[0]!);
     });
+    // something the page's Content-Security-Policy blocked: the browser says so in its own log, not the console
+    await view.cdp('Log.enable');
+    view.addEventListener('Log.entryAdded', (e) => {
+      const text: string = (e as MessageEvent).data.entry.text;
+      if (/Content Security Policy/i.test(text) && !ignoreErrors?.test(text)) page.errors.push(text);
+    });
     // the exact viewport asked for (the window itself is a little taller than its viewport)
     await view.cdp('Emulation.setDeviceMetricsOverride', { width, height, deviceScaleFactor: 1, mobile });
     if (mobile) await view.cdp('Emulation.setTouchEmulationEnabled', { enabled: true, maxTouchPoints: 5 });

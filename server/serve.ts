@@ -17,7 +17,8 @@
 // (server/race.ts) holds the rooms, and Bun's callbacks run effects with the services the server was built with.
 // main() reads PORT and HOST with Config, makes the certificate, and runs until Ctrl+C interrupts it.
 import { createSocket } from 'node:dgram';
-import { existsSync, mkdirSync } from 'node:fs';
+import { X509Certificate } from 'node:crypto';
+import { chmodSync, existsSync, mkdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import {
   type Cause,
@@ -44,6 +45,17 @@ const ROOT = join(import.meta.dir, '..');
 const CERT_DIR = join(ROOT, '.cert');
 const CERT = join(CERT_DIR, 'cert.pem');
 const KEY = join(CERT_DIR, 'key.pem');
+const CERT_DAYS = 825; // how long a new certificate is good for
+const RENEW_DAYS = 30; // one that runs out sooner than this is made again
+const LOOPBACK = ['127.0.0.1', 'localhost', '::1', '[::1]'];
+
+/**
+ * Whether the server rebuilds the page as files change (Bun's development server): over http, and only when nothing
+ * but this computer can reach it, as the development server has routes of its own (/_bun/...) for the browser on
+ * this computer and nobody else. Otherwise the page is bundled once, minified, as for phones.
+ */
+export const rebuildsPage = (https: boolean, hostname: string): boolean =>
+  !https && LOOPBACK.includes(hostname.toLowerCase());
 
 // Connections
 const IDLE = 30; // seconds without a message before a race connection is dropped (the game pings every 5 s)
@@ -465,26 +477,47 @@ const lanAddress = Effect.callback<string>((resume) => {
   s.connect(1, '10.255.255.255', () => done(s.address().address));
 });
 
-const ensureCertificate = Effect.gen(function* () {
-  if (existsSync(CERT) && existsSync(KEY)) return;
-  if (!Bun.which('openssl'))
-    return yield* new CertificateError({
-      message: 'the openssl command is needed to make a certificate for https, and it was not found.',
-    });
-  mkdirSync(CERT_DIR, { recursive: true });
-  const made = Bun.spawnSync(
-    ['openssl', 'req', '-x509', '-newkey', 'rsa:2048', '-nodes', '-days', '825'].concat([
-      '-keyout',
-      KEY,
-      '-out',
-      CERT,
-      '-subj',
-      '/CN=Pick a Game (local)',
-    ]),
-    { stdout: 'ignore', stderr: 'ignore' },
-  );
-  if (!made.success) return yield* new CertificateError({ message: 'openssl could not make a certificate.' });
-});
+/** When the certificate in dir runs out (ms since 1970), or null if it isn't there or can't be read */
+export function certificateEnds(dir: string): number | null {
+  try {
+    if (!existsSync(join(dir, 'key.pem'))) return null;
+    const ends = Date.parse(new X509Certificate(readFileSync(join(dir, 'cert.pem'))).validTo);
+    return Number.isFinite(ends) ? ends : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Makes sure dir (.cert/ unless a test says otherwise) holds a certificate and its key for https, making them if they
+ * aren't there, can't be read, or the certificate runs out within RENEW_DAYS. Only its owner can look in dir.
+ * Says whether it kept the one there, made the first one, or made one in place of an old one.
+ */
+export const ensureCertificate = (dir = CERT_DIR) =>
+  Effect.gen(function* () {
+    mkdirSync(dir, { recursive: true, mode: 0o700 });
+    chmodSync(dir, 0o700); // made by an older version, which left it open to everyone to read
+    const had = existsSync(join(dir, 'cert.pem'));
+    const ends = certificateEnds(dir);
+    if (ends !== null && ends - (yield* Clock.currentTimeMillis) > RENEW_DAYS * 86_400_000) return 'kept' as const;
+    if (!Bun.which('openssl'))
+      return yield* new CertificateError({
+        message: 'the openssl command is needed to make a certificate for https, and it was not found.',
+      });
+    const made = Bun.spawnSync(
+      ['openssl', 'req', '-x509', '-newkey', 'rsa:2048', '-nodes', '-days', String(CERT_DAYS)].concat([
+        '-keyout',
+        join(dir, 'key.pem'),
+        '-out',
+        join(dir, 'cert.pem'),
+        '-subj',
+        '/CN=Pick a Game (local)',
+      ]),
+      { stdout: 'ignore', stderr: 'ignore' },
+    );
+    if (!made.success) return yield* new CertificateError({ message: 'openssl could not make a certificate.' });
+    return had ? ('renewed' as const) : ('made' as const);
+  });
 
 const fail = (message: string) =>
   Console.error(`serve: ${message}`).pipe(Effect.andThen(Effect.sync(() => void (process.exitCode = 1))));
@@ -496,14 +529,13 @@ const main = Effect.gen(function* () {
   const everywhere = ['0.0.0.0', '::', ''].includes(hostname);
   const scheme = https ? 'https' : 'http';
   const share = everywhere ? `${scheme}://${yield* lanAddress}:${port}` : '';
-  if (https) yield* ensureCertificate;
+  const certificate = https ? yield* ensureCertificate() : 'kept';
   yield* Layer.build(
     serverLayer({
       port,
       hostname,
       tls: https ? { cert: CERT, key: KEY } : undefined,
-      // the phone server bundles the page once, minified; the local one rebuilds it as files change
-      development: !https,
+      development: rebuildsPage(https, hostname),
     }).pipe(Layer.provide(settingsLayer({ share }))),
   );
   if (https) {
@@ -514,6 +546,8 @@ const main = Effect.gen(function* () {
     yield* Console.log(
       'Phones warn about the certificate the first time; that is expected here. Ctrl+C stops the server.',
     );
+    if (certificate === 'renewed')
+      yield* Console.log('The old certificate had run out (or was about to), so this is a new one: phones warn again.');
   } else {
     const local =
       ['127.0.0.1', 'localhost'].includes(hostname) || everywhere

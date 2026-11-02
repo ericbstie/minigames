@@ -130,3 +130,9 @@ and the docs. Only the Ant Sort level data is left out, as it is one long line o
 [security-audit.md](security-audit.md) is the security audit of November 2026: what could go wrong, what was fixed,
 and what is left as it is on purpose (such as each phone's finish time being its own word). The race server's
 limits and checks are in [bike-race.md](bike-race.md#connections).
+
+The page has a Content-Security-Policy, a `<meta>` tag at the top of `public/index.html`: it loads only its own
+scripts, styles, fonts and pictures, and connects only to its own server. Anything new from elsewhere (a font from
+a CDN, say) has to be let in there, and the browser tests fail on anything it blocks (`page.errors`). It also lets in
+the one inline script Bun's development server adds, by its hash; if a Bun upgrade changes that script, `mise run app`
+shows a Content-Security-Policy error in the browser's console with the new hash to put in its place.

@@ -138,6 +138,19 @@ describe('the page', () => {
     expect(html).toContain('Bike Race');
   });
 
+  test('the page carries its Content-Security-Policy, and no script of its own', () => {
+    const csp = html.match(/<meta[^>]+http-equiv="Content-Security-Policy"[^>]+content="([^"]+)"/)?.[1] ?? '';
+    const rules = new Map(csp.split(';').map((r) => [r.trim().split(' ')[0], r.trim().split(' ').slice(1)]));
+    expect(rules.get('default-src')).toEqual(["'self'"]);
+    expect(rules.get('script-src')).toContain("'self'");
+    expect(rules.get('script-src')!.filter((v) => /unsafe|\*|https?:|data:/.test(v))).toEqual([]);
+    expect(rules.get('object-src')).toEqual(["'none'"]);
+    expect(rules.get('base-uri')).toEqual(["'none'"]);
+    expect(rules.get('connect-src')).toContain("'self'");
+    // so nothing has to be let in by 'unsafe-inline': every script is a file of the site's own
+    expect(html.match(/<script(?![^>]*\ssrc=)[^>]*>/g)).toBeNull();
+  });
+
   test('the bundled script is served as JavaScript with an ETag, and an unchanged one answers 304', async () => {
     const src = html.match(/<script[^>]+src="([^"]+\.js)"/)?.[1];
     expect(src).toBeTruthy();
