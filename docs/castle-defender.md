@@ -147,14 +147,17 @@ lands open. Everything in them works the way the rest of the game does, by ridin
 
 **Shops** (the market roads, 75 paces out, usually the third or fourth outpost). A lot for sale shows beside every
 outpost standing, and beside each one built after (`addLot`): 8 paces off the outpost's road, further in towards the
-castle, its door facing the road, clear of roads, buildings, pads and other lots (`lotFree`). Each lot costs 1.45 times
-the one before (3,000 first). Buying it opens a shop (`buyShop`), whose kind and look come from the biome it stands in:
-a bakery in the canyon, a fur trader in the Frozen Pass, a herbalist in the Mire, a smeltery in the Ashlands. The
-shop fills the till in front of its door with coins, and the king empties it by riding over it, the way he empties the
-gold plot. A till holds 75 seconds of takings and then stops filling, so shops pay the king for riding round his land.
-The same pad, now beside the shop, buys four more levels, each costing twice the last and earning 2.2 times as much (a
-first level shop earns its lot back in a minute); the shop grows with them (crates, an upper floor, a side room, a
-turret). Shops further out, in richer land, earn more for the same price (`landWealth`).
+castle, its door facing the road, clear of roads, buildings, pads and other lots (`lotFree`). Each lot costs 1.5 times
+the one before (20,000 first, which the gold boys bring in a few minutes by then). Buying it opens a shop
+(`buyShop`), whose kind and look come from the biome it stands in: a bakery in the canyon, a fur trader in the Frozen
+Pass, a herbalist in the Mire, a smeltery in the Ashlands. Every shop level makes everything of the king's hit 10%
+harder (`G.might`, from `tradeMight`, adding up over all the shops; `damageEnemy` multiplies by it): with coins
+coming in by the bag, that is what makes a shop worth its price. A shop also fills the till in front of its door with
+coins, and the king empties it by riding over it. A till holds 75 seconds of takings and then stops filling, so shops
+pay the king for riding round his land. The same pad, now beside the shop, buys four more levels, each costing 2.5
+times the last and earning 2.2 times as much (a first level shop takes its lot's price in two minutes); the shop grows
+with them (crates, an upper floor, a side room, a turret). Shops further out, in richer land, take more for the same
+price (`landWealth`).
 
 ## Opening and leaving
 
