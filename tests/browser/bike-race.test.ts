@@ -393,9 +393,9 @@ describe('Every bike rides in the browser', () => {
     test(`${bike} finishes Slag Slide`, async () => {
       // fast-forward the run in the page with the same code the game uses
       const finished = await page.eval((b) => {
-        const C = window.BikeRaceCore;
-        const L = C.levelById('magma-4');
-        const sim = new C.Sim(C.buildLevel(C.worldOf(L.id), L));
+        const C = window.BikeRace!._debug().C;
+        const L = C.levelById('magma-4')!;
+        const sim = new C.Sim(C.buildLevel(C.worldOf(L.id)!, L));
         const me = sim.addBike(b);
         me.running = true;
         while (!me.finished && !me.crashed && sim.t < 90) {

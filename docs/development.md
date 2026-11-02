@@ -24,8 +24,7 @@ Each task runs `bun install` first. Without mise, the same commands work with Bu
 public/index.html        the page; its one script is js/main.ts, which Bun bundles with the CSS and pictures
 public/js/main.ts        imports every game and registers it with the hub
 public/js/hub.ts         the menu and the #game routing (registerGame, GameHub)
-public/js/<game>*.ts     one game each: Ant Sort, Castle Defender, Water Sort
-public/js/bike-race*.js  Bike Race, still JavaScript until it is converted (bundled, not type checked)
+public/js/<game>*.ts     one game each: Ant Sort, Bike Race, Castle Defender, Water Sort
 public/js/globals.d.ts   what the page puts on window (the debug hooks the tests use)
 server/serve.ts          Bun.serve: the bundled page, the race server's WebSocket and event stream, https
 server/race.ts           Bike Race rooms and races, with no networking in it
@@ -69,5 +68,5 @@ yet. When a release has it, add it to the `check` and `ci` tasks.
 
 ## Formatting
 
-`bun fmt` formats with the settings in `bunfig.toml` (120 columns, single quotes). The Bike Race scripts are left
-out until they are converted, and so is the Ant Sort level data, which is one long line of numbers.
+`bun fmt` formats with the settings in `bunfig.toml` (120 columns, single quotes): the code, the page, the styles
+and the docs. Only the Ant Sort level data is left out, as it is one long line of numbers.

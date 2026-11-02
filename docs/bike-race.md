@@ -81,21 +81,23 @@ the lean buttons.
 ## Files
 
 ```
-public/js/bike-race-core.js   physics, track builder, worlds and levels, bikes, computer rider, ghost encoding
-public/js/bike-race-pieces.js the level editor's track pieces and its level builder (docs/bike-race-editor.md)
-public/js/bike-race-art.js    canvas drawing: world backdrops, the track line, lava, loops, flags, bikes, riders, particles
-public/js/bike-race-net.js    the connection to the race server: WebSocket or event stream, reconnecting
-public/js/bike-race.js        the game: saves, sound, tilt and touch input, camera and loop, sessions, HUD, menus
-public/js/bike-race-editor.js the level editor: My levels and the build screen (docs/bike-race-editor.md)
+public/js/bike-race-core.ts   physics, track builder, worlds and levels, bikes, computer rider, ghost encoding
+public/js/bike-race-pieces.ts the level editor's track pieces and its level builder (docs/bike-race-editor.md)
+public/js/bike-race-art.ts    canvas drawing: world backdrops, the track line, lava, loops, flags, bikes, riders, particles
+public/js/bike-race-net.ts    the connection to the race server: WebSocket or event stream, reconnecting
+public/js/bike-race.ts        the game: saves, sound, tilt and touch input, camera and loop, sessions, HUD, menus
+public/js/bike-race-editor.ts the level editor: My levels and the build screen (docs/bike-race-editor.md)
 public/index.html             #br-app markup (canvas, HUD, touch areas, screens, modals)
 public/css/styles.css         the "Bike Race" section, all classes start with br-
 public/js/hub.ts              routes #bike-race and #bike-race/<code> to the game
-public/js/main.ts             loads the Bike Race scripts in order (bike-race-globals.ts puts the core on window)
+public/js/main.ts             registers bike-race.ts with the hub as the `br` game
 public/assets/img/bike-race.jpg   menu card picture, made by tools/render-bike-race-card.ts
 server/serve.ts               the site server and race server behind `mise run app` and `mise run phone`
 server/race.ts                the rooms and races
-tools/check-bike-levels.js    proves every bike can finish every level and suggests par times
-tools/check-bike-pieces.js    checks the editor's pieces and that tracks made of them can be ridden
+tools/check-bike-levels.ts    prints every level's times on every bike and suggests par times
+tools/bike-levels.ts          the computer rider's riding styles, shared by the level checker and its test
+tests/bike-race-levels.test.ts   every bike finishes every level in all seven riding styles
+tests/bike-race-pieces.test.ts   the editor's pieces and edits, and that tracks made of them can be ridden
 tests/browser/bike-race.test.ts          phone-sized browser tests for the garage and the sheets around it
 tests/browser/bike-race-editor.test.ts   phone-sized browser tests for the level editor
 tests/browser/bike-race-online.test.ts   live races between phones in the browser, and the no-server fallback
@@ -105,7 +107,10 @@ tools/render-bike-race-card.ts    redraws the menu card picture with the game's 
 
 ## How the code fits together
 
-- `bike-race-core.js` has no DOM code. It loads in the page as `window.BikeRaceCore` and in Bun with `require`.
+- All six files are ES modules in strict TypeScript and import each other; nothing but the test hooks
+  (`window.BikeRace`, `window.BikeRaceEditor`, typed in `globals.d.ts`) is put on `window`.
+- `bike-race-core.ts` has no DOM code. Its typed exports (`Level`, `Sim`, `Bike`, `BikeType`, `LevelDef`,
+  `BotConfig`, ...) are shared by the game, the editor, the tests and the tools.
   - `buildLevel(world, def)` walks a list of track pieces (`flat`, `hill`, `bumps`, `kicker`, `gap`, `table`,
     `ledge`, `step`, `loop`, `ice`, ...) and returns the terrain, finish line, checkpoints and drawing data.
   - `Sim` steps every bike at a fixed 1/120 s with 5 substeps. `Bike` is a chassis plus two sprung wheels, and
@@ -123,7 +128,7 @@ tools/render-bike-race-card.ts    redraws the menu card picture with the game's 
   - `botInput(bike, cfg)` is the computer rider. The level checker, the menu background rider, `?autopilot`
     and the computer racers all use it.
   - Ghosts are 20 frames a second of `[x, y, angle]`, packed by `encodeGhost` / `decodeGhost`.
-- `bike-race-art.js` (`window.BikeRaceArt`) only draws. It takes a `Camera` and plain poses, and never touches
+- `bike-race-art.ts` only draws. It takes a `Camera` and plain poses (`BikePose`), and never touches
   the simulation.
   - The track is a thin line (`theme.line` with a darker `theme.lineEdge`, plus a pale `halo` on the dark moon
     and magma worlds) over the backdrop. Nothing is filled in under it. Ice stretches are pale blue. Pit walls and
@@ -135,12 +140,12 @@ tools/render-bike-race-card.ts    redraws the menu card picture with the game's 
     and bottom colour, a lit `rim`, and a `deco` drawn along the ridge (trees, windmills, arches, rock columns,
     pines, domes, aerials, craters, chimneys, a volcano, glowing cracks).
   - The finish is one pole with a chequered flag that ripples. The start has a small post.
-- The camera (`followCamera` in `bike-race.js`) zooms out a little in the air and, when the ground below is far
+- The camera (`followCamera` in `bike-race.ts`) zooms out a little in the air and, when the ground below is far
   away (a big jump or drop), pulls back and lowers itself so the landing stays on screen.
-- `bike-race.js` (`window.BikeRace`) owns everything else. A *session* (`makeSession(mode, levelId)`) holds one
+- `bike-race.ts` owns everything else and is the game the hub shows (`show`, `hide`). A _session_ (`makeSession(mode, levelId)`) holds one
   run: the sim, your bike, the ghost and the phase (`ready`, `countdown`, `run`, `crashed`, `finished`). The modes
   are `solo`, `cpu`, `online` and `attract` (the menu background).
-- Tilt lives in the "Input" section of `bike-race.js`. `tiltAngle(beta, gamma, screenAngle)` works out which way
+- Tilt lives in the "Input" section of `bike-race.ts`. `tiltAngle(beta, gamma, screenAngle)` works out which way
   is down on the screen from the `deviceorientation` angles, so it reads the steering-wheel turn however far the
   phone is tipped back. Full lean is 14° (`TILT_FULL`), with a 1.5° dead zone around level (`TILT_DEAD`). `tilt.state` is `idle`, `asking`,
   `waiting`, `on`, `denied`, `nosensor` or `insecure`, and `refreshControls()` picks the touch layout from it.
@@ -151,35 +156,35 @@ The garage opens from the home menu, and from the pause, crash and result sheets
 on a turntable with its perk, a short blurb, four stat bars and whether you ride it. Below are the five bikes;
 on the right are your rider name and ten paints. Picks save as soon as they are made.
 
-| Bike | Stars | Perk | Tuning (changes from `BASE` in `bike-race-core.js`) |
-|---|---|---|---|
-| Scout | 0 | All-rounder | none |
-| Hopper | 10 | Big air | light, softer long-travel springs, 86% gravity, a bit less grip |
-| Twister | 25 | Fast flips | strong, fast lean: a flip takes 0.63 s against 0.82 s |
-| Bulldog | 45 | Grip | heavy, grippy tyres (ice grip 0.55 against 0.28), strong pull, slow lean, falls a bit faster |
-| Comet | 70 | Top speed | top speed 18 m/s against 15.6, quick off the line, big wheelies, slides on ice |
+| Bike    | Stars | Perk        | Tuning (changes from `BASE` in `bike-race-core.ts`)                                          |
+| ------- | ----- | ----------- | -------------------------------------------------------------------------------------------- |
+| Scout   | 0     | All-rounder | none                                                                                         |
+| Hopper  | 10    | Big air     | light, softer long-travel springs, 86% gravity, a bit less grip                              |
+| Twister | 25    | Fast flips  | strong, fast lean: a flip takes 0.63 s against 0.82 s                                        |
+| Bulldog | 45    | Grip        | heavy, grippy tyres (ice grip 0.55 against 0.28), strong pull, slow lean, falls a bit faster |
+| Comet   | 70    | Top speed   | top speed 18 m/s against 15.6, quick off the line, big wheelies, slides on ice               |
 
 There are 90 stars in all. What the computer rider measures on flat ground (top speed, 0 to 10 m/s, time for
 one flip at full lean from a standstill in the air, and time and distance in the air off an 8 m long, 2 m high
 ramp with no drop after it, taken at 11 m/s):
 
-| Bike | Top speed | 0–10 m/s | Flip | Air |
-|---|---|---|---|---|
-| Scout | 15.6 m/s | 1.57 s | 0.82 s | 0.56 s, 5.7 m |
-| Hopper | 15.6 m/s | 1.46 s | 0.82 s | 0.69 s, 7.1 m |
-| Twister | 15.6 m/s | 1.57 s | 0.63 s | 0.57 s, 5.8 m |
-| Bulldog | 15.1 m/s | 1.39 s | 0.98 s | 0.54 s, 5.5 m |
-| Comet | 18.0 m/s | 1.27 s | 0.82 s | 0.58 s, 5.9 m |
+| Bike    | Top speed | 0–10 m/s | Flip   | Air           |
+| ------- | --------- | -------- | ------ | ------------- |
+| Scout   | 15.6 m/s  | 1.57 s   | 0.82 s | 0.56 s, 5.7 m |
+| Hopper  | 15.6 m/s  | 1.46 s   | 0.82 s | 0.69 s, 7.1 m |
+| Twister | 15.6 m/s  | 1.57 s   | 0.63 s | 0.57 s, 5.8 m |
+| Bulldog | 15.1 m/s  | 1.39 s   | 0.98 s | 0.54 s, 5.5 m |
+| Comet   | 18.0 m/s  | 1.27 s   | 0.82 s | 0.58 s, 5.9 m |
 
 Bulldog climbs an icy hill in 5.3 s where Scout takes 6.9 s. Hopper is the slowest on the moon, because it
 floats too long there.
 
-- Bikes live in `BIKES` in `bike-race-core.js`. Each has `id`, `name`, `stars` (total needed to unlock), `perk`,
+- Bikes live in `BIKES` in `bike-race-core.ts`. Each has `id`, `name`, `stars` (total needed to unlock), `perk`,
   `blurb` and `tune`, which is merged over `BASE`. Two tuning values were added for the garage: `iceMu` (grip on
   ice) and `grav` (multiplies the level's gravity, read through `bike.gravity`).
 - `bikeStats(bike)` turns the tuning into the four 0 to 1 bars (Speed, Grip, Flips, Air). `flipTime(tune)` is
   the time for one full flip.
-- Looks are in `SHAPES` in `bike-race-art.js`: tyres, rims, springs, fenders, frame, fairing and how far the
+- Looks are in `SHAPES` in `bike-race-art.ts`: tyres, rims, springs, fenders, frame, fairing and how far the
   rider tucks. Paints are `PAINTS` (10 of them).
 - Locked bikes are drawn as grey silhouettes with a padlock and "N more stars". Tapping one shakes it.
 - A bike you've unlocked but not looked at yet has a "New" tag in the garage, and the home menu's Garage button
@@ -194,9 +199,10 @@ floats too long there.
 ## Checking levels
 
 ```sh
-bun tools/check-bike-levels.js                  # every level with every bike, as a table of times
-bun tools/check-bike-levels.js --robust         # and seven riding styles each (about 20 s)
-bun tools/check-bike-levels.js moon-3 --bike=comet --verbose
+bun tools/check-bike-levels.ts                  # every level with every bike, as a table of times
+bun tools/check-bike-levels.ts --robust         # and seven riding styles each (about 20 s)
+bun tools/check-bike-levels.ts moon-3 --bike=comet --verbose
+bun test tests/bike-race-levels.test.ts         # the same seven styles as a test: every run has to finish
 ```
 
 It prints each bike's finish time, or where it crashed and on which track piece, and exits with an error if any
@@ -206,7 +212,8 @@ suggested par that differs from the level list: the starter bike's time plus 0.5
 Hopper misses most of the moon pars). Run it again, with `--robust`, after changing a track or any bike's tuning.
 
 `--robust` also rides steadier, twitchier, slower and faster lines, so a level that only works for one exact
-line shows up. Every bike finishes every level in all seven styles.
+line shows up. Every bike finishes every level in all seven styles, and `tests/bike-race-levels.test.ts` (part of
+`bun test`) keeps it that way. The styles live in `tools/bike-levels.ts`, which both use.
 
 ## Browser tests
 
@@ -271,7 +278,7 @@ The game connects when Multiplayer opens, and drops the connection when you leav
 - A WebSocket at `/ws` first. If it won't open, an event stream from `GET /net/events` (its first message is
   `{ t: 'conn', sid }`) plus `POST /net/send?sid=...` with a JSON array of messages. Both carry the same
   messages. The fallback is there because an iPhone may refuse a WebSocket to a self-signed certificate even
-  after the page was allowed. Which one is in use: `BikeRaceNet.transport`.
+  after the page was allowed. Which one is in use: `Net.transport` (`bike-race-net.ts`).
 - The game pings every 5 s. The server drops a connection that says nothing for 30 s; the game drops one that
   hears nothing for 15 s, and checks straight away when the page shows again.
 - A dropped connection retries by itself (`Net.retrying`, "Reconnecting…"). `welcome` hands out a key, kept in
@@ -283,26 +290,26 @@ The game connects when Multiplayer opens, and drops the connection when you leav
 
 All are JSON objects with a type in `t`.
 
-| The game sends | |
-|---|---|
-| `hello` name, paint, bike, key | first, and again when the name, paint or bike changes |
-| `list` | asks for the open rooms (every 3 s in the lobby) |
-| `create` level · `join` code · `leave` | rooms |
-| `level` level · `start` | host only |
-| `state` p, c | the pose `[x, y, angle, wheel spin, lean, flags]` (flags: 1 crashed, 2 finished) and the race clock |
-| `finish` time · `retire` | crossed the line, or gave up the race but stays in the room |
-| `ping` c | answered with `pong` |
+| The game sends                         |                                                                                                     |
+| -------------------------------------- | --------------------------------------------------------------------------------------------------- |
+| `hello` name, paint, bike, key         | first, and again when the name, paint or bike changes                                               |
+| `list`                                 | asks for the open rooms (every 3 s in the lobby)                                                    |
+| `create` level · `join` code · `leave` | rooms                                                                                               |
+| `level` level · `start`                | host only                                                                                           |
+| `state` p, c                           | the pose `[x, y, angle, wheel spin, lean, flags]` (flags: 1 crashed, 2 finished) and the race clock |
+| `finish` time · `retire`               | crossed the line, or gave up the race but stays in the room                                         |
+| `ping` c                               | answered with `pong`                                                                                |
 
-| The server sends | |
-|---|---|
-| `welcome` id, key, resumed, share | after the first `hello`; `share` is its Wi-Fi address when it listens there |
-| `rooms` rooms | code, host name, level, count, state |
+| The server sends                                               |                                                                                                                                                                   |
+| -------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `welcome` id, key, resumed, share                              | after the first `hello`; `share` is its Wi-Fi address when it listens there                                                                                       |
+| `rooms` rooms                                                  | code, host name, level, count, state                                                                                                                              |
 | `room` code, host, level, state, players, racers, ending, last | whenever anything in the room changes; state is `lobby`, `countdown` or `race`; players have id, name, paint, bike, wins, away; `last` is the last race's results |
-| `left` · `error` msg · `replaced` | |
-| `countdown` level, racers, seconds | the race starts; GO is `seconds` later |
-| `state` id, p, c | another racer's pose |
-| `finished` id, time · `ending` seconds | someone crossed the line; the closing clock started |
-| `results` level, results | id, name, paint, bike, time (null for DNF), fastest first |
+| `left` · `error` msg · `replaced`                              |                                                                                                                                                                   |
+| `countdown` level, racers, seconds                             | the race starts; GO is `seconds` later                                                                                                                            |
+| `state` id, p, c                                               | another racer's pose                                                                                                                                              |
+| `finished` id, time · `ending` seconds                         | someone crossed the line; the closing clock started                                                                                                               |
+| `results` level, results                                       | id, name, paint, bike, time (null for DNF), fastest first                                                                                                         |
 
 ### In the game
 
@@ -328,7 +335,9 @@ All are JSON objects with a type in `t`.
   click listener on `#br-app` the first time anything in the game is tapped. Chrome has this function too.
   Headless Chrome answers "denied" unless the test grants the `accelerometer` and `gyroscope` permissions, and
   `DeviceOrientation.setDeviceOrientationOverride` over CDP simulates turning the phone.
-- Script order in `main.ts` matters: the core (through `bike-race-globals.ts`), art, net, then `bike-race.js`.
+- The game and the editor need each other. `bike-race.ts` imports the editor and hands it `editorApi` with
+  `Editor.connect()` at load; the editor only imports types from `bike-race.ts`, so there is no import cycle at
+  run time.
 - `main.ts` routes once every game has loaded. Code that runs on `#bike-race` has to cope with being called after
   load.
 - Chrome won't paint an SVG gradient defined inside a hidden element. That's why `#br-app` has its own
@@ -339,7 +348,7 @@ All are JSON objects with a type in `t`.
   lands on the kicker's face, which stops it dead or throws it on its head. Leave at least 8 m of flat before the
   next kicker, and 14 m after a 5 m step down. That is why Slag Slide, Core Meltdown, Ember Gauntlet and Eruption
   have the extra flats they do.
-- Changing a bike's tuning changes every level for it. Run `bun tools/check-bike-levels.js --robust` after.
+- Changing a bike's tuning changes every level for it. Run `bun tools/check-bike-levels.ts --robust` after.
 - A phone stops a page in the background, so its bike stops too: a locked screen during a live race pauses that
   rider's clock and bike, and the others see them fade until they come back.
 - Invite links use the page's own address. A page opened as localhost would hand out a link nobody else can open,
@@ -356,7 +365,7 @@ bun tools/render-bike-race-card.ts --level=ember-1 --t=5 --out=/tmp/card.jpg
 ```
 
 It races three computer riders (Comet, Scout and Twister, held to the same speed so they stay together) on a real
-level, stops the clock at `--t` seconds and draws that moment with `bike-race-art.js` at 1280x960, then saves it
+level, stops the clock at `--t` seconds and draws that moment with `bike-race-art.ts` at 1280x960, then saves it
 as a 640x480 JPEG. Run it again after changing the art so the card matches the game.
 
 ## On a real phone
@@ -365,7 +374,7 @@ Everything above is tested in a headless browser posing as a phone. These need a
 phone on `mise run phone`:
 
 - Tilt feel: full lean at 14° and the 1.5° dead zone. Is a full flip easy to start and stop? Too twitchy riding
-  along? `TILT_FULL` and `TILT_DEAD` in `bike-race.js`, and `AIR_SNAP`, `GROUND_SPIN` and each bike's `lean` and
+  along? `TILT_FULL` and `TILT_DEAD` in `bike-race.ts`, and `AIR_SNAP`, `GROUND_SPIN` and each bike's `lean` and
   `leanMaxW` in the core, are the knobs. The springs are `kU`, `cU` and `travelUp` in `BASE`.
 - iPhone: the motion permission prompt on the first tap, and what happens after "Don't Allow" (lean arrows and
   the "Motion access is off" line in the pause menu).

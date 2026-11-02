@@ -12,26 +12,47 @@ const T = +arg('t', '5');
 const OUT = arg('out', join(import.meta.dir, '..', 'public', 'assets', 'img', 'bike-race.jpg'));
 const JS = join(import.meta.dir, '..', 'public', 'js');
 
-// The drawing code as plain scripts on a blank page with a canvas
+// The core and the drawing code, bundled into one plain script that puts them on window for draw() below. The
+// entry is made up here, next to the modules it imports.
+const entry = join(JS, 'bike-race-card-entry.ts');
+const bundle = await Bun.build({
+  entrypoints: [entry],
+  files: {
+    [entry]: `import * as C from './bike-race-core';
+import * as A from './bike-race-art';
+Object.assign(window, { BikeRaceCore: C, BikeRaceArt: A });`,
+  },
+  format: 'iife',
+  target: 'browser',
+});
+if (!bundle.success) throw new AggregateError(bundle.logs, 'Could not bundle the Bike Race core and drawing code');
+const pageJs = await bundle.outputs[0]!.text();
+
+// That script on a blank page with a canvas
 const server = Bun.serve({
   port: 0,
   hostname: '127.0.0.1',
   routes: {
     '/': new Response(
       '<!doctype html><body style="margin:0"><canvas id="c" width="1280" height="960"></canvas>' +
-        '<script src="core.js"></script><script src="art.js"></script></body>',
+        '<script src="card.js"></script></body>',
       { headers: { 'Content-Type': 'text/html' } },
     ),
-    '/core.js': Bun.file(join(JS, 'bike-race-core.js')),
-    '/art.js': Bun.file(join(JS, 'bike-race-art.js')),
+    '/card.js': new Response(pageJs, { headers: { 'Content-Type': 'text/javascript' } }),
   },
 });
 
+/** What the bundled script puts on window */
+interface CardWindow {
+  BikeRaceCore: typeof import('../public/js/bike-race-core');
+  BikeRaceArt: typeof import('../public/js/bike-race-art');
+}
+
 // runs in the page
 function draw(levelId: string, tFreeze: number): string {
-  const { BikeRaceCore: C, BikeRaceArt: A } = window as any;
-  const def = C.levelById(levelId),
-    world = C.worldOf(levelId),
+  const { BikeRaceCore: C, BikeRaceArt: A } = window as unknown as CardWindow;
+  const def = C.levelById(levelId)!,
+    world = C.worldOf(levelId)!,
     level = C.buildLevel(world, def);
   const sim = new C.Sim(level);
   // three bikes held to the same speed so they stay in one picture, all ridden by the computer
@@ -63,7 +84,13 @@ function draw(levelId: string, tFreeze: number): string {
   A.drawMarkers(g, cam, level, 0, false);
   for (const r of riders.slice().reverse()) {
     const b = r.b;
-    const pose = { x: b.c.x, y: b.c.y, a: b.c.a, lean: b.leanVis, wheels: b.wheels.map((W: any) => [W.x, W.y, W.phi]) };
+    const pose = {
+      x: b.c.x,
+      y: b.c.y,
+      a: b.c.a,
+      lean: b.leanVis,
+      wheels: b.wheels.map((W): [x: number, y: number, phi: number] => [W.x, W.y, W.phi]),
+    };
     A.drawBike(g, cam, pose, { bike: r.bike, paint: r.paint });
   }
   A.drawHazards(g, cam, level, 0);

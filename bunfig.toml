@@ -1,15 +1,5 @@
 [fmt]
 printWidth = 120
 singleQuote = true
-# Bike Race is converted to TypeScript once its level editor lands. Until then its files, and the page, styles and
-# doc it shares with the editor work, keep their own layout so the two don't clash.
 # The Ant Sort pictures are one long line of data.
-ignorePatterns = [
-  "public/js/bike-race*.js",
-  "tools/*bike*.js",
-  "public/index.html",
-  "public/css/styles.css",
-  "docs/bike-race.md",
-  "docs/bike-race-editor.md",
-  "public/js/ant-sort-levels.json",
-]
+ignorePatterns = ["public/js/ant-sort-levels.json"]
