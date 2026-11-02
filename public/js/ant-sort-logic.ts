@@ -48,6 +48,61 @@ export function simLevel(L: LevelData): SimLevel {
   };
 }
 
+/**
+ * A level part played, as a saved game keeps it: board has a character per picture cell, row by row, '1' for a block
+ * still there and '0' for none; columns says how many blocks each column has sent to the slots; slots is what each
+ * slot still has the ants fetch.
+ */
+export interface SimSave {
+  board: string;
+  columns: readonly number[];
+  slots: readonly (Chunk | null)[];
+}
+
+/** The position of a Sim, to save */
+export function simSave(sim: Sim): SimSave {
+  let board = '';
+  for (let y = 0; y < sim.H; y++)
+    for (let x = 0; x < sim.W; x++) board += sim.cell[(y + 1) * sim.PW + x + 1] === EMPTY ? '0' : '1';
+  return { board, columns: sim.colPtr.slice(), slots: sim.slots.map((s) => s && { c: s.c, n: s.n }) };
+}
+
+/**
+ * The Sim for a saved position of a level, or null when the save can't be one: blocks where the picture has none,
+ * columns run past their end, a colour the level doesn't have on a slot, or more or fewer blocks of a colour left on
+ * the board than the slots and the columns still send ants for (a level always has exactly as many).
+ */
+export function simFromSave(level: SimLevel, s: SimSave): Sim | null {
+  const { W, H, ncolors, columns } = level;
+  if (s.board.length !== W * H || s.columns.length !== columns.length || s.slots.length !== SLOTS) return null;
+  const grid = new Uint8Array(W * H),
+    owed = new Array<number>(ncolors).fill(0);
+  for (let i = 0; i < W * H; i++) {
+    const ch = s.board[i],
+      v = level.grid[i];
+    if (ch === '0') grid[i] = EMPTY;
+    else if (ch === '1' && v !== EMPTY) {
+      grid[i] = v;
+      owed[v]++;
+    } else return null;
+  }
+  for (const [i, ptr] of s.columns.entries()) {
+    if (!Number.isInteger(ptr) || ptr < 0 || ptr > columns[i].length) return null;
+    for (const ch of columns[i].slice(ptr)) owed[ch.c] -= ch.n;
+  }
+  for (const slot of s.slots) {
+    if (!slot) continue;
+    if (!Number.isInteger(slot.c) || slot.c < 0 || slot.c >= ncolors || !Number.isInteger(slot.n) || slot.n < 1)
+      return null;
+    owed[slot.c] -= slot.n;
+  }
+  if (owed.some((n) => n !== 0)) return null;
+  const sim = new Sim({ ...level, grid });
+  sim.colPtr = s.columns.slice();
+  sim.slots = s.slots.map((slot) => slot && { c: slot.c, n: slot.n });
+  return sim;
+}
+
 export class Sim {
   W!: number;
   H!: number;

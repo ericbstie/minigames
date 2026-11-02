@@ -1,13 +1,14 @@
 // Browser checks for Ant Sort: the level picker, a level played to a win through the blocks on screen (the order
 // comes from the solver in tests/ant-sort-solve.ts), the result sheets for a win and a loss, the in-game menu, the
-// way back to the main menu, stars saved by earlier versions of the game, and the per-user store. It plays the real
-// page in Bun's headless browser, on a phone-sized screen.
+// way back to the main menu, stars saved by earlier versions of the game, the per-user store, and the level in
+// progress coming back after a reload. It plays the real page in Bun's headless browser, on a phone-sized screen.
 //
 // That browser draws WebGL in software, at a few frames a second once a level is up, so after the first block the
 // test runs the game faster through window.AntSort._speed. Each click waits until the ants have fetched all they can
 // (the `quiet` state), so the game takes the same steps as the solver's Sim whatever the speed. Even so, winning
 // level 1 takes the best part of a minute.
 import { afterAll, expect, setDefaultTimeout, test } from 'bun:test';
+import { type SimSave, simSave } from '../../public/js/ant-sort-logic';
 import { LEVELS, loseFast, solve, startOf } from '../ant-sort-solve';
 import { openPage, startSite, type Page } from '../support/browser';
 
@@ -19,6 +20,10 @@ const FAST = 100;
 const PHONE = { width: 390, height: 844, mobile: true };
 
 const debug = (page: Page) => page.eval(() => window.AntSort!._debug());
+const PLAY = 'antsort.play.v1';
+/** The level in progress, as saved */
+const savedPlay = (page: Page): Promise<SimSave & { level: string }> =>
+  page.eval((k) => JSON.parse(localStorage.getItem(k) ?? 'null'), PLAY);
 
 /** Ant Sort on a phone, on its level picker, with whatever is saved in localStorage */
 async function open(storage?: Record<string, string>): Promise<Page> {
@@ -134,6 +139,7 @@ test('Ant Sort: the picker, level 1 played to a win, the result sheet, and back 
   expect(await page.text('#rText')).toBe('You earned a star. 1 of 20 collected.');
   expect(await page.text('#rMain')).toBe('Next level');
   expect(await page.eval(() => localStorage.getItem('antsort.stars.v1'))).toBe('["Rainbow"]');
+  expect(await savedPlay(page)).toBeNull(); // a level won is no longer in progress
   await Bun.sleep(600); // the sheet's entry animation
   await page.screenshot('ant-sort-win.jpg');
 
@@ -181,6 +187,7 @@ test('Ant Sort: the in-game menu, a level lost by filling the slots, and Retry',
   expect(await page.eval(() => document.getElementById('result')!.className)).toContain('lose');
   expect(await page.text('#rTitle')).toBe('Out of space');
   expect(await page.text('#rMain')).toBe('Retry');
+  expect(await savedPlay(page)).toBeNull(); // nor is a level lost
   await Bun.sleep(600);
   await page.screenshot('ant-sort-lose.jpg');
 
@@ -282,4 +289,96 @@ test('Ant Sort: stars saved before, saves with odd entries, and the per-user sto
   expect(await page.eval(() => (window.claude as FakeStore).stopped)).toBe(1);
   expect(page.errors).toEqual([]);
   page.close();
+});
+
+test('Ant Sort: the level being played comes back after a reload, and goes when left for the levels', async () => {
+  const page = await open();
+  await startLevel(page, 0);
+  // saved as it starts
+  expect(await savedPlay(page)).toEqual({ level: LEVELS[0]!.name, ...simSave(startOf(0)) });
+
+  // a few taps, played alongside on the same rules; each tap is saved as it is made
+  await page.eval((k) => window.AntSort!._speed(k), FAST);
+  const taps = solve(startOf(0))!;
+  const sim = startOf(0);
+  await play(page, taps.slice(0, 4));
+  for (const [k, col] of taps.slice(0, 4).entries()) {
+    sim.pop(col);
+    if (k < 3) sim.settle(); // the save is made as the last tap is, before its ants set off
+  }
+  expect(await savedPlay(page)).toEqual({ level: LEVELS[0]!.name, ...simSave(sim) });
+  sim.settle();
+  const where = (d: Awaited<ReturnType<typeof debug>>) => ({
+    level: d.level,
+    remaining: d.remaining,
+    colPtr: d.colPtr,
+    slots: d.slots,
+  });
+  const before = where(await debug(page));
+  expect(before).toEqual({ level: 0, remaining: sim.remaining, colPtr: sim.colPtr, slots: sim.slots });
+
+  // the reload opens on the level, and once the ants have fetched what they can it is where it was
+  await page.reload();
+  await page.waitFor(() => !!window.AntSort && window.AntSort._debug().level === 0);
+  expect(await page.visible('levels')).toBe(false);
+  await page.eval((k) => window.AntSort!._speed(k), FAST);
+  await page.waitFor(() => window.AntSort!._debug().quiet, [], { timeout: 30_000 });
+  expect(where(await debug(page))).toEqual(before);
+  await page.screenshot('ant-sort-reloaded.jpg');
+
+  // and it plays on from there on the same rules
+  await play(page, taps.slice(4, 7));
+  for (const col of taps.slice(4, 7)) {
+    sim.pop(col);
+    sim.settle();
+  }
+  expect(where(await debug(page))).toEqual({
+    level: 0,
+    remaining: sim.remaining,
+    colPtr: sim.colPtr,
+    slots: sim.slots,
+  });
+
+  // back on the levels it is no longer in progress, so a reload opens on the levels
+  await page.click('#info');
+  await page.click('#mLevels');
+  expect(await page.until(() => !document.getElementById('levels')!.hidden)).toBe(true);
+  expect(await savedPlay(page)).toBeNull();
+  await page.reload();
+  await page.waitFor(() => !!window.AntSort && document.querySelectorAll('#cards .card').length === 20);
+  await Bun.sleep(300);
+  expect(await page.visible('levels')).toBe(true);
+  expect((await debug(page)).level).toBe(-1);
+  expect(page.errors).toEqual([]);
+  page.close();
+});
+
+test('Ant Sort: a saved level in progress that does not fit leaves the levels, and the stars', async () => {
+  const L = LEVELS[0]!;
+  const sim = startOf(0);
+  sim.pop(0);
+  for (let n = 0; n < 5; n++) sim.tick();
+  const good = { level: L.name, ...simSave(sim) };
+  const saves: [why: string, saved: string, resumes: boolean][] = [
+    ['a level in progress', JSON.stringify(good), true],
+    ['not JSON', JSON.stringify(good).slice(0, -1), false],
+    ['no such level', JSON.stringify({ ...good, level: 'Nowhere' }), false],
+    ['a board of the wrong size', JSON.stringify({ ...good, board: good.board.slice(1) }), false],
+    ['blocks gone that no slot fetched', JSON.stringify({ ...good, board: '0' + good.board.slice(1) }), false],
+    ['a column run past its end', JSON.stringify({ ...good, columns: [99, 0, 0] }), false],
+    ['a slot that is no slot', JSON.stringify({ ...good, slots: ['red', null, null, null, null] }), false],
+    ['a field missing', JSON.stringify({ level: L.name, board: good.board }), false],
+  ];
+  for (const [why, saved, resumes] of saves) {
+    const page = await open({ [PLAY]: saved, 'antsort.stars.v1': JSON.stringify([L.name]) });
+    if (resumes) await page.waitFor(() => window.AntSort!._debug().level === 0);
+    else await Bun.sleep(300);
+    expect(await page.visible('levels'), why).toBe(!resumes);
+    expect((await debug(page)).level, why).toBe(resumes ? 0 : -1);
+    if (resumes) expect((await debug(page)).colPtr).toEqual([1, 0, 0]);
+    // the stars are there whatever the level in progress holds
+    expect(await page.text('#tallyN'), why).toBe('1 / 20');
+    expect(page.errors).toEqual([]);
+    page.close();
+  }
 });

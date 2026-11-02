@@ -3,6 +3,7 @@
 //   Saves          localStorage, as Effect's KeyValueStore (memory only when the browser blocks storage)
 //   SessionSaves   sessionStorage, the same way (Bike Race keeps its race server key there)
 //   load / save    a saved value, checked with a Schema on the way in; a value that doesn't fit is the fallback
+//   forget         removes a saved value
 //   listen         an event listener that is removed when its scope closes
 //   animate        a requestAnimationFrame loop that stops when its scope closes
 //   run            runs an effect from plain code (an event handler or a frame) with the page's services
@@ -73,6 +74,12 @@ export const load = <A>(key: string, schema: Plain<A>, fallback: () => A): Effec
 export const save = <A>(key: string, schema: Plain<A>, value: A): Effect.Effect<void, never, Saves> =>
   Effect.gen(function* () {
     yield* KeyValueStore.toSchemaStore(yield* Saves, schema).set(key, value);
+  }).pipe(Effect.ignore);
+
+/** Removes what is saved under key in localStorage (a game in progress that has ended, say) */
+export const forget = (key: string): Effect.Effect<void, never, Saves> =>
+  Effect.gen(function* () {
+    yield* (yield* Saves).remove(key);
   }).pipe(Effect.ignore);
 
 // ---------- events and frames ----------

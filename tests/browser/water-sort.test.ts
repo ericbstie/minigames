@@ -1,6 +1,7 @@
 // Browser checks for Water Sort: the level picker, level 1 solved by clicking the tubes (the moves come from the
 // game's own solver), the win sheet and the saved progress, Undo, Hint, the spare tube, Restart, the way back to
-// the main menu, and progress saved by earlier versions of the game. It plays the real page in Bun's headless browser.
+// the main menu, progress saved by earlier versions of the game, and the level in progress coming back after a
+// reload. It plays the real page in Bun's headless browser.
 import { afterAll, expect, setDefaultTimeout, test } from 'bun:test';
 import { LEVELS, type State, wsApply, wsSolve } from '../../public/js/water-sort-logic';
 import { openPage, startSite, type Page } from '../support/browser';
@@ -10,13 +11,26 @@ const site = startSite();
 afterAll(() => site.stop());
 
 const debug = (page: Page) => page.eval(() => window.WaterSort!._debug());
+const PLAY = 'watersort.play.v1';
+/** The level in progress, as saved */
+const savedPlay = (page: Page): Promise<unknown> =>
+  page.eval((k) => JSON.parse(localStorage.getItem(k) ?? 'null'), PLAY);
 
-/** Water Sort on its level picker, with whatever is saved in localStorage */
+/** Water Sort on its level picker (or the level in progress), with whatever is saved in localStorage */
 async function open(storage?: Record<string, string>): Promise<Page> {
   const page = await openPage(site, { width: 1000, height: 600, path: '/#water-sort', storage });
-  await page.waitFor(() => !!window.WaterSort && document.querySelectorAll('#ws-grid .ws-cell').length === 20);
+  await opened(page);
   return page;
 }
+/** Wait until the game is up, on the picker or a level */
+const opened = (page: Page) =>
+  page.waitFor(
+    () =>
+      !!window.WaterSort &&
+      ((!document.getElementById('ws-picker')!.hidden &&
+        document.querySelectorAll('#ws-grid .ws-cell').length === 20) ||
+        !document.getElementById('ws-play')!.hidden),
+  );
 
 /** Start a level from its cell on the picker */
 async function startLevel(page: Page, i: number): Promise<void> {
@@ -57,6 +71,9 @@ test('Water Sort: the picker, level 1 solved by clicking tubes, the win sheet, a
   expect(await page.eval(() => (document.getElementById('ws-undo') as HTMLButtonElement).disabled)).toBe(true);
   expect((await debug(page)).tubes).toEqual(LEVELS[0]!.tubes);
 
+  // the level is saved as it starts
+  expect(await savedPlay(page)).toEqual({ level: 1, tubes: LEVELS[0]!.tubes, undo: [], hints: 3, extra: false });
+
   // pour the solver's moves, checking the tubes after each one
   const moves = wsSolve(LEVELS[0]!.tubes)!;
   expect(moves.length).toBeGreaterThan(0);
@@ -74,6 +91,7 @@ test('Water Sort: the picker, level 1 solved by clicking tubes, the win sheet, a
   expect(await page.text('#ws-win-pill')).toBe('Level 1');
   expect(await page.visible('ws-next')).toBe(true);
   expect(await page.eval(() => localStorage.getItem('watersort.done.v1'))).toBe('[1]');
+  expect(await savedPlay(page)).toBeNull(); // a level won is no longer in progress
   await Bun.sleep(400);
   await page.screenshot('water-sort-win.jpg');
 
@@ -198,6 +216,103 @@ test('Water Sort: progress saved before, and saves with odd entries or nothing t
     );
     // loading leaves the save as it was
     expect(await page.eval(() => localStorage.getItem('watersort.done.v1'))).toBe(saved);
+    expect(page.errors).toEqual([]);
+    page.close();
+  }
+});
+
+test('Water Sort: the level being played comes back after a reload, and goes when left for the picker', async () => {
+  const page = await open();
+  await startLevel(page, 1);
+  const start = LEVELS[1]!.tubes;
+  const empty = start.length - 1;
+
+  // a pour, a hint and the spare tube, each saved as it happens
+  await pour(page, 0, empty);
+  const poured = wsApply(start, 0, empty);
+  expect(await savedPlay(page)).toEqual({ level: 2, tubes: poured, undo: [start], hints: 3, extra: false });
+  await page.waitFor(() => !window.WaterSort!._debug().busy);
+  await page.click('#ws-hint');
+  expect(await savedPlay(page)).toMatchObject({ hints: 2 });
+  const add = (await debug(page)).addAt!;
+  await page.view.click(add.x, add.y);
+  expect(await savedPlay(page)).toEqual({
+    level: 2,
+    tubes: [...poured, []],
+    undo: [[...start, []]],
+    hints: 2,
+    extra: true,
+  });
+
+  // the reload opens on the level, as it was
+  await page.reload();
+  await opened(page);
+  expect(await page.visible('ws-play')).toBe(true);
+  expect(await page.visible('ws-picker')).toBe(false);
+  let state = await debug(page);
+  expect(state.level).toBe(1);
+  expect(state.tubes).toEqual([...poured, []]);
+  expect(state.hints).toBe(2);
+  expect(state.addAt).toBeNull();
+  expect(state.won).toBe(false);
+  expect(await page.text('#ws-level')).toBe('Level 2');
+  expect(await page.text('#ws-hints')).toBe('2');
+  await page.screenshot('water-sort-reloaded.jpg');
+
+  // Undo takes the pour back, and that is saved too
+  await page.click('#ws-undo');
+  state = await debug(page);
+  expect(state.tubes).toEqual([...start, []]);
+  expect(await page.eval(() => (document.getElementById('ws-undo') as HTMLButtonElement).disabled)).toBe(true);
+  expect(await savedPlay(page)).toEqual({ level: 2, tubes: [...start, []], undo: [], hints: 2, extra: true });
+
+  // Restart starts the level again (hints kept), saved as such
+  await page.click('#ws-restart');
+  expect(await savedPlay(page)).toEqual({ level: 2, tubes: start, undo: [], hints: 2, extra: false });
+
+  // back on the picker the level is no longer in progress, so a reload opens on the picker
+  await page.click('#ws-back');
+  expect(await page.until(() => !document.getElementById('ws-picker')!.hidden)).toBe(true);
+  expect(await savedPlay(page)).toBeNull();
+  await page.reload();
+  await opened(page);
+  expect(await page.visible('ws-picker')).toBe(true);
+  expect(await page.visible('ws-play')).toBe(false);
+  expect(page.errors).toEqual([]);
+  page.close();
+});
+
+test('Water Sort: a saved level in progress that does not fit leaves the picker, and the rest of the save', async () => {
+  const L = LEVELS[0]!; // [[2, 1, 1, 0], [2, 1, 0, 0], [2, 1, 2, 0], [], []]
+  const good = { level: 1, tubes: wsApply(L.tubes, 0, 3), undo: [L.tubes], hints: 1, extra: false };
+  const saves: [why: string, saved: string, resumes: boolean][] = [
+    ['a level in progress', JSON.stringify(good), true],
+    ['not JSON', JSON.stringify(good).slice(0, -1), false],
+    ['no such level', JSON.stringify({ ...good, level: 21 }), false],
+    [
+      'a colour the level does not have',
+      JSON.stringify({ ...good, tubes: [[2, 1, 1, 9], ...good.tubes.slice(1)] }),
+      false,
+    ],
+    ['a tube missing', JSON.stringify({ ...good, tubes: good.tubes.slice(1) }), false],
+    ['a position Undo goes back to that does not fit', JSON.stringify({ ...good, undo: [[[0]]] }), false],
+    ['more hints than a level has', JSON.stringify({ ...good, hints: 4 }), false],
+    ['the spare tube said to be out but not there', JSON.stringify({ ...good, extra: true }), false],
+    ['solved already', JSON.stringify({ ...good, tubes: [[0, 0, 0, 0], [1, 1, 1, 1], [2, 2, 2, 2], [], []] }), false],
+    ['a field missing', JSON.stringify({ level: 1, tubes: good.tubes }), false],
+  ];
+  for (const [why, saved, resumes] of saves) {
+    const page = await open({ [PLAY]: saved, 'watersort.done.v1': '[1,3]' });
+    expect(await page.visible('ws-play'), why).toBe(resumes);
+    expect(await page.visible('ws-picker'), why).toBe(!resumes);
+    if (resumes) expect(await debug(page)).toMatchObject({ level: 0, tubes: good.tubes, hints: 1 });
+    // the levels done are there whatever the level in progress holds
+    await page.eval(() => document.getElementById('ws-back')!.click());
+    expect(
+      await page.eval(() => [...document.querySelectorAll('#ws-grid .done .n')].map((e) => e.textContent)),
+      why,
+    ).toEqual(['1', '3']);
+    expect(await page.eval(() => localStorage.getItem('watersort.done.v1'))).toBe('[1,3]');
     expect(page.errors).toEqual([]);
     page.close();
   }

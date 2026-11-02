@@ -3,10 +3,11 @@
 //
 // The hub opens the game (`game`, at the bottom) in a scope while its screen is shown: the listeners, the frame loop
 // and the timers for the note and the win sheet are set up in it and stop when the player leaves. The level being
-// played stays as it was, for when they come back. The rules, layout and drawing are plain functions.
+// played stays as it was, for when they come back, and is saved after every move, so that it is there after a reload
+// too. The rules, layout and drawing are plain functions.
 import { Effect, FiberHandle, FiberSet, Predicate, Schema } from 'effect';
 import { type Game, GameHub } from './hub';
-import { animate, listen, load, run, save } from './page';
+import { animate, forget, listen, load, run, save } from './page';
 import { keepOnly } from './schemas';
 import {
   LEVELS,
@@ -16,6 +17,7 @@ import {
   wsApply,
   wsCanPour,
   wsDone,
+  wsFits,
   wsPourCount,
   wsSolve,
   wsSolved,
@@ -243,6 +245,28 @@ const DONE_KEY = 'watersort.done.v1';
 const Done = keepOnly(Schema.Number, Predicate.isNumber);
 const done = new Set<number>();
 const saveDone = () => run(save(DONE_KEY, Done, [...done]));
+// The level being played, saved after every change so that a reload, or a tab closed and opened again, comes back to
+// it: the level (numbered from 1), the tubes, the positions Undo goes back to, the hints left and whether the spare
+// tube is out. It goes when the level is won or the player goes back to the picker. Only a position the level can
+// be in fits (its tubes, its colours, not solved yet); anything else is no level in progress, and the picker shows.
+const PLAY_KEY = 'watersort.play.v1';
+const Tubes = Schema.mutable(Schema.Array(Schema.mutable(Schema.Array(Schema.Int))));
+const Play = Schema.Struct({
+  level: Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: LEVELS.length })),
+  tubes: Tubes,
+  undo: Schema.mutable(Schema.Array(Tubes)),
+  hints: Schema.Int.check(Schema.isBetween({ minimum: 0, maximum: HINTS })),
+  extra: Schema.Boolean,
+}).check(
+  Schema.makeFilter((p) => {
+    const L = LEVELS[p.level - 1];
+    return wsFits(L, p.tubes, p.extra) && !wsSolved(p.tubes) && p.undo.every((u) => wsFits(L, u, p.extra));
+  }),
+);
+type Play = typeof Play.Type;
+const savePlay = () =>
+  run(save(PLAY_KEY, Play, { level: S.level + 1, tubes: S.tubes, undo: S.undo, hints: S.hints, extra: S.extra }));
+const forgetPlay = () => run(forget(PLAY_KEY));
 // Starts a timer from plain code (a frame) while the game is open. The hub's scope for the visit holds it, so it stops
 // when the player leaves; open sets this up, and after the game closes it starts nothing.
 let later: (timer: Effect.Effect<void>) => unknown = () => {};
@@ -283,14 +307,16 @@ function layout() {
 }
 
 // ---- level flow ----
-function startLevel(i: number) {
+// Starts level i from the beginning, or carries on with it from where a saved game left it
+function startLevel(i: number, from?: Play) {
   S.level = i;
   const L = LEVELS[i];
+  S.extra = from ? from.extra : false;
   S.start = L.tubes.map((t) => t.map((c) => c));
-  S.tubes = S.start.map((t) => t.slice());
-  S.undo = [];
-  S.hints = HINTS;
-  S.extra = false;
+  if (S.extra) S.start.push([]);
+  S.tubes = (from ? from.tubes : S.start).map((t) => t.slice());
+  S.undo = from ? from.undo.map((s) => s.map((t) => t.slice())) : [];
+  S.hints = from ? from.hints : HINTS;
   S.sel = -1;
   S.lift = S.tubes.map(() => 0);
   S.anims = [];
@@ -304,12 +330,14 @@ function startLevel(i: number) {
   showPlay(true);
   layout();
   syncButtons();
+  if (!from) savePlay();
 }
 function restart() {
   const h = S.hints;
   startLevel(S.level);
   S.hints = h;
   syncButtons();
+  savePlay();
 }
 function syncButtons() {
   ui.undo.disabled = !S.undo.length;
@@ -361,6 +389,7 @@ function tap(i: number | 'add') {
       S.undo.forEach((u) => u.push([]));
       S.lift.push(0);
       layout();
+      savePlay();
       burst(S.pos[S.tubes.length - 1].x, S.pos[S.tubes.length - 1].y + 140, '#ffbf2f', 18);
     }
     return;
@@ -417,6 +446,7 @@ function pour(a: number, b: number) {
     thEnd: 0,
   });
   syncButtons();
+  savePlay();
 }
 function undo() {
   if (!S.undo.length || S.won) return;
@@ -425,6 +455,7 @@ function undo() {
   S.hint = null;
   S.tubes = S.undo.pop()!;
   syncButtons();
+  savePlay();
 }
 // Picks up the tube of the solver's next move and points at where it goes. Answers true when there is no way
 // forward, for the caller to say so.
@@ -435,6 +466,7 @@ function hint(): boolean {
   if (!sol || !sol.length) return true;
   S.hints--;
   syncButtons();
+  savePlay();
   const [a, b] = sol[0];
   S.sel = a;
   S.hint = { a, b, t: 0 };
@@ -795,6 +827,7 @@ function checkWin() {
   S.won = true;
   done.add(S.level + 1);
   saveDone();
+  forgetPlay();
   const cols = COLORS.slice(0, LEVELS[S.level].colors);
   for (let k = 0; k < 4; k++) burst(SWd / 2 + (k - 1.5) * 150, SHd * 0.55, cols, 30, 1.4);
   // the win sheet once the confetti has had a moment; at once if the player leaves first, so it is up when they
@@ -863,7 +896,12 @@ export const game: Game = {
     // levels finished before (in another tab, say); levels only ever get finished, so they join what is here
     for (const n of yield* load(DONE_KEY, Done, () => [])) done.add(n);
     resize();
-    if (!S.tubes.length) showPlay(false);
+    // the first time the game opens on this page: the level left unfinished last time, or else the picker
+    if (!S.tubes.length) {
+      const saved = yield* load<Play | null>(PLAY_KEY, Play, () => null);
+      if (saved) startLevel(saved.level - 1, saved);
+      else showPlay(false);
+    }
 
     // the note's timer (a note cut short by leaving goes with it), and the timers plain code starts (the win sheet)
     const noteTimer = yield* FiberHandle.make();
@@ -883,6 +921,7 @@ export const game: Game = {
     yield* listen(ui.back, 'click', () => {
       S.anims = [];
       showPlay(false);
+      forgetPlay();
     });
     yield* listen(ui.pickBack, 'click', () => GameHub.menu());
     yield* listen(ui.restart, 'click', restart);

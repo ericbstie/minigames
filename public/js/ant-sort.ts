@@ -3,15 +3,25 @@
 //
 // The scene, the ants and the rules are plain code, set up when the page loads. The hub opens the game (`game`, at
 // the bottom) in a scope while its screen is shown: the listeners, the frame loop, the confetti and the link to the
-// per-user store run in it and stop when the player leaves. A level left unfinished waits for them to come back.
+// per-user store run in it and stop when the player leaves. A level left unfinished waits for them to come back, and
+// is saved, so that it is there after a reload too.
 import { Cause, Effect, Fiber, FiberHandle, Option, Predicate, Queue, Schema, Stream } from 'effect';
 import * as THREE from 'three';
 import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
 
 import levels from './ant-sort-levels.json';
-import { type LevelData, Sim, type SimLevel, type TickEvent, simLevel } from './ant-sort-logic';
+import {
+  type LevelData,
+  Sim,
+  type SimLevel,
+  type SimSave,
+  type TickEvent,
+  simFromSave,
+  simLevel,
+  simSave,
+} from './ant-sort-logic';
 import { type Game, GameHub } from './hub';
-import { animate, listen, load, nextFrame, run, save } from './page';
+import { animate, forget, listen, load, nextFrame, run, save } from './page';
 import { keepOnly } from './schemas';
 
 const DATA = levels as { levels: LevelData[] };
@@ -543,22 +553,24 @@ function cellToWorld(sim: Sim, c: number): Pt {
   return { x: x - 1 - (sim.W - 1) / 2, z: y - 1 - (sim.H - 1) / 2 + PIC_Z };
 }
 
-function startLevel(idx: number) {
+// Starts level idx from the beginning, or from a saved position of it
+function startLevel(idx: number, from?: SimSave) {
   stopLevel();
   const L = DATA.levels[idx];
   usePalette(L.palette);
   const level = simLevel(L);
-  const sim = new Sim(level);
+  const sim = (from && simFromSave(level, from)) || new Sim(level);
   const root = new THREE.Group();
   scene.add(root);
-  // board voxels
+  // board voxels (the blocks the ants have taken already are there, at no size)
+  const left = (x: number, y: number) => sim.cell[(y + 1) * sim.PW + x + 1] !== EMPTY_CELL;
   const vox = new THREE.InstancedMesh(voxGeo, voxMat, L.W * L.H);
   vox.frustumCulled = false;
   for (let y = 0; y < L.H; y++)
     for (let x = 0; x < L.W; x++) {
       const i = y * L.W + x,
         v = L.grid[i];
-      if (v === EMPTY_CELL) tm.makeScale(0, 0, 0);
+      if (!left(x, y)) tm.makeScale(0, 0, 0);
       else tm.makeTranslation(x - (L.W - 1) / 2, FLOOR_Y + 0.5, y - (L.H - 1) / 2 + PIC_Z);
       vox.setMatrixAt(i, tm);
       vox.setColorAt(i, COLORS[v === EMPTY_CELL ? 0 : v]);
@@ -572,8 +584,7 @@ function startLevel(idx: number) {
   shCanvas.height = PH;
   const shCtx = shCanvas.getContext('2d')!;
   shCtx.fillStyle = 'rgba(120,70,60,0.42)';
-  for (let y = 0; y < L.H; y++)
-    for (let x = 0; x < L.W; x++) if (L.grid[y * L.W + x] !== EMPTY_CELL) shCtx.fillRect(x + 1, y + 1, 1, 1);
+  for (let y = 0; y < L.H; y++) for (let x = 0; x < L.W; x++) if (left(x, y)) shCtx.fillRect(x + 1, y + 1, 1, 1);
   const shTex = new THREE.CanvasTexture(shCanvas);
   shTex.magFilter = THREE.LinearFilter;
   shTex.minFilter = THREE.LinearFilter;
@@ -586,15 +597,26 @@ function startLevel(idx: number) {
   shPlane.position.set(0.05, FLOOR_Y + 0.01, PIC_Z + 0.42);
   shPlane.renderOrder = -1;
   root.add(shPlane);
-  // queue
-  const queue = level.columns.map((q, ci) =>
-    q.map((ch, r) => {
-      const item = makeBlock(ch.c, ch.n);
-      item.position.set(COL_X[ci], 0, rowZ(r));
+  // the columns, from the front block on (a block already sent to a slot has no place, as nothing looks there)
+  const queue = level.columns.map((q, ci) => {
+    const col: Block[] = [],
+      front = sim.colPtr[ci];
+    for (let r = front; r < q.length; r++) {
+      const item = makeBlock(q[r].c, q[r].n);
+      item.position.set(COL_X[ci], 0, rowZ(r - front));
       root.add(item);
-      return item;
-    }),
-  );
+      col[r] = item;
+    }
+    return col;
+  });
+  // and the jars on the slots
+  const jars = sim.slots.map((s, i) => {
+    if (!s) return null;
+    const jar = makeJar(s.c, s.n);
+    jar.position.set(SLOT_X[i], 0, SLOT_Z);
+    root.add(jar);
+    return jar;
+  });
   const outlines = COL_X.map(() => {
     const o = new THREE.Mesh(outlineGeo, whiteMat);
     o.renderOrder = 0;
@@ -611,7 +633,7 @@ function startLevel(idx: number) {
     paused: false,
     stuckT: 0,
     winT: 0,
-    jars: new Array<null>(5).fill(null),
+    jars,
     dying: [],
     tweens: [],
     vox,
@@ -623,6 +645,7 @@ function startLevel(idx: number) {
   };
   refreshFront();
   showScreen(null);
+  if (!from) savePlay();
 }
 function stopLevel() {
   if (!play) return;
@@ -718,6 +741,7 @@ function tapColumn(col: number) {
   }
   const r0 = g.sim.colPtr[col];
   const slot = g.sim.pop(col);
+  savePlay();
   const from = item.position.clone();
   const to = new THREE.Vector3(SLOT_X[slot], PED.h + JAR.h - BLOCK.h, JAR_Z);
   item.userData.sh.visible = false;
@@ -1113,6 +1137,31 @@ function renderStars() {
   document.getElementById('tallyN')!.textContent = `${n} / ${DATA.levels.length}`;
 }
 
+// ---------- the level in progress ----------
+// The level being played, saved when it starts and after every tap, so that a reload, or a tab closed and opened
+// again, comes back to it: the level's name and the Sim's position then (simSave). Between taps the Sim takes the
+// same steps whatever the time, so from there the ants fetch what they would have (a block an ant had set off for
+// when the tap was made is gone when the level comes back). It goes when the level ends or the player goes back to
+// the levels. Only a position the level can be in fits; anything else is no level in progress, and the levels show.
+const PLAY_KEY = 'antsort.play.v1';
+const levelNamed = (name: string) => DATA.levels.findIndex((L) => L.name === name);
+const SavedPlay = Schema.Struct({
+  level: Schema.String,
+  board: Schema.String,
+  columns: Schema.Array(Schema.Int),
+  slots: Schema.Array(Schema.NullOr(Schema.Struct({ c: Schema.Int, n: Schema.Int }))),
+}).check(
+  Schema.makeFilter((p) => {
+    const i = levelNamed(p.level);
+    return i >= 0 && simFromSave(simLevel(DATA.levels[i]), p) !== null;
+  }),
+);
+type SavedPlay = typeof SavedPlay.Type;
+const savePlay = () => {
+  if (play) run(save(PLAY_KEY, SavedPlay, { level: play.L.name, ...simSave(play.sim) }));
+};
+const forgetPlay = () => run(forget(PLAY_KEY));
+
 // The per-user store, where the page runs with one (window.claude). It keeps a document of the viewer's progress
 // that it sends again whenever it changes, from this device or another.
 interface ProgressDoc {
@@ -1354,6 +1403,7 @@ function finish(win: boolean) {
   const last = g.idx === DATA.levels.length - 1;
   let isNew = false;
   if (win) isNew = earnStar(g.L.name);
+  forgetPlay();
   resultEl.classList.toggle('win', win);
   resultEl.classList.toggle('lose', !win);
   // restart the entry animations
@@ -1383,6 +1433,7 @@ function finish(win: boolean) {
 // the buttons on the result sheet and the in-game menu (listened to while the game is open, see `game`)
 function toLevels() {
   stopLevel();
+  forgetPlay();
   showScreen('levels');
 }
 function openMenu() {
@@ -1460,6 +1511,19 @@ export const game: Game = {
     yield* listen(resultMain, 'click', () => startWithFont(resultNext));
     for (const [i, card] of [...cards.children].entries()) yield* listen(card, 'click', () => startWithFont(i));
     yield* listen(toMenu, 'click', () => GameHub.menu());
+    // on the levels (the first time the game opens on this page, say): the level left unfinished, if one was saved
+    if (!play) {
+      const saved = yield* load<SavedPlay | null>(PLAY_KEY, SavedPlay, () => null);
+      if (saved)
+        yield* Effect.forkScoped(
+          Effect.andThen(
+            Fiber.join(font),
+            Effect.sync(() => {
+              if (!play) startLevel(levelNamed(saved.level), saved);
+            }),
+          ),
+        );
+    }
 
     startFall = yield* FiberHandle.makeRuntime<never>();
     pushProgress = yield* syncProgress;

@@ -75,6 +75,23 @@ function runLength(A: Tube) {
   for (let i = A.length - 1; i >= 0 && A[i] === c; i--) n++;
   return n;
 }
+/**
+ * Whether a state can be a position in the level: its tubes (one more when the spare tube is out), none holding more
+ * than WS_CAP, and between them exactly the colours the level started with. A saved level in progress has to be one.
+ */
+export function wsFits(level: Level, s: State, spare: boolean): boolean {
+  if (s.length !== level.tubes.length + (spare ? 1 : 0)) return false;
+  const left = new Array<number>(level.colors).fill(0);
+  for (const t of level.tubes) for (const c of t) left[c]++;
+  for (const t of s) {
+    if (t.length > WS_CAP) return false;
+    for (const c of t) {
+      if (!Number.isInteger(c) || c < 0 || c >= level.colors || !left[c]) return false;
+      left[c]--;
+    }
+  }
+  return left.every((n) => n === 0);
+}
 // depth-first search with a visited set; returns a list of [from, to] moves or null
 export function wsSolve(start: State, maxNodes = 400000): Move[] | null {
   const seen = new Set<string>(),
