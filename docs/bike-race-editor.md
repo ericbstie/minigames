@@ -90,7 +90,7 @@ In the core this is small:
 - `level.finishY` and `level.finishDir`: the bike finishes by crossing the flag's line going the flag's way,
   within a few metres of its height (`Sim.crossedFinish`). Built-in levels don't set them and finish as before.
 
-Built-in levels set none of these, and `node tools/check-bike-levels.js` gives exactly the same times as before.
+Built-in levels set none of these, and `bun tools/check-bike-levels.js` gives exactly the same times as before.
 
 ## The editor screen
 
@@ -124,10 +124,10 @@ each level goes through `sanitize`. Names are only ever put in the page as text.
 ## Checking
 
 ```sh
-node tools/check-bike-pieces.js            # about a second
-node tools/check-bike-pieces.js --verbose  # lists every check
-node tools/test-bike-race-editor.js        # the editor in a browser, about 40 s
-node tools/test-bike-race-editor.js --keep # also saves screenshots to tools/.shots/
+bun tools/check-bike-pieces.js                                # about a second
+bun tools/check-bike-pieces.js --verbose                      # lists every check
+bun test tests/browser/bike-race-editor.test.ts               # the editor in a browser, about 40 s
+KEEP_SHOTS=1 bun test tests/browser/bike-race-editor.test.ts  # also saves screenshots to .shots/
 ```
 
 It checks each piece's shape, the edits (adding at the finish, rotating about the joint, flips, snapping, the
@@ -137,9 +137,10 @@ straight off the start pad) must be finished going over the top with the rider's
 track (it stays about 1.2 m clear), and each ramp must clear a gap (5, 9 and 12 m) and land. It also checks that
 the loop can't be ridden without the pass-through, and that a finish turned round is crossed going left.
 
-`test-bike-race-editor.js` serves `public/` on port 8124 (`BR_PORT` changes it) and plays the page in headless
-Chromium as a touch phone held sideways, with real touch events for taps, drags and pinches: My levels, building,
-turning, flipping, undo and redo, carrying on out of a closed loop, building from a tapped end or open space,
-dragging a piece until it snaps, panning and zooming, deleting, a test ride to the finish and back (and from the
-crash and pause sheets), best times, renaming, reloading, deleting a level, damaged storage, and that the editor
-and My levels fit at six phone sizes from 568x320 to 932x430. It needs Playwright (`require('playwright')`).
+`bike-race-editor.test.ts` runs the server in-process on a free port and plays the page in Bun's headless browser
+as a touch phone held sideways, with real touch events for taps, drags and pinches: My levels, building, turning,
+flipping, undo and redo, carrying on out of a closed loop, building from a tapped end or open space, dragging a
+piece until it snaps, panning and zooming, deleting, a test ride to the finish and back (and from the crash and
+pause sheets), best times, renaming, reloading, deleting a level, damaged storage, and that the editor and My
+levels fit at six phone sizes from 568x320 to 932x430. See [development.md](development.md) for what the browser
+tests need.
