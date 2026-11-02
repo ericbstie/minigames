@@ -50,5 +50,5 @@ export const GameHub = {
   },
 };
 
-// Bike Race is still a plain script and finds the hub here.
+// for the browser tests (tests/smoke.test.ts goes back to the menu through it)
 window.GameHub = GameHub;

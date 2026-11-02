@@ -184,7 +184,7 @@ describe('Two phones meet in a room', () => {
   });
 
   test('the guest sees the track', async () => {
-    const name = await a.eval(() => window.BikeRaceCore.levelById('clover-2')!.name);
+    const name = await a.eval(() => window.BikeRace!._debug().C.levelById('clover-2')!.name);
     expect(await b.text('#br-room-level-text')).toBe('Clover Hills 2 · ' + name);
     await shot(b, 'bike-race-online-room-guest.jpg');
   });
@@ -333,13 +333,13 @@ describe('A dropped connection comes back', () => {
         a,
         () =>
           /away/.test(document.getElementById('br-room-players')!.textContent ?? '') ||
-          [...window.BikeRace!._debug().S.remote.values()].length === 1,
+          [...window.BikeRace!._debug().S!.remote.values()].length === 1,
       ),
     ).toBe(true);
   });
 
   test('it keeps riding and crosses the line offline', async () => {
-    expect(await until(b, () => window.BikeRace!._debug().S.me.finished, [], 60_000)).toBe(true);
+    expect(await until(b, () => window.BikeRace!._debug().S!.me.finished, [], 60_000)).toBe(true);
   });
 
   test('once it is back, its finish counts and both get results', async () => {

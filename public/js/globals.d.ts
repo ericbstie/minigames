@@ -1,5 +1,5 @@
-// What the page puts on window: the hub (for the games still in plain JavaScript), and the debug hooks the browser
-// tests reach for. Shared by public/tsconfig.json and the root tsconfig.json, which checks the tests.
+// What the page puts on window: the hub and the debug hooks the browser tests reach for. The games themselves are
+// modules and import each other. Shared by public/tsconfig.json and the root tsconfig.json, which checks the tests.
 import type { Game, GameHub } from './hub';
 
 declare global {
@@ -40,13 +40,13 @@ declare global {
       };
     };
 
-    // Bike Race: the core and the track pieces (TypeScript, put on window by bike-race-globals.ts for the scripts
-    // still in plain JavaScript), and those scripts
-    BikeRaceCore: typeof import('./bike-race-core');
-    BikeRacePieces: typeof import('./bike-race-pieces');
-    BikeRace?: Game & { _debug(): any };
-    BikeRaceArt?: any;
-    BikeRaceNet?: any;
-    BikeRaceEditor?: any;
+    // Bike Race and its level editor: their state for the browser tests (the game reaches the editor through
+    // imports, not these)
+    BikeRace?: Game & { editor: import('./bike-race').EditorApi; _debug(): import('./bike-race').BikeRaceDebug };
+    BikeRaceEditor?: {
+      onView: typeof import('./bike-race-editor').onView;
+      frame: typeof import('./bike-race-editor').frame;
+      _debug(): import('./bike-race-editor').EditorDebug;
+    };
   }
 }

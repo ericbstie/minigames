@@ -50,7 +50,7 @@ async function pressIn(page: Page, selector: string, key: string): Promise<void>
 const addTile = (page: Page, t: string) => page.click(`.br-ed-tile[data-t="${t}"]`);
 
 // the camera glides after a piece is added: wait for it to settle before working out where things are on screen
-const settle = (page: Page) => page.waitFor(() => !window.BikeRaceEditor._debug().ed.camTo, [], { timeout: 3000 });
+const settle = (page: Page) => page.waitFor(() => !window.BikeRaceEditor!._debug().ed.camTo, [], { timeout: 3000 });
 
 /** A world point on screen (CSS pixels) */
 async function screenAt(page: Page, x: number, y: number): Promise<Point> {
@@ -463,8 +463,8 @@ describe('Test ride', () => {
     await wait(600);
     await page.eval(() => {
       const d = window.BikeRace!._debug();
-      d.S.me.c.a = Math.PI;
-      d.S.me.c.y += 0.6;
+      d.S!.me.c.a = Math.PI;
+      d.S!.me.c.y += 0.6;
     });
     await page.waitFor(() => !document.getElementById('br-crash')!.hidden, [], { timeout: 5000 });
     expect(await page.text('#br-crash-levels')).toBe('Edit');

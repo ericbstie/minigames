@@ -1,6 +1,6 @@
 // Bike Race track pieces: the shapes the level editor places, the edits it makes to them (append, move, rotate,
 // flip, delete) and buildCustomLevel, which turns a saved editor level into a level the simulation can ride.
-// No DOM access, so Bun can load it (tests/bike-race-pieces.test.ts). The browser gets it as window.BikeRacePieces.
+// No DOM access, so Bun can load it (tests/bike-race-pieces.test.ts). The editor imports it.
 import {
   type Box,
   type Dir,
@@ -106,7 +106,7 @@ export interface LevelData {
   pieces: Piece[];
   finish: Finish;
 }
-/** Every saved editor level, as localStorage 'bikerace.levels.v1' holds it (see bike-race-editor.js) */
+/** Every saved editor level, as localStorage 'bikerace.levels.v1' holds it (see bike-race-editor.ts) */
 export interface SavedLevels {
   v: 1;
   levels: SavedLevel[];

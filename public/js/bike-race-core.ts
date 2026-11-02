@@ -1,6 +1,6 @@
 // Bike Race core: terrain, worlds and levels, bikes, the physics step and the computer rider.
 // No DOM access here, so Bun can load this file to check that every level can be finished
-// (see tools/check-bike-levels.ts). The browser gets it as window.BikeRaceCore (bike-race-globals.ts).
+// (see tools/check-bike-levels.ts). The game, the editor and the drawing code import it.
 
 export const TAU = Math.PI * 2;
 export const clamp = (v: number, a: number, b: number) => (v < a ? a : v > b ? b : v);
@@ -84,7 +84,7 @@ export interface Ghosts {
   startS: number; // how far along the track the bike starts
 }
 
-/** A level ready to ride: from buildLevel, or from the editor (BikeRacePieces.buildCustomLevel) */
+/** A level ready to ride: from buildLevel, or from the editor (buildCustomLevel in bike-race-pieces.ts) */
 export interface Level {
   terrain: Terrain;
   finishX: number;
@@ -251,7 +251,7 @@ export interface BotConfig {
 }
 /** A ghost frame: x, y, angle */
 export type GhostFrame = [x: number, y: number, a: number];
-/** A best run as bike-race.js saves it in localStorage (bikerace.ghost.v1.<level id>); f is encodeGhost's text */
+/** A best run as bike-race.ts saves it in localStorage (bikerace.ghost.v1.<level id>); f is encodeGhost's text */
 export interface SavedGhost {
   time: number;
   bike: string;
@@ -1165,7 +1165,7 @@ export class Bike {
 
   // Levels from the editor can cross themselves: a loop made of a 3/4 loop and a quarter loop comes back down
   // onto the track it started from. Where two stretches far apart along the track come close, each is solid only
-  // while the bike is nearer to it along the track (level.ghosts, made by BikeRacePieces.buildCustomLevel), so the
+  // while the bike is nearer to it along the track (level.ghosts, made by buildCustomLevel in bike-race-pieces.ts), so the
   // way out of a loop never blocks the way in. pathS follows the segments the wheels touch.
   updateGhosts() {
     const G = this.sim.level.ghosts,
