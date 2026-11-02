@@ -6,8 +6,8 @@
 //   strategy: balanced (buys the cheapest pad it can afford, outposts a little later), turtle (outposts last),
 //             expand (outposts first)
 //   --check: fail unless the castle holds 9 minutes and the border has been pushed out by 5 outposts (balanced)
-//   --no-lands: the lands past the first border never open (no shops, no treasure...), to compare with the game
-//               before them
+//   --no-lands: the lands past the first border never open (no shops, treasure or dirty money), to compare with the
+//               game before them
 // It serves the site itself, like the browser tests, and needs Chrome or Chromium installed.
 import { openPage, startSite } from '../tests/support/browser';
 
@@ -104,13 +104,21 @@ function bot(strategy: string): void {
       tz = 0;
     B.goal = 'wait';
     // a mark to dig comes first: the nearest one, ridden to and stood on till the chest comes up
-    const dig = (d.digs ? d.digs() : []).sort(
-      (a, b) => Math.hypot(a.x - k.x, a.z - k.z) - Math.hypot(b.x - k.x, b.z - k.z),
-    )[0];
+    const nearest = <P extends { x: number; z: number }>(list: P[]) =>
+      list.sort((a, b) => Math.hypot(a.x - k.x, a.z - k.z) - Math.hypot(b.x - k.x, b.z - k.z))[0];
+    const dig = nearest(d.digs ? d.digs() : []);
+    // then dirty money: the nearest sack while the horse has room, else the nearest shop to wash what it carries
+    const carried = d.money ? d.money().carried : 0,
+      sack = carried < (d.SACK_MAX ?? 0) ? nearest((d.sacks ? d.sacks() : []).filter((o) => o.landed)) : undefined,
+      wash = carried ? nearest((d.shops ? d.shops() : []).filter((o) => o.lv).map((o) => o.till)) : undefined;
     if (dig) {
       tx = dig.x;
       tz = dig.z;
       B.goal = 'dig';
+    } else if (sack || wash) {
+      tx = (sack || wash)!.x;
+      tz = (sack || wash)!.z;
+      B.goal = sack ? 'sack' : 'wash';
     } else if (want) {
       tx = want.x;
       tz = want.z;
@@ -275,6 +283,7 @@ function minute() {
     land: G.land ?? 0,
     shops: (G.shops ?? []).map((s) => s.lv).join(''),
     relics: (G.relics ?? []).join(''),
+    washed: G.washed ?? 0,
     camps: d
       .fronts()
       .filter((f) => f.open)

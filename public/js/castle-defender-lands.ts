@@ -4,7 +4,9 @@
 // The first time the border reaches a land's distance from home, that land opens and something new shows up in it.
 // The first land brings shops: lots for sale beside the outposts, where the king buys a business that makes his army
 // stronger and fills its till with coins. The second brings treasure: marks in the ground where the king digs up
-// relics that change how the fight goes.
+// relics that change how the fight goes. The third brings dirty money: sacks of it left by beaten bosses and
+// cleared camps, which no pad takes; the king carries them to his shops, which wash them into a war chest that
+// makes the army stronger still.
 import { BIOME, type Biome, HOME, type Pt } from './castle-defender-world';
 
 export interface Land {
@@ -15,6 +17,7 @@ export interface Land {
 export const LANDS: Land[] = [
   { at: 75, name: 'The market roads', news: 'Shops for sale' },
   { at: 110, name: 'The old battlefields', news: 'Treasure in the ground' },
+  { at: 135, name: 'The back roads', news: 'Dirty money to wash' },
 ];
 /** How many lands a border reaching `reach` paces from home has opened */
 export const landsReached = (reach: number) => LANDS.filter((l) => reach >= l.at).length;
@@ -119,6 +122,22 @@ export function pickRelic(levels: readonly number[], r: number): number {
 /** How many digs are left in the ground for a king with relics at these levels */
 export const digsLeft = (levels: readonly number[]) =>
   RELICS.reduce((n, _, i) => n + RELIC_MAX - Math.min(RELIC_MAX, levels[i] ?? 0), 0);
+
+// ----- dirty money
+// Once the third land is open, a beaten boss leaves SACKS_BOSS sacks of dirty money and a cleared camp SACKS_CAMP.
+// The king picks them up by riding over them (SACK_MAX at most) and rides them into a shop's till; the shop washes
+// one every WASH_SECONDS / its level, and each sack washed makes everything of the king's hit WASH harder, on top of
+// (times) what the shops bring.
+export const SACKS_BOSS = 3,
+  SACKS_CAMP = 1,
+  SACK_MAX = 6,
+  SACKS_GROUND = 30, // no more are left on the ground than this
+  WASH_SECONDS = 30,
+  WASH = 0.05;
+/** Seconds a shop at level `lv` (1 or more) takes to wash a sack */
+export const washTime = (lv: number) => WASH_SECONDS / lv;
+/** How much harder everything of the king's hits with shops at these levels and `washed` sacks washed */
+export const kingMight = (levels: readonly number[], washed: number) => tradeMight(levels) * (1 + WASH * washed);
 
 /** The point of a road nearest to (x, z): where it is, how far along the road, the road's direction there, and how
  * far away it is */

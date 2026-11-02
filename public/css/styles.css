@@ -708,6 +708,13 @@ button:focus-visible {
 .cd-dig-dir {
   background: #c48a4e;
 }
+/* the way to the nearest sack of dirty money, and to the nearest shop to wash what the king carries */
+.cd-sack-dir {
+  background: #6f7a34;
+}
+.cd-wash-dir {
+  background: #3d7be0;
+}
 .cd-relics {
   position: absolute;
   left: max(12px, env(safe-area-inset-left, 0px));
@@ -729,6 +736,9 @@ button:focus-visible {
 .cd-relic svg {
   width: 32px;
   height: 32px;
+}
+.cd-relic.cd-sacks {
+  background: rgba(78, 88, 36, 0.82);
 }
 .cd-relic b {
   position: absolute;

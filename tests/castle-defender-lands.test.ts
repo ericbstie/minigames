@@ -125,6 +125,24 @@ describe('Relics', () => {
   });
 });
 
+describe('Dirty money', () => {
+  test('a beaten boss leaves more of it than a cleared camp, and the horse carries a few trips of it', () => {
+    expect(L.SACKS_BOSS).toBeGreaterThan(L.SACKS_CAMP);
+    expect(L.SACK_MAX).toBeGreaterThanOrEqual(L.SACKS_BOSS);
+    expect(L.SACKS_GROUND).toBeGreaterThan(L.SACK_MAX);
+  });
+  test('the higher a shop is, the faster it washes', () => {
+    expect(L.washTime(1)).toBe(L.WASH_SECONDS);
+    for (let lv = 2; lv <= L.SHOP_MAX; lv++) expect(L.washTime(lv)).toBeLessThan(L.washTime(lv - 1));
+  });
+  test("every sack washed makes everything of the king's hit WASH harder, on top of what the shops bring", () => {
+    expect(L.kingMight([], 0)).toBe(1);
+    expect(L.kingMight([3, 2], 0)).toBeCloseTo(L.tradeMight([3, 2]), 9);
+    expect(L.kingMight([], 4)).toBeCloseTo(1 + 4 * L.WASH, 9);
+    expect(L.kingMight([3, 2], 10)).toBeCloseTo(L.tradeMight([3, 2]) * (1 + 10 * L.WASH), 9);
+  });
+});
+
 describe('The nearest point of a road', () => {
   const road: Pt[] = [
     [0, 0],
