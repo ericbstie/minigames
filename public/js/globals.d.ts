@@ -1,6 +1,6 @@
 // What the page puts on window: the hub and the debug hooks the browser tests reach for. The games themselves are
 // modules and import each other. Shared by public/tsconfig.json and the root tsconfig.json, which checks the tests.
-import type { GameHub, ShowHide } from './hub';
+import type { GameHub } from './hub';
 
 declare global {
   interface Window {
