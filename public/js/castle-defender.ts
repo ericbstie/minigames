@@ -160,20 +160,31 @@ const CANNON_SPOTS: Pt[] = [
 const CANNON_COSTS = [250, 400, 650],
   CANNON_MAX = 5,
   CANNON_TOP = [0.82, 0.95, 1.42, 1.42, 1.42];
-const GOLD_HUT: Pt = [-6, 31],
-  GOLD_PAD: Pt = [-11.6, 33.4],
-  GOLD_PLOT: Pt = [-5.5, 36.8],
-  GOLD_COSTS = [1500, 3000, 6000];
+// The gold boys belong to the walled base: their hut stands in it, by the north wall, and they bring the coins they
+// pick up outside home to it (in through the east or south gate), or to an outpost when one is nearer. What they
+// bring goes straight to the king. Each coin a gold boy picks up is worth GOLD_PICKUP coins.
+const GOLD_HUT: Pt = [4.8, -7.2],
+  GOLD_PAD: Pt = [1.4, -2.8],
+  GOLD_DROP: Pt = [6.5, -5.5], // in front of the hut's door
+  GOLD_GATES: Side[] = ['E', 'S'], // the gates with a clear way to the hut's door
+  GOLD_COSTS = [1500, 3000, 6000],
+  GOLD_PICKUP = 10;
 const GOLD_BOYS = [
-  { n: 1, speed: 7.5, cap: 40 },
-  { n: 2, speed: 8.5, cap: 80 },
-  { n: 3, speed: 9.5, cap: 150 },
+  { n: 1, speed: 7.5, cap: 400 },
+  { n: 2, speed: 8.5, cap: 800 },
+  { n: 3, speed: 9.5, cap: 1500 },
 ];
 // Bosses: every BOSS_EVERY seconds of play a boss marches on the castle from one of the open camps, with a warning
 // BOSS_WARN seconds before. One comes at a time: while one is still on the field, the next waits.
 const BOSS_EVERY = 180,
   BOSS_WARN = 20;
 const BOSS_NAMES = ['the Red Warlord', 'the Frost Jarl', 'the Bog Troll', 'the Cinder Lord']; // by the biome of its camp
+// every thousand coins the king carries is one green bill at the bottom of his stack
+const BILL = 1000,
+  BILL_H = 0.035, // a bill's thickness
+  BILL_STEP = 0.05, // and how far apart they are in the stack
+  BILL_MAX = 300, // the most bills drawn
+  COIN_MAX = 400; // and the most coins drawn on top of them
 const RECRUIT: [cost: number, people: number][] = [
   [6, 1],
   [14, 3],
@@ -1326,26 +1337,6 @@ function goldHutGeo(lv: number): Geo {
   }
   return merge(p);
 }
-// the gold boy drops what he collects on this fenced plot
-function plotGeo(): Geo {
-  const p = [vc(B(4.6, 0.1, 4.6), '#7a5536', T(0, 0.05, 0))];
-  for (let i = 0; i < 6; i++) p.push(vc(B(4.2, 0.06, 0.28), '#664429', T(0, 0.12, -1.85 + i * 0.74)));
-  for (let i = 0; i <= 4; i++) {
-    const v = -2.3 + i * 1.15;
-    p.push(
-      vc(Cy(0.07, 0.08, 0.75, 6), '#6b452d', T(v, 0.37, -2.3)),
-      vc(Cy(0.07, 0.08, 0.75, 6), '#6b452d', T(-2.3, 0.37, v)),
-      vc(Cy(0.07, 0.08, 0.75, 6), '#6b452d', T(2.3, 0.37, v)),
-    );
-  }
-  for (const y of [0.25, 0.55])
-    p.push(
-      vc(B(4.7, 0.07, 0.07), '#8a5a36', T(0, y, -2.3)),
-      vc(B(0.07, 0.07, 4.7), '#8a5a36', T(-2.3, y, 0)),
-      vc(B(0.07, 0.07, 4.7), '#8a5a36', T(2.3, y, 0)),
-    );
-  return merge(p);
-}
 function treeGeo(seed: number, wood = '#6b4630'): Geo {
   const R = mulberry(seed),
     p = [vc(Co(0.32, 4.2, 6), wood, T(0, 2.1, 0))];
@@ -1990,14 +1981,22 @@ interface GoldBoy {
   target: Coin | null;
   retarget: number;
   moving: boolean;
+  home: string; // the base he belongs to and waits at (a GoldBase id)
+  dest: string | null; // the base he is taking his load to: his home or the nearest one
+}
+// a base gold boys bring coins to: the walled base ('home', at its gold hut) or an outpost ('outpost' + idx)
+interface GoldBase {
+  id: string;
+  x: number;
+  z: number;
+  r: number; // how close a boy comes to hand his coins in
+  idle: Pt; // where boys who belong to it wait
 }
 interface Gold {
   built: boolean;
   lv: number;
   b: Building | null;
-  plotB?: Building;
   boys: GoldBoy[];
-  plot: { x: number; z: number; value: number; acc: number };
 }
 interface Coin {
   x: number;
@@ -2013,8 +2012,8 @@ interface Coin {
   gone: boolean;
   claimed: GoldBoy | null;
 }
-// a coin in the air: to the king, who gets `v` coins, or just for show to a spot (a pad, the plot, a sack)
-type Flying = { x: number; y: number; z: number; t: number; v: number } & (
+// a coin (or a bill) in the air: to the king, who gets `v` coins, or just for show to a spot (a pad, a sack, a base)
+type Flying = { x: number; y: number; z: number; t: number; v: number; bill?: boolean } & (
   { to: 'king' } | { to: 'pt' | 'pad'; tx: number; tz: number; ty?: number }
 );
 // an arrow, bolt, spear or bullet after its target
@@ -2222,6 +2221,7 @@ interface World {
   weapons: IMesh[];
   ghost: IMesh;
   coin: IMesh;
+  bill: IMesh;
   boy: IMesh;
   sack: IMesh;
   shadow: IMesh;
@@ -3242,6 +3242,32 @@ function buildWorld() {
     new THREE.MeshLambertMaterial({ map: coinTex }),
     new THREE.MeshLambertMaterial({ map: coinTex }),
   ];
+  // a green bill: the king carries one for every thousand coins
+  const billTex = canvasTex(256, 128, (g) => {
+    g.fillStyle = '#4f9a52';
+    g.fillRect(0, 0, 256, 128);
+    g.strokeStyle = '#2f6b36';
+    g.lineWidth = 8;
+    g.strokeRect(10, 10, 236, 108);
+    g.lineWidth = 3;
+    g.strokeRect(22, 22, 212, 84);
+    g.fillStyle = '#86c47e';
+    g.beginPath();
+    g.ellipse(128, 64, 34, 38, 0, 0, 7);
+    g.fill();
+    g.fillStyle = '#2f6b36';
+    g.font = 'bold 60px sans-serif';
+    g.textAlign = 'center';
+    g.textBaseline = 'middle';
+    g.fillText('$', 128, 68);
+    for (const x of [44, 212]) {
+      g.beginPath();
+      g.arc(x, 64, 13, 0, 7);
+      g.fill();
+    }
+  });
+  const billSide = new THREE.MeshLambertMaterial({ color: '#e9efd8' }),
+    billFace = new THREE.MeshLambertMaterial({ map: billTex });
   const W = {
     // (the rest of World is filled in below, in the order the scene gets it)
     vmat,
@@ -3250,6 +3276,11 @@ function buildWorld() {
     weapons: [0, 1, 2, 3, 4, 5, 6].map((t) => inst(weaponGeo(t), vmat, 160)),
     ghost: inst(followerGeo(), ghostMat, 8, false),
     coin: inst(new THREE.CylinderGeometry(0.36, 0.36, 0.1, 18), coinMats, 1900),
+    bill: inst(
+      new THREE.BoxGeometry(1.0, BILL_H, 0.5),
+      [billSide, billSide, billFace, billFace, billSide, billSide],
+      320,
+    ),
     boy: inst(goldBoyGeo(), vmat, 4),
     sack: inst(sackGeo(), vmat, 4),
   } as World;
@@ -3803,7 +3834,7 @@ function newGame() {
       cd: 0,
       yaw: 2.4,
     })),
-    gold: { built: false, lv: 0, b: null, boys: [], plot: { x: GOLD_PLOT[0], z: GOLD_PLOT[1], value: 0, acc: 0 } },
+    gold: { built: false, lv: 0, b: null, boys: [] },
     segs: [],
     spawnT: 0.2,
     spawnQueue: [],
@@ -3860,11 +3891,6 @@ function newGame() {
   W.castle.position.y = 0;
   W.castle.rotation.z = 0;
   resetWorld();
-  G.clear.push(
-    { x: GOLD_HUT[0], z: GOLD_HUT[1], r: 4 },
-    { x: GOLD_PLOT[0], z: GOLD_PLOT[1], r: 3.6 },
-    { x: GOLD_PAD[0], z: GOLD_PAD[1], r: 3 },
-  );
   initFronts();
   refreshPosts();
   world.borderU.count.value = 0;
@@ -4477,12 +4503,10 @@ function siteFree(x: number, z: number): boolean {
   )
     return false;
   if (G.pads && G.pads.some((p) => !(p.site && !p.site.built) && Math.hypot(p.x - x, p.z - z) < 5.5)) return false;
-  if (
-    G.fronts.some((f) => Math.hypot(f.camp.x - x, f.camp.z - z) < 7) ||
-    G.ruins.some((c) => Math.hypot(c.x - x, c.z - z) < 6)
-  )
-    return false;
-  return Math.hypot(GOLD_HUT[0] - x, GOLD_HUT[1] - z) > 8 && Math.hypot(GOLD_PLOT[0] - x, GOLD_PLOT[1] - z) > 7;
+  return (
+    !G.fronts.some((f) => Math.hypot(f.camp.x - x, f.camp.z - z) < 7) &&
+    !G.ruins.some((c) => Math.hypot(c.x - x, c.z - z) < 6)
+  );
 }
 const outpostCost = () => Math.round(OUTPOST_COST * Math.pow(OUTPOST_GROW, G.outposts));
 function addSite(s: Site): void {
@@ -4702,18 +4726,17 @@ function buildGold() {
     gd.lv++;
     upgradeBuilding(gd.b!, gd.lv);
   }
-  while (gd.boys.length < GOLD_BOYS[gd.lv - 1].n) addGoldBoy(GOLD_HUT[0] + 1.6, GOLD_HUT[1] + 2.2, 0);
+  while (gd.boys.length < GOLD_BOYS[gd.lv - 1].n) addGoldBoy(GOLD_DROP[0], GOLD_DROP[1], 0);
   bigText(gd.lv === 1 ? 'Gold boy' : '+1 gold boy', GOLD_HUT[0], 5, GOLD_HUT[1]);
   refreshObstacles();
 }
-// the gold hut at its level, and the plot beside it
+// the gold hut at its level
 function makeGoldHut(): void {
   const gd = G.gold;
   gd.b = makeBuilding(GOLD_HUT[0], GOLD_HUT[1], Math.PI / 4, goldHutGeo, gd.lv, 7, 3.6);
-  gd.plotB = makeBuilding(GOLD_PLOT[0], GOLD_PLOT[1], 0, plotGeo, 1, 0, 0.6);
 }
-// a gold boy, carrying `load` coins (back to the plot) or none (waiting by the hut)
-function addGoldBoy(x: number, z: number, load: number): void {
+// a gold boy of the walled base, carrying `load` coins (to a base) or none (waiting by the hut)
+function addGoldBoy(x: number, z: number, load: number, home = 'home'): void {
   const gd = G.gold;
   gd.boys.push({
     x,
@@ -4725,6 +4748,8 @@ function addGoldBoy(x: number, z: number, load: number): void {
     target: null,
     retarget: 0.8 + gd.boys.length * 0.4,
     moving: false,
+    home,
+    dest: null,
   });
 }
 // things the king bumps into
@@ -5354,11 +5379,15 @@ function updateCoins(dt: number): void {
     }
   }
 }
-const stackTop = () => 1.25 + Math.min(G.coins, 400) * 0.1;
+// the king's stack: a bill for every thousand coins, then a coin for each one left over
+const stackBills = () => Math.min(Math.floor(G.coins / BILL), BILL_MAX),
+  stackCoins = () => Math.min(Math.floor(G.coins) % BILL, COIN_MAX),
+  stackTop = () => 1.25 + stackBills() * BILL_STEP + stackCoins() * 0.1;
 
 // --------------------------------------------------------------- gold boy ----
-// Gold boys run around outside the walls picking up coins and drop them on
-// the plot next to their hut, where the king collects them.
+// Gold boys belong to a base and wait at it. They run around outside the walls picking up coins (each worth
+// GOLD_PICKUP to them) and take their load to the nearest base, their own or another: the walled base, in front of
+// its gold hut, or an outpost. The coins they hand in go straight to the king.
 const RX = HX + 2.2,
   RZ = HZ + 2.2;
 function crossesBase(ax: number, az: number, bx: number, bz: number): boolean {
@@ -5418,11 +5447,117 @@ function findCoin(b: GoldBoy): Coin | null {
   }
   return best;
 }
+// the gates gold boys use (the ones with a clear way to the hut's door): a spot just inside each, and one just
+// outside the strip around the walls that `steer` keeps them out of
+const GOLD_WAYS = GOLD_GATES.map((side) => {
+  const g = GATES.find((g) => g.side === side)!,
+    m = (g.lo + g.hi) / 2;
+  const [cx, cz, nx, nz] =
+    side === 'E' ? [HX, m, 1, 0] : side === 'W' ? [-HX, m, -1, 0] : side === 'S' ? [m, HZ, 0, 1] : [m, -HZ, 0, -1];
+  return {
+    cx,
+    cz,
+    nx,
+    nz,
+    inside: [cx - nx * 2.2, cz - nz * 2.2] as Pt,
+    outside: [cx + nx * 2.8, cz + nz * 2.8] as Pt,
+  };
+});
+type GoldWay = (typeof GOLD_WAYS)[number];
+// how far it is from a to b outside the base, round a corner of it if the straight way runs through it
+function aroundBase(ax: number, az: number, bx: number, bz: number): number {
+  const [cx, cz] = steer(ax, az, bx, bz);
+  return Math.hypot(cx - ax, cz - az) + Math.hypot(bx - cx, bz - cz);
+}
+// the gate that makes the shortest way from a boy at (x, z) to (tx, tz), on the other side of the walls
+function goldGate(x: number, z: number, tx: number, tz: number): [way: GoldWay, length: number] {
+  const inside = inBase(x, z);
+  let best = GOLD_WAYS[0],
+    bd = Infinity;
+  for (const w of GOLD_WAYS) {
+    const [near, far] = inside ? [w.inside, w.outside] : [w.outside, w.inside];
+    const d =
+      (inside ? Math.hypot(near[0] - x, near[1] - z) : aroundBase(x, z, near[0], near[1])) +
+      Math.hypot(far[0] - near[0], far[1] - near[1]) +
+      (inside ? aroundBase(far[0], far[1], tx, tz) : Math.hypot(tx - far[0], tz - far[1]));
+    if (d < bd) {
+      bd = d;
+      best = w;
+    }
+  }
+  return [best, bd];
+}
+// where to head for next on the way to (tx, tz): round the walled base outside it, in and out through a gate
+function goldWay(b: GoldBoy, tx: number, tz: number): Pt {
+  const inside = inBase(b.x, b.z);
+  if (inside === inBase(tx, tz)) return inside ? [tx, tz] : steer(b.x, b.z, tx, tz);
+  const [w] = goldGate(b.x, b.z, tx, tz),
+    [near, far] = inside ? [w.inside, w.outside] : [w.outside, w.inside];
+  // in the gateway: on through it
+  const across = Math.abs((b.x - w.cx) * w.nz - (b.z - w.cz) * w.nx),
+    along = (b.x - w.cx) * w.nx + (b.z - w.cz) * w.nz;
+  if (across < 1.2 && along > -2.4 && along < 3) return far;
+  return inside ? near : steer(b.x, b.z, near[0], near[1]);
+}
+// the bases gold boys bring coins to: the walled base (in front of its gold hut) and every outpost (at its tower)
+function goldBases(): GoldBase[] {
+  const bases: GoldBase[] = [
+    { id: 'home', x: GOLD_DROP[0], z: GOLD_DROP[1], r: 1, idle: [GOLD_DROP[0] + 0.2, GOLD_DROP[1] + 1.6] },
+  ];
+  for (const t of G.towers) {
+    if (!t.outer || !t.built) continue;
+    const hx = HOME.x - t.x,
+      hz = HOME.z - t.z,
+      hl = Math.hypot(hx, hz) || 1;
+    bases.push({ id: 'outpost' + t.idx, x: t.x, z: t.z, r: 2.6, idle: [t.x + (hx / hl) * 3.2, t.z + (hz / hl) * 3.2] });
+  }
+  return bases;
+}
+// the base nearest a boy, the way he would have to go
+function nearestBase(b: GoldBoy, bases: GoldBase[]): GoldBase {
+  let best = bases[0],
+    bd = Infinity;
+  for (const base of bases) {
+    const d =
+      inBase(b.x, b.z) === inBase(base.x, base.z)
+        ? aroundBase(b.x, b.z, base.x, base.z)
+        : goldGate(b.x, b.z, base.x, base.z)[1];
+    if (d < bd) {
+      bd = d;
+      best = base;
+    }
+  }
+  return best;
+}
+// a boy hands his load in at a base: it goes to the king, and a few coins (a bill for each thousand) fly in for show
+function handIn(b: GoldBoy, base: GoldBase): void {
+  const v = b.load,
+    bills = Math.min(4, Math.floor(v / BILL)),
+    coins = Math.min(6 - bills, Math.ceil((v % BILL) / 50));
+  G.coins += v;
+  G.gainFlash = 0.5;
+  for (let i = 0; i < bills + coins; i++)
+    G.flying.push({
+      x: b.x,
+      y: 1.2,
+      z: b.z,
+      t: -i * 0.06,
+      v: 0,
+      bill: i < bills,
+      to: 'pt',
+      tx: base.x + (Math.random() - 0.5) * 1.2,
+      tz: base.z + (Math.random() - 0.5) * 1.2,
+      ty: 0.4,
+    });
+  floatText(`+${Math.round(v)}`, b.x, 2.4, b.z, '#ffd84a');
+  b.load = 0;
+}
 function updateGold(dt: number): void {
   const gd = G.gold;
   if (!gd.built) return;
   const spec = GOLD_BOYS[gd.lv - 1],
-    pl = gd.plot;
+    bases = goldBases(),
+    byId = (id: string | null) => bases.find((s) => s.id === id);
   for (const b of gd.boys) {
     b.bob += dt * 13;
     b.retarget -= dt;
@@ -5430,10 +5565,12 @@ function updateGold(dt: number): void {
       tz = b.z,
       speed = spec.speed;
     if (b.state === 'idle') {
-      const a = G.t * 0.4 + gd.boys.indexOf(b) * 2;
-      tx = GOLD_HUT[0] + 1.5 + Math.cos(a) * 1.2;
-      tz = GOLD_HUT[1] + 3 + Math.sin(a) * 1.2;
-      speed = 1.6;
+      // waiting by his own base, strolling about in front of it
+      const home = byId(b.home) ?? bases[0],
+        a = G.t * 0.4 + gd.boys.indexOf(b) * 2;
+      tx = home.idle[0] + Math.cos(a) * 1.1;
+      tz = home.idle[1] + Math.sin(a) * 1.1;
+      if (Math.hypot(tx - b.x, tz - b.z) < 3) speed = 1.6;
       if (b.retarget <= 0) {
         b.retarget = 0.8;
         if (findCoin(b)) b.state = 'seek';
@@ -5452,29 +5589,21 @@ function updateGold(dt: number): void {
       } else b.state = b.load > 0 ? 'return' : 'idle';
     }
     if (b.state === 'return') {
-      tx = pl.x;
-      tz = pl.z;
-      if (Math.hypot(pl.x - b.x, pl.z - b.z) < 1.4) {
-        pl.value += b.load;
-        for (let i = 0; i < Math.min(6, Math.ceil(b.load / 5)); i++)
-          G.flying.push({
-            x: b.x,
-            y: 1.2,
-            z: b.z,
-            t: -i * 0.06,
-            v: 0,
-            to: 'pt',
-            tx: pl.x + (Math.random() - 0.5) * 1.6,
-            tz: pl.z + (Math.random() - 0.5) * 1.6,
-            ty: 0.4,
-          });
-        floatText(`+${Math.round(b.load)}`, pl.x, 1.8, pl.z, '#ffd84a');
-        b.load = 0;
+      let base = byId(b.dest);
+      if (!base) {
+        base = nearestBase(b, bases);
+        b.dest = base.id;
+      }
+      tx = base.x;
+      tz = base.z;
+      if (Math.hypot(base.x - b.x, base.z - b.z) < base.r) {
+        handIn(b, base);
+        b.dest = null;
         b.state = 'seek';
         b.retarget = 0;
       }
     }
-    const [sx, sz] = steer(b.x, b.z, tx, tz),
+    const [sx, sz] = goldWay(b, tx, tz),
       dx = sx - b.x,
       dz = sz - b.z,
       d = Math.hypot(dx, dz);
@@ -5490,7 +5619,7 @@ function updateGold(dt: number): void {
       for (let i = G.coinsOnGround.length - 1; i >= 0; i--) {
         const c = G.coinsOnGround[i];
         if (c.age < 0.35 || (c.x - b.x) ** 2 + (c.z - b.z) ** 2 > 1.3) continue;
-        b.load += c.v;
+        b.load += c.v * GOLD_PICKUP;
         c.gone = true;
         G.coinsOnGround.splice(i, 1);
         if (G.flying.length < 200)
@@ -5503,24 +5632,6 @@ function updateGold(dt: number): void {
       }
     }
   }
-  // the king empties the plot by standing on it
-  const k = G.king;
-  if (pl.value >= 1 && Math.abs(k.x - pl.x) < 2.4 && Math.abs(k.z - pl.z) < 2.4) {
-    pl.acc += Math.max(30, pl.value * 2) * dt;
-    const take = Math.min(Math.floor(pl.acc), Math.floor(pl.value));
-    if (take > 0) {
-      pl.acc -= take;
-      pl.value -= take;
-      G.flying.push({
-        x: pl.x + (Math.random() - 0.5) * 1.5,
-        y: 0.5,
-        z: pl.z + (Math.random() - 0.5) * 1.5,
-        t: 0,
-        v: take,
-        to: 'king',
-      });
-    }
-  } else pl.acc = 0;
 }
 
 // --------------------------------------------------------------- shooting ----
@@ -6128,12 +6239,6 @@ function setI(mesh: IMesh, i: number, x: number, y: number, z: number, yaw: numb
   tmpM.compose(tmpV.set(x, y, z), tmpQ.setFromEuler(tmpE.set(0, yaw, roll, 'YXZ')), tmpS.set(s, s, s));
   mesh.setMatrixAt(i, tmpM);
 }
-// coins heaped on the gold plot: a low cone that grows with the amount
-const PILE: [x: number, z: number, r: number, j: number][] = Array.from({ length: 80 }, (_, i) => {
-  const a = i * 2.39996,
-    r = 0.2 * Math.sqrt(i + 0.5);
-  return [Math.cos(a) * r, Math.sin(a) * r, r, (i * 0.37) % 1];
-});
 const ecount: Record<string, number> = {};
 function syncScene(dt: number): void {
   const W = world,
@@ -6291,32 +6396,44 @@ function syncScene(dt: number): void {
   setI(W.shadow, sh++, k.x, 0.05, k.z, k.yaw, 1.9);
   W.shadow.count = sh;
   W.shadow.instanceMatrix.needsUpdate = true;
-  // coins: ground, flying, the gold plot and the king's stack
-  let c = 0;
+  // coins and bills: on the ground, in the air, and the king's stack (bills at the bottom, coins on top)
+  let c = 0,
+    bl = 0;
   const coinAt = (x: number, y: number, z: number, rx: number, ry: number) => {
     tmpM.compose(tmpV.set(x, y, z), tmpQ.setFromEuler(tmpE.set(rx, ry, 0)), tmpS.set(1, 1, 1));
     W.coin.setMatrixAt(c++, tmpM);
   };
+  const billAt = (x: number, y: number, z: number, rx: number, ry: number) => {
+    if (bl >= W.bill.userData.cap) return;
+    tmpM.compose(tmpV.set(x, y, z), tmpQ.setFromEuler(tmpE.set(rx, ry, 0, 'YXZ')), tmpS.set(1, 1, 1));
+    W.bill.setMatrixAt(bl++, tmpM);
+  };
   for (const g of G.coinsOnGround) if (c < 1700) coinAt(g.x, g.y, g.z, g.rest ? 0 : g.spin, g.spin);
-  for (const f of G.flying) if (c < 1780) coinAt(f.x, f.y, f.z, 0.3, f.t * 6);
-  const pl = G.gold.plot;
-  if (G.gold.built && pl.value >= 1) {
-    const pn = Math.min(PILE.length, Math.ceil(pl.value / 4)),
-      H = 0.1 + (0.9 * pn) / PILE.length;
-    for (let i = 0; i < pn; i++) {
-      const [ox, oz, r, j] = PILE[i];
-      coinAt(pl.x + ox, 0.2 + Math.max(0, H * (1 - r / 1.9)) + j * 0.05, pl.z + oz, (j - 0.5) * 0.5, j * 6);
-    }
+  for (const f of G.flying) {
+    if (f.bill) billAt(f.x, f.y, f.z, 0.3, f.t * 6);
+    else if (c < 1780) coinAt(f.x, f.y, f.z, 0.3, f.t * 6);
   }
-  const stackN = Math.min(Math.floor(G.coins), 400),
+  const bills = stackBills(),
+    coins = stackCoins(),
     bx = k.x - Math.sin(k.yaw) * 0.55,
-    bz = k.z - Math.cos(k.yaw) * 0.55;
-  for (let i = 0; i < stackN && c < 1890; i++) {
-    const sway = Math.sin(k.bob * 0.5 + i * 0.02) * i * 0.0006;
-    coinAt(bx + Math.sin(k.yaw) * sway, 1.3 + i * 0.1 + W.king.position.y, bz + Math.cos(k.yaw) * sway, 0, i * 0.3);
+    bz = k.z - Math.cos(k.yaw) * 0.55,
+    by = 1.25 + W.king.position.y;
+  // the higher up the stack, the more it sways
+  const sway = (h: number) => Math.sin(k.bob * 0.5 + h * 0.2) * h * 0.006;
+  for (let i = 0; i < bills; i++) {
+    const h = (i + 0.5) * BILL_STEP,
+      s = sway(h);
+    billAt(bx + Math.sin(k.yaw) * s, by + h, bz + Math.cos(k.yaw) * s, 0, k.yaw + (((i * 0.37) % 1) - 0.5) * 0.16);
+  }
+  for (let i = 0; i < coins && c < 1890; i++) {
+    const h = bills * BILL_STEP + 0.05 + i * 0.1,
+      s = sway(h);
+    coinAt(bx + Math.sin(k.yaw) * s, by + h, bz + Math.cos(k.yaw) * s, 0, i * 0.3);
   }
   W.coin.count = c;
   W.coin.instanceMatrix.needsUpdate = true;
+  W.bill.count = bl;
+  W.bill.instanceMatrix.needsUpdate = true;
   // projectiles
   const cnt: Record<ProjKind, number> = { arrow: 0, arrow2: 0, bolt: 0, spear: 0, bullet: 0, ball: 0 };
   for (const p of G.projectiles) {
@@ -6335,7 +6452,7 @@ function syncScene(dt: number): void {
     W.proj[key].count = cnt[key];
     W.proj[key].instanceMatrix.needsUpdate = true;
   }
-  // cannons aim, the castle falls, gates open for the king
+  // cannons aim, the castle falls, gates open for the king and the gold boys
   for (const cn of G.cannons) if (cn.turret) cn.turret.rotation.y = cn.yaw;
   if (G.over) {
     cs.fall = Math.min(1, cs.fall + dt * 0.8);
@@ -6343,7 +6460,8 @@ function syncScene(dt: number): void {
     W.castle.rotation.z = Math.sin(cs.fall * 9) * 0.03 * (1 - cs.fall);
   }
   for (const gt of W.gates) {
-    const want = gt.group.visible && Math.hypot(k.x - gt.x, k.z - gt.z) < 3.8 ? 1 : 0;
+    const near = (x: number, z: number) => Math.hypot(x - gt.x, z - gt.z) < 3.8,
+      want = gt.group.visible && (near(k.x, k.z) || G.gold.boys.some((b) => near(b.x, b.z))) ? 1 : 0;
     gt.open += (want - gt.open) * Math.min(1, dt * 6);
     gt.a.rotation.y = -gt.open * 1.4 * gt.sgn;
     gt.b.rotation.y = gt.open * 1.4 * gt.sgn;
@@ -6614,7 +6732,7 @@ const SavedWorld = Schema.Struct({
   cannons: Schema.Array(Schema.Tuple([UpTo(CANNON_MAX), Num])), // each cannon by the base: level (0 for none), aim
   gold: Schema.Struct({
     lv: UpTo(GOLD_COSTS.length),
-    plot: Num,
+    plot: Schema.optionalKey(Num), // only in saves from before the boys took coins home: what lay on their plot
     boys: Schema.Array(Schema.Tuple([Num, Num, Num])), // x, z, coins carried
   }),
   claims: Schema.Array(Schema.Tuple([Num, Num, Num])).check(Schema.isMinLength(1)), // x, z, r
@@ -6712,7 +6830,7 @@ function snapshot(): SavedWorld {
     towers: G.towers.filter((t) => !t.outer).map((t) => t.level),
     walls: G.segs.map((s) => [s.hp, s.alive]),
     cannons: G.cannons.filter((c) => !c.field).map((c) => [c.level, c.yaw]),
-    gold: { lv: gd.lv, plot: gd.plot.value, boys: gd.boys.map((b) => [b.x, b.z, b.load]) },
+    gold: { lv: gd.lv, boys: gd.boys.map((b) => [b.x, b.z, b.load]) },
     claims: G.claims.map((c) => [c.x, c.z, c.r]),
     fronts: G.fronts.map((f) => ({
       id: f.id,
@@ -6836,7 +6954,7 @@ function restoreGame(w: SavedWorld): void {
     makeGoldHut();
     for (const [x, z, load] of w.gold.boys) addGoldBoy(x, z, load);
   }
-  gd.plot.value = w.gold.plot;
+  G.coins += w.gold.plot ?? 0; // the coins on the old plot are the king's now
   // the fronts, their camps and roads, and the camps already cleared
   for (const [i, sf] of w.fronts.entries()) {
     const f = G.fronts[i];
