@@ -4,7 +4,8 @@
 // border reaches are cleared, and the enemy falls back further out, tougher.
 //
 // The game is a Game for the hub (`game` at the end): it opens in a scope while the player is on its screen, and
-// what it sets up there (the input listeners, the frame loop, the game-over panel's delay) stops when they leave.
+// what it sets up there (the input listeners, the frame loop, the game-over panel's delay, saving the game every few
+// seconds) stops when they leave. The game being played is saved, so a reload carries on with it (see "saving").
 // The rules, the world and the drawing are plain functions the frame loop calls.
 import { Effect, FiberSet, Schema } from 'effect';
 import * as THREE from 'three';
@@ -39,7 +40,7 @@ import {
   type XZ,
 } from './castle-defender-world';
 import { GameHub, type Game as HubGame } from './hub';
-import { animate, listen, load, type PageServices, run, save } from './page';
+import { animate, forget, listen, load, type PageServices, run, runSync, save } from './page';
 
 // ---------------------------------------------------------------- tuning ----
 const HX = 14,
@@ -3793,7 +3794,10 @@ function newGame() {
 
 // ------------------------------------------------------------------ walls ----
 function buildSegments() {
-  // walls along the base rectangle, ~4 units per segment, split around the gates
+  G.segs = makeSegments();
+}
+// the stretches of wall along the base rectangle, ~4 units each, split around the gates
+function makeSegments(): Seg[] {
   const segs: Seg[] = [];
   const add = (side: Side, lo: number, hi: number, gate: boolean) => {
     const n = gate ? 1 : Math.max(1, Math.round((hi - lo) / 4));
@@ -3841,7 +3845,7 @@ function buildSegments() {
     add(side, gate.lo, gate.hi, true);
     add(side, gate.hi, span, false);
   }
-  G.segs = segs;
+  return segs;
 }
 function rebuildWalls(dt = 0) {
   const W = world,
@@ -4418,6 +4422,11 @@ function addSite(s: Site): void {
     aim: undefined,
   };
   G.towers.push(t);
+  outpostPad(t);
+  keepClear(t.x, t.z, 4);
+}
+// the pad of an outpost (or the spot for one): it builds the outpost, then upgrades it
+function outpostPad(t: Tower): Pad {
   const pad = createPad({
     id: 'outpost' + t.idx,
     x: t.x,
@@ -4439,7 +4448,7 @@ function addSite(s: Site): void {
   t.pad = pad;
   pad.site = t;
   G.pads.push(pad);
-  keepClear(t.x, t.z, 4);
+  return pad;
 }
 function dropSite(t: Tower): void {
   G.towers.splice(G.towers.indexOf(t), 1);
@@ -4528,7 +4537,13 @@ function upgradeTower(t: Tower): void {
   }
 }
 function buildForge() {
-  const b = makeBuilding(FORGE[0], FORGE[1], Math.PI / 4, forgeGeo, 0, 6.5, 2.5);
+  G.forge = makeForge(0);
+  celebrate(FORGE[0], FORGE[1], 2.5, false);
+  refreshObstacles();
+}
+// the forge at a weapon's level (0 before the first upgrade)
+function makeForge(lv: number): Building {
+  const b = makeBuilding(FORGE[0], FORGE[1], Math.PI / 4, forgeGeo, lv, 6.5, 2.5 + lv * 0.4);
   const lava = new THREE.Mesh(new THREE.CylinderGeometry(0.86, 0.86, 0.05, 8), world.lavaMat);
   lava.position.y = 1.69;
   b.body.add(lava);
@@ -4538,9 +4553,7 @@ function buildForge() {
   smith.castShadow = true;
   b.body.add(smith);
   b.smith = smith;
-  G.forge = b;
-  celebrate(FORGE[0], FORGE[1], 2.5, false);
-  refreshObstacles();
+  return b;
 }
 function upgradeWeapon() {
   if (G.tier < FORGE_COSTS.length) {
@@ -4572,17 +4585,7 @@ function buildCannon(i: number): void {
   if (!c.built) {
     c.built = true;
     c.level = 1;
-    c.b = makeBuilding(c.x, c.z, 0, cannonBaseGeo, 1, 5.5, 2.2);
-    const tur = new THREE.Mesh(geoFor(cannonTurretGeo, 1), world.vmat);
-    tur.position.y = CANNON_TOP[0];
-    tur.castShadow = true;
-    tur.rotation.y = c.yaw;
-    c.b.body.add(tur);
-    c.turret = tur;
-    c.b.onSwap = (lv) => {
-      tur.geometry = geoFor(cannonTurretGeo, lv);
-      tur.position.y = CANNON_TOP[lv - 1];
-    };
+    makeCannon(c);
     celebrate(c.x, c.z, 2.2, false);
     if (!c.field) openFront('N');
   } else {
@@ -4591,32 +4594,56 @@ function buildCannon(i: number): void {
   }
   refreshObstacles();
 }
+// a cannon's building and turret, at its level
+function makeCannon(c: Cannon): void {
+  const b = makeBuilding(c.x, c.z, 0, cannonBaseGeo, c.level, 5.5, 2.2);
+  const tur = new THREE.Mesh(geoFor(cannonTurretGeo, c.level), world.vmat);
+  tur.position.y = CANNON_TOP[c.level - 1];
+  tur.castShadow = true;
+  tur.rotation.y = c.yaw;
+  b.body.add(tur);
+  c.b = b;
+  c.turret = tur;
+  b.onSwap = (lv) => {
+    tur.geometry = geoFor(cannonTurretGeo, lv);
+    tur.position.y = CANNON_TOP[lv - 1];
+  };
+}
 function buildGold() {
   const gd = G.gold;
   if (!gd.built) {
     gd.built = true;
     gd.lv = 1;
-    gd.b = makeBuilding(GOLD_HUT[0], GOLD_HUT[1], Math.PI / 4, goldHutGeo, 1, 7, 3.6);
-    gd.plotB = makeBuilding(GOLD_PLOT[0], GOLD_PLOT[1], 0, plotGeo, 1, 0, 0.6);
+    makeGoldHut();
     celebrate(GOLD_HUT[0], GOLD_HUT[1], 3.6, false);
   } else {
     gd.lv++;
     upgradeBuilding(gd.b!, gd.lv);
   }
-  while (gd.boys.length < GOLD_BOYS[gd.lv - 1].n)
-    gd.boys.push({
-      x: GOLD_HUT[0] + 1.6,
-      z: GOLD_HUT[1] + 2.2,
-      yaw: 0.8,
-      bob: Math.random() * 6,
-      load: 0,
-      state: 'idle',
-      target: null,
-      retarget: 0.8 + gd.boys.length * 0.4,
-      moving: false,
-    });
+  while (gd.boys.length < GOLD_BOYS[gd.lv - 1].n) addGoldBoy(GOLD_HUT[0] + 1.6, GOLD_HUT[1] + 2.2, 0);
   bigText(gd.lv === 1 ? 'Gold boy' : '+1 gold boy', GOLD_HUT[0], 5, GOLD_HUT[1]);
   refreshObstacles();
+}
+// the gold hut at its level, and the plot beside it
+function makeGoldHut(): void {
+  const gd = G.gold;
+  gd.b = makeBuilding(GOLD_HUT[0], GOLD_HUT[1], Math.PI / 4, goldHutGeo, gd.lv, 7, 3.6);
+  gd.plotB = makeBuilding(GOLD_PLOT[0], GOLD_PLOT[1], 0, plotGeo, 1, 0, 0.6);
+}
+// a gold boy, carrying `load` coins (back to the plot) or none (waiting by the hut)
+function addGoldBoy(x: number, z: number, load: number): void {
+  const gd = G.gold;
+  gd.boys.push({
+    x,
+    z,
+    yaw: 0.8,
+    bob: Math.random() * 6,
+    load,
+    state: load > 0 ? 'return' : 'idle',
+    target: null,
+    retarget: 0.8 + gd.boys.length * 0.4,
+    moving: false,
+  });
 }
 // things the king bumps into
 function refreshObstacles() {
@@ -5691,7 +5718,10 @@ function updatePads(dt: number): void {
       }
     }
   } else G.spendAcc = 0;
-  // redraw changed pads
+  redrawPads();
+}
+// draw the pads whose price, payment or level has changed
+function redrawPads(): void {
   for (const p of G.pads) {
     if (!p.visibleNow) continue;
     p.cost = p.price();
@@ -6274,6 +6304,7 @@ function gameOver(): void {
     t = G.t;
   fork(
     Effect.gen(function* () {
+      yield* forget(WORLD_KEY);
       const best = yield* load(BEST_TIME, BestTime, () => 0);
       if (t > best) yield* save(BEST_TIME, BestTime, Math.floor(t));
       ui.overText.textContent = overText(g, t, best);
@@ -6296,6 +6327,434 @@ function overText(g: Game, t: number, best: number): string {
     ? `${held} Your border reached ${Math.round(g.reach)} paces out, with ${g.outposts} outpost${g.outposts > 1 ? 's' : ''}.`
     : held;
 }
+
+// ------------------------------------------------------------------ saving ----
+// The game being played is saved in localStorage (castle.world.v1) every few seconds while it runs, when the player
+// leaves it, and when the page is hidden or goes away, so that a reload, or a tab closed and opened again, finds it
+// as it was: paused under the pause panel, as when the player comes back from the menu. When the castle falls the
+// save goes with it, and Restart saves the new game over it.
+//
+// What is saved is what the game needs to carry on: the clock, the coins, the king, the troop, every building at its
+// level, the walls, the land claimed, the fronts with their camps and roads, the ruins, the outposts and their field
+// cannons, the enemies on the field and the ones about to set off, and the coins on the ground. What only shows
+// starts again empty (arrows and cannon balls in the air, dust, floating numbers). Coins flying to the king are his,
+// and coins paid into a spot for an outpost not built yet go back to him: the spots are worked out again from the
+// border, in the same places, as new ones. A save the game can't carry on from (one edited by hand, or broken) is no
+// game at all, and a new one starts.
+const WORLD_KEY = 'castle.world.v1';
+const Num = Schema.Finite,
+  Count = Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
+  UpTo = (max: number) => Schema.Int.check(Schema.isBetween({ minimum: 0, maximum: max })),
+  SavedPt = Schema.mutable(Schema.Tuple([Num, Num])),
+  SavedRoad = Schema.mutable(Schema.Array(SavedPt)).check(Schema.isMinLength(2));
+const FRONT_IDS = FRONTS.map((d) => d.id),
+  UNIT_KINDS = Object.keys(UNIT) as UnitKind[],
+  SEG_COUNT = makeSegments().length;
+const SavedFront = Schema.Struct({
+  id: Schema.Literals(FRONT_IDS),
+  road: SavedRoad,
+  segs: Schema.mutable(Schema.Array(SavedRoad)),
+  open: Schema.Boolean,
+  openAt: Schema.NullOr(Num), // null until a building opens it
+  shared: Schema.Boolean,
+  timer: Num,
+  restAt: Num,
+  camp: SavedPt,
+});
+const SavedEnemy = Schema.Struct({
+  kind: Schema.Literals(UNIT_KINDS),
+  look: Schema.Literals(['', 'S', 'R']), // a knight with a shield, a giant in its biome's second colours
+  theme: UpTo(BIOME_NAMES.length - 1),
+  x: Num,
+  z: Num,
+  route: Count, // which of the routes it walks, and how far along
+  wp: Count,
+  hp: Num,
+  max: Num,
+  speed: Num,
+  dmg: Num,
+  atk: Num,
+  yaw: Num,
+  value: Num,
+  side: Num,
+  state: Schema.Literals(['path', 'wall', 'castle']),
+  wall: Schema.NullOr(Count), // the stretch of wall it is breaking down
+});
+const SavedWorld = Schema.Struct({
+  t: Num,
+  coins: Num,
+  kills: Count,
+  maxEnemies: Count,
+  king: SavedPt,
+  yaw: Num,
+  castle: Num, // the castle's hit points
+  troop: Schema.Array(Schema.Tuple([Num, Num, Schema.Int.check(Schema.isGreaterThanOrEqualTo(1))])), // x, z, rank
+  recruits: Count,
+  barracks: Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: BARRACKS_STEPS.length })),
+  forge: Schema.NullOr(UpTo(FORGE_COSTS.length)), // the weapon's tier, or null before there is a forge
+  extraDmg: Count,
+  towers: Schema.Array(UpTo(TOWER_LV.length)), // each wall tower's level, 0 for none
+  walls: Schema.Array(Schema.Tuple([Num, Schema.Boolean])), // each stretch of wall: its hit points, and if it stands
+  cannons: Schema.Array(Schema.Tuple([UpTo(CANNON_MAX), Num])), // each cannon by the base: level (0 for none), aim
+  gold: Schema.Struct({
+    lv: UpTo(GOLD_COSTS.length),
+    plot: Num,
+    boys: Schema.Array(Schema.Tuple([Num, Num, Num])), // x, z, coins carried
+  }),
+  claims: Schema.Array(Schema.Tuple([Num, Num, Num])).check(Schema.isMinLength(1)), // x, z, r
+  fronts: Schema.Array(SavedFront),
+  ruins: Schema.Array(SavedPt),
+  outposts: Schema.Array(
+    Schema.Struct({
+      idx: Count,
+      at: SavedPt,
+      up: SavedPt,
+      level: Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: TOWER_LV.length })),
+    }),
+  ),
+  fieldCannons: Schema.Array(
+    Schema.Struct({ at: SavedPt, side: SavedPt, cost0: Num, level: UpTo(CANNON_MAX), yaw: Num }),
+  ),
+  siteSeq: Count,
+  paid: Schema.Record(Schema.String, Num), // coins paid into a pad so far, by its id
+  spawnT: Num,
+  nextPath: Count,
+  queue: Schema.Array(Schema.Tuple([Schema.Literals(FRONT_IDS), Schema.Literals(UNIT_KINDS), Num])), // front, kind, wait
+  routes: Schema.Array(SavedRoad),
+  enemies: Schema.Array(SavedEnemy),
+  ground: Schema.Array(Schema.Tuple([Num, Num, Num, Num])), // coins on the ground: x, z, value, age
+}).check(
+  Schema.makeFilter(
+    (w) =>
+      w.t >= 0 &&
+      w.coins >= 0 &&
+      w.castle > 0 &&
+      w.troop.length <= SQUAD_MAX &&
+      w.towers.length === TOWER_SPOTS.length &&
+      w.walls.length === SEG_COUNT &&
+      w.cannons.length === CANNON_SPOTS.length &&
+      w.gold.boys.length === (w.gold.lv ? GOLD_BOYS[w.gold.lv - 1].n : 0) &&
+      w.claims.every(([, , r]) => r > 0) &&
+      w.fronts.length === FRONTS.length &&
+      w.fronts.every((f, i) => f.id === FRONT_IDS[i]) &&
+      new Set(w.outposts.map((o) => o.idx)).size === w.outposts.length &&
+      w.outposts.every((o) => o.idx < w.siteSeq) &&
+      w.enemies.every(
+        (e) =>
+          e.route < w.routes.length &&
+          e.wp < w.routes[e.route].length &&
+          e.max > 0 &&
+          (e.state !== 'wall' || (e.wall !== null && e.wall < SEG_COUNT)) &&
+          (e.look === '' ||
+            (e.look === 'S' && e.kind === 'knight') ||
+            (e.look === 'R' && e.kind === 'giant' && !!PAL[e.theme].giants[1])),
+      ),
+  ),
+);
+type SavedWorld = typeof SavedWorld.Type;
+
+// The game as it is now, to save
+function snapshot(): SavedWorld {
+  const k = G.king,
+    gd = G.gold;
+  // the roads the enemies walk, each once (most walk their front's road as it was when they set off)
+  const routes: Pt[][] = [],
+    routeOf = new Map<Pt[], number>();
+  const route = (r: Pt[]) => {
+    let i = routeOf.get(r);
+    if (i === undefined) {
+      routeOf.set(r, (i = routes.length));
+      routes.push(r);
+    }
+    return i;
+  };
+  const outer = G.towers.filter((t) => t.outer),
+    spots = outer.filter((t) => !t.built);
+  const toKing = G.flying.reduce((n, f) => n + (f.to === 'king' ? f.v : 0), 0),
+    paidIntoSpots = spots.reduce((n, t) => n + (t.pad ? t.pad.paid : 0), 0);
+  const ranks = (f: Follower) => f.rank + G.joiners.filter((j) => j.target === f).length;
+  return {
+    t: G.t,
+    coins: G.coins + toKing + paidIntoSpots,
+    kills: G.kills,
+    maxEnemies: G.stats.maxEnemies,
+    king: [k.x, k.z],
+    yaw: k.yaw,
+    castle: G.castle.hp,
+    troop: G.followers.map((f) => [f.x, f.z, ranks(f)]),
+    recruits: G.recruitIdx,
+    barracks: G.barracksLv,
+    forge: G.forge ? G.tier : null,
+    extraDmg: G.extraDmg,
+    towers: G.towers.filter((t) => !t.outer).map((t) => t.level),
+    walls: G.segs.map((s) => [s.hp, s.alive]),
+    cannons: G.cannons.filter((c) => !c.field).map((c) => [c.level, c.yaw]),
+    gold: { lv: gd.lv, plot: gd.plot.value, boys: gd.boys.map((b) => [b.x, b.z, b.load]) },
+    claims: G.claims.map((c) => [c.x, c.z, c.r]),
+    fronts: G.fronts.map((f) => ({
+      id: f.id,
+      road: f.road,
+      segs: f.segs,
+      open: f.open,
+      openAt: Number.isFinite(f.openAt) ? f.openAt : null,
+      shared: f.shared,
+      timer: f.timer,
+      restAt: f.restAt,
+      camp: [f.camp.x, f.camp.z],
+    })),
+    ruins: G.ruins.map((c) => [c.x, c.z]),
+    outposts: outer.filter((t) => t.built).map((t) => ({ idx: t.idx, at: [t.x, t.z], up: t.up, level: t.level })),
+    fieldCannons: G.cannons
+      .filter((c) => c.field)
+      .map((c) => ({ at: [c.x, c.z], side: c.side, cost0: c.cost0, level: c.level, yaw: c.yaw })),
+    siteSeq: G.siteSeq,
+    paid: Object.fromEntries(G.pads.filter((p) => p.paid > 0 && !spots.includes(p.site!)).map((p) => [p.id, p.paid])),
+    spawnT: G.spawnT,
+    nextPath: G.nextPath,
+    queue: G.spawnQueue.map((q) => [q.f.id, q.kind, q.t]),
+    enemies: G.enemies
+      .filter((e) => e.hp > 0)
+      .map((e) => ({
+        kind: e.kind,
+        look: e.mkey.slice(e.kind.length, -String(e.theme).length) as SavedWorld['enemies'][number]['look'],
+        theme: e.theme,
+        x: e.x,
+        z: e.z,
+        route: route(e.route),
+        wp: e.wp,
+        hp: e.hp,
+        max: e.max,
+        speed: e.speed,
+        dmg: e.dmg,
+        atk: e.atk,
+        yaw: e.yaw,
+        value: e.value,
+        side: e.side,
+        state: e.state,
+        wall: e.seg ? G.segs.indexOf(e.seg) : null,
+      })),
+    routes,
+    ground: G.coinsOnGround.map((c) => [c.x, c.z, c.v, c.age]),
+  };
+}
+
+// A new game set up as a saved one was. The buildings go up straight away, as they stood, without the show that
+// building them makes.
+function restoreGame(w: SavedWorld): void {
+  newGame();
+  const W = world;
+  // the spots for outposts on the first border go: they are worked out again at the end
+  for (const t of G.towers.filter((o) => o.outer)) dropSite(t);
+  G.t = w.t;
+  G.coins = w.coins;
+  G.kills = w.kills;
+  G.stats.maxEnemies = w.maxEnemies;
+  [G.king.x, G.king.z] = w.king;
+  G.king.yaw = w.yaw;
+  G.followers = w.troop.map(([x, z, rank], slot) => ({
+    x,
+    z,
+    yaw: 0,
+    cd: Math.random(),
+    slot,
+    bob: Math.random() * 6,
+    atkT: 0,
+    rank,
+    pop: 0,
+  }));
+  G.joiners = [];
+  // the barracks, the forge and the weapon
+  G.recruitIdx = w.recruits;
+  G.barracksLv = w.barracks;
+  const bk = G.barracks!;
+  bk.lv = w.barracks;
+  bk.body.geometry = geoFor(bk.fn, bk.lv);
+  G.extraDmg = w.extraDmg;
+  if (w.forge !== null) {
+    G.tier = w.forge;
+    G.forge = makeForge(w.forge);
+  }
+  setKingWeapon();
+  // the wall towers and their walls
+  for (const [i, lv] of w.towers.entries()) {
+    if (!lv) continue;
+    const t = G.towers[i];
+    t.built = true;
+    t.level = lv;
+    t.b = makeBuilding(t.x, t.z, 0, towerGeo, lv, 0, TOWER_LV[lv - 1].h);
+    for (const s of G.segs)
+      if (s.owner === i) {
+        s.tier = lv;
+        s.max = WALL_TIERS[lv - 1].hp;
+      }
+  }
+  for (const [i, s] of G.segs.entries()) {
+    const [hp, alive] = w.walls[i];
+    s.alive = alive && s.tier > 0 && hp > 0;
+    s.hp = s.alive ? Math.min(hp, s.max) : 0;
+  }
+  G.wallsUp = w.towers.some((lv) => lv > 0);
+  W.grass.visible = G.wallsUp;
+  rebuildWalls();
+  // the cannons and the gold hut
+  for (const [i, [lv, yaw]] of w.cannons.entries()) {
+    const c = G.cannons[i];
+    c.yaw = yaw;
+    if (!lv) continue;
+    c.built = true;
+    c.level = lv;
+    makeCannon(c);
+  }
+  const gd = G.gold;
+  if (w.gold.lv) {
+    gd.built = true;
+    gd.lv = w.gold.lv;
+    makeGoldHut();
+    for (const [x, z, load] of w.gold.boys) addGoldBoy(x, z, load);
+  }
+  gd.plot.value = w.gold.plot;
+  // the fronts, their camps and roads, and the camps already cleared
+  for (const [i, sf] of w.fronts.entries()) {
+    const f = G.fronts[i];
+    scene.remove(f.camp.group);
+    unkeepClear(f.camp.x, f.camp.z);
+    f.road = sf.road;
+    f.segs = sf.segs;
+    f.open = sf.open;
+    f.openAt = sf.openAt ?? Infinity;
+    f.shared = sf.shared;
+    f.timer = sf.timer;
+    f.restAt = sf.restAt;
+    f.camp = makeCamp(sf.camp[0], sf.camp[1], f.open);
+    f.camp.state = f.open ? 'up' : 'hidden';
+    f.camp.t = 1;
+    f.camp.group.scale.set(1, 1, 1);
+    if (f.open) f.segs.forEach((seg, j) => addRoad(`front-${f.id}-${j}`, seg));
+  }
+  for (const [x, z] of w.ruins) {
+    const c = makeCamp(x, z, true);
+    c.state = 'ruin';
+    c.t = 1;
+    c.mesh.geometry = campGeo(c.theme, true);
+    c.group.scale.set(1, 1, 1);
+    G.ruins.push(c);
+  }
+  // the land claimed, the outposts on its border and their field cannons
+  G.claims = w.claims.map(([x, z, r]) => ({ x, z, r, shown: r }));
+  G.reach = Math.max(...G.claims.map((c) => Math.hypot(c.x - HOME.x, c.z - HOME.z) + c.r));
+  W.borderU.count.value = 0;
+  for (const o of w.outposts) {
+    const [x, z] = o.at;
+    const t: Tower = { x, z, up: o.up, outer: true, idx: o.idx, built: true, level: o.level, b: null, cd: [] };
+    t.b = makeBuilding(x, z, 0, towerGeo, o.level, 5, TOWER_LV[o.level - 1].h);
+    G.towers.push(t);
+    outpostPad(t);
+    keepClear(x, z, 4);
+  }
+  G.outposts = w.outposts.length;
+  for (const fc of w.fieldCannons) {
+    const [x, z] = fc.at;
+    const cn: Cannon = {
+      x,
+      z,
+      side: fc.side,
+      cost0: fc.cost0,
+      built: fc.level > 0,
+      level: fc.level,
+      b: null,
+      turret: null,
+      cd: 0,
+      yaw: fc.yaw,
+      field: true,
+    };
+    if (cn.built) makeCannon(cn);
+    G.cannons.push(cn);
+    G.pads.push(cannonPad(cn, () => true)); // its outpost is built
+    keepClear(x, z, 4);
+  }
+  G.fieldCannons = w.fieldCannons.length;
+  G.siteSeq = w.siteSeq;
+  refreshPosts();
+  G.castle.max = castleMaxHp();
+  G.castle.hp = Math.min(w.castle, G.castle.max);
+  // the enemies, and the ones about to set off
+  const routes = w.routes.map((r) => r.map((p): Pt => [p[0], p[1]]));
+  G.enemies = w.enemies.map((e): Enemy => {
+    const u = UNIT[e.kind],
+      seg = e.state === 'wall' && e.wall !== null && G.segs[e.wall].alive ? G.segs[e.wall] : null;
+    return {
+      kind: e.kind,
+      theme: e.theme as Biome,
+      x: e.x,
+      z: e.z,
+      route: routes[e.route],
+      wp: e.wp,
+      hp: Math.min(e.hp, e.max),
+      max: e.max,
+      speed: e.speed,
+      dmg: e.dmg,
+      r: u.r,
+      atk: e.atk,
+      yaw: e.yaw,
+      bob: Math.random() * 6,
+      state: seg ? 'wall' : e.state === 'castle' ? 'castle' : 'path',
+      seg,
+      lunge: 0,
+      value: e.value,
+      hitFlash: 0,
+      side: e.side,
+      scale: u.scale,
+      mkey: e.kind + e.look + e.theme,
+    };
+  });
+  G.spawnT = w.spawnT;
+  G.nextPath = w.nextPath;
+  G.spawnQueue = w.queue.map(([id, kind, t]) => ({ f: G.fronts.find((f) => f.id === id)!, kind, t }));
+  G.coinsOnGround = w.ground.map(([x, z, v, age]) => ({
+    x,
+    z,
+    y: 0.22,
+    vx: 0,
+    vz: 0,
+    vy: 0,
+    v,
+    spin: Math.random() * 6,
+    rest: true,
+    age,
+    gone: false,
+    claimed: null,
+  }));
+  // everything standing as it was, the spots for outposts on the border, and the pads with what was paid into them
+  for (const b of G.buildings) {
+    b.t = 1;
+    b.mode = 'build';
+    b.body.scale.set(1, 1, 1);
+    if (b.onSwap) b.onSwap(b.lv);
+  }
+  refreshObstacles();
+  refreshFrontier();
+  for (const p of G.pads) {
+    if (p.posFn) [p.x, p.z] = p.posFn();
+    p.mesh.position.set(p.x, 0.06, p.z);
+    p.visibleNow = p.mesh.visible = p.visible();
+    p.mesh.scale.setScalar(1);
+    p.popT = 1;
+    p.cost = p.price();
+    p.paid = p.visibleNow ? Math.max(0, Math.min(w.paid[p.id] ?? 0, p.cost - 1)) : 0;
+    p.key = '';
+  }
+  redrawPads();
+  updateHud(true);
+}
+
+/** Saves the game being played (not one that has ended) */
+const saveWorld = Effect.suspend(() => {
+  if (!G || G.over) return Effect.void;
+  savedAt = G.t;
+  return save(WORLD_KEY, SavedWorld, snapshot());
+});
+// the game time of the last save, so a game standing still (paused) isn't saved over and over
+let savedAt = -1;
 
 // -------------------------------------------------------------------- input ----
 const keys = new Set<string>();
@@ -6467,22 +6926,35 @@ function setup(): void {
   buildWorld();
   started = true;
 }
-function startGame(): void {
-  newGame();
+// A new game, or the saved one carried on
+function startGame(saved?: SavedWorld): void {
+  if (saved) restoreGame(saved);
+  else newGame();
+  savedAt = saved ? G.t : -1;
   resize();
   updateTerrain(G.king.x, G.king.z, true);
   ui.over.hidden = true;
-  ui.pause.hidden = true;
-  idleJoystick(true);
+  ui.pause.hidden = !saved;
+  idleJoystick(!saved);
   if (ui.toast) ui.toast.classList.remove('show');
 }
-// The player arrives: the first time a game starts; after that the one they left is there, still paused under the
-// pause panel.
-function arrive(): void {
-  if (!G) startGame();
-  else resize();
+// The player arrives: the first time, the game saved last time (paused under the pause panel, as one left for the
+// menu is) or else a new one; after that the one they left is there, still paused under the pause panel. A save that
+// can't be set up after all (a mistake in this code) is forgotten, and a new game starts.
+const arrive = Effect.gen(function* () {
+  if (!G) {
+    const saved = yield* load<SavedWorld | null>(WORLD_KEY, SavedWorld, () => null);
+    try {
+      startGame(saved ?? undefined);
+    } catch (e) {
+      if (!saved) throw e;
+      reportError(e);
+      yield* forget(WORLD_KEY);
+      startGame();
+    }
+  } else resize();
   if (!G.over) G.paused = !ui.pause.hidden;
-}
+});
 // The player leaves (for the menu or another game): a game still going pauses under the pause panel. A fallen
 // castle's panel comes up now, in case they left before its delay was over.
 function leave(): void {
@@ -6495,21 +6967,24 @@ function leave(): void {
 }
 // The buttons on the screen and its panels
 const buttons = Effect.gen(function* () {
-  const click = (id: string, fn: () => void) => listen(document.getElementById(id)!, 'click', fn);
+  const click = (id: string, fn: () => void | PageEffect) => listen(document.getElementById(id)!, 'click', fn);
   yield* click('cd-pause-btn', () => togglePause(true));
   yield* click('cd-resume', () => togglePause(false));
   yield* click('cd-restart', () => {
     ui.pause.hidden = true;
     startGame();
+    return saveWorld;
   });
   yield* click('cd-retry', () => {
     ui.over.hidden = true;
     startGame();
+    return saveWorld;
   });
   for (const id of ['cd-menu1', 'cd-menu2']) yield* click(id, () => GameHub.menu());
 });
 
 type PageEffect = Effect.Effect<void, never, PageServices>;
+const SAVE_EVERY = '5 seconds';
 const onPage = (effect: PageEffect) => void run(effect);
 // The effects the game's plain code starts (saving the best time, the game-over panel's delay) run in the open
 // game's fibers, so leaving stops them. With the game closed (a test stepping it by hand) they run on the page.
@@ -6520,7 +6995,7 @@ export const game: HubGame = {
     if (!started) yield* Effect.sync(setup);
     // a font that won't load leaves the labels in the fallback font, as before
     yield* Effect.tryPromise(() => fontReady).pipe(Effect.ignore);
-    yield* Effect.acquireRelease(Effect.sync(arrive), () => Effect.sync(leave));
+    yield* Effect.acquireRelease(arrive, () => Effect.sync(leave));
     const runFork = yield* FiberSet.makeRuntime<PageServices>();
     fork = (effect) => void runFork(effect);
     yield* Effect.addFinalizer(() =>
@@ -6531,6 +7006,12 @@ export const game: HubGame = {
     yield* input;
     yield* buttons;
     yield* listen(window, 'resize', () => resize());
+    // the game is saved every few seconds while it runs, when the page is hidden or goes, and when the player leaves
+    const saveIfMoved = Effect.suspend(() => (G.t !== savedAt ? saveWorld : Effect.void));
+    yield* Effect.forkScoped(Effect.forever(Effect.andThen(Effect.sleep(SAVE_EVERY), saveIfMoved)));
+    yield* listen(document, 'visibilitychange', () => (document.hidden ? saveIfMoved : Effect.void));
+    yield* listen(window, 'pagehide', () => saveIfMoved);
+    yield* Effect.addFinalizer(() => saveIfMoved);
     yield* animate(frame);
   }),
 };
@@ -6560,6 +7041,10 @@ function debug() {
     },
     rich(n = 1e6) {
       G.coins = n;
+    },
+    // save the game now, as the game does every few seconds
+    save() {
+      runSync(saveWorld);
     },
     openFront,
     // buy what a pad sells without walking over to it

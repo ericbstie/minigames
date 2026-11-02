@@ -91,6 +91,29 @@ seconds, as plain text such as `123`; anything else there counts as none) and sa
 panel comes up 1.4 s later, from a fiber of the visit; leaving before then brings it up straight away, ready for
 when the player comes back.
 
+## The saved game
+
+The game being played is saved under `castle.world.v1` every 5 seconds of play, when the page is hidden or goes
+away (a reload, a closed tab), and when the player leaves for the menu, so a reload finds it where it was: paused
+under the pause panel, the same as coming back from the menu. Restart saves the new game over it, and when the castle
+falls the save is removed, so the next visit starts a new game.
+
+`snapshot` saves what the game needs to carry on, as plain data: the clock, coins and kills, the king, the troop
+(recruits still running to someone count as his rank), each building's level (barracks, forge and weapon, wall
+towers, cannons and their aim, the gold hut and its boys), each stretch of wall's hit points, the claims, every
+front (its road, the stretches added as it fell back, whether and when it opened, its timers and its camp), the
+ruins, the outposts and their field cannons, the coins paid into pads, the enemies (each with the road it walks,
+stored once for all who share it) and the groups about to set off, and the coins on the ground. Arrows, cannon balls,
+dust and floating numbers start again empty. Coins flying to the king are added to his, and coins paid into a spot
+for an outpost go back to him: `refreshFrontier` works the spots out again from the border, in the same places.
+
+`restoreGame` starts a new game and sets it up as saved, putting each building up at its level straight away (no
+dust, no celebration) through the same helpers the purchases use (`makeForge`, `makeCannon`, `makeGoldHut`,
+`outpostPad`). The `SavedWorld` Schema checks every field and that the save fits this game (six wall towers,
+every stretch of wall, the five fronts in order, enemies on roads that are there, looks their kind has); a save that
+doesn't fit starts a new game, and `castle.bestTime` is a key of its own, so it is kept either way. A save that
+fits but still can't be set up (a mistake in this code) is reported, removed, and a new game starts.
+
 ## Balance
 
 `tools/play-castle-defender.ts` plays the real page like a person: the king rides to coins and stands on pads

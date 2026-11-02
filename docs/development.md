@@ -112,6 +112,7 @@ level picker.
 | `watersort.done.v1`         | Water Sort      | the levels finished, numbered from 1                                                  |
 | `watersort.play.v1`         | Water Sort      | the level being played: the tubes, the positions Undo goes back to, hints, spare tube |
 | `castle.bestTime`           | Castle Defender | the longest the castle has held, in seconds                                           |
+| `castle.world.v1`           | Castle Defender | the game being played ([castle-defender.md](castle-defender.md#the-saved-game))       |
 | `bikerace.v1`               | Bike Race       | stars, best times, the garage and settings ([bike-race.md](bike-race.md))             |
 | `bikerace.ghost.v1.<level>` | Bike Race       | the best run on a level, to ride against                                              |
 | `bikerace.levels.v1`        | Bike Race       | the levels made in the editor ([bike-race-editor.md](bike-race-editor.md))            |
