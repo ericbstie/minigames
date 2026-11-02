@@ -5,7 +5,8 @@
 // server always forgave: a missing or odd name, paint or bike becomes the default rather than refusing the message.
 // A pose or a finish time that doesn't make sense is refused, and the server drops that message. The game decodes
 // what the server sends with ServerMessage, and drops anything that doesn't fit.
-import { Option, Schema, SchemaGetter } from 'effect';
+import { Schema } from 'effect';
+import { forgiving } from './schemas';
 
 export const RACE_LIMIT = 300; // a race ends after this many seconds whatever happens
 export const MAX_NAME = 16; // characters in a rider's name
@@ -13,16 +14,7 @@ const CODE_LETTERS = 'BCDFGHJKLMNPQRSTVWXZ'; // no vowels, so codes don't spell 
 export const ROOM_CODE = new RegExp(`^[${CODE_LETTERS}]{4}$`);
 export { CODE_LETTERS };
 
-// ---------- forgiving fields ----------
-
-// A field that always decodes: whatever came, missing included, is cleaned into a value.
-const forgiving = <S extends Schema.Top>(to: S, clean: (v: unknown) => S['Encoded']) =>
-  Schema.optionalKey(Schema.Unknown).pipe(
-    Schema.decodeTo(to, {
-      decode: SchemaGetter.transformOptional((v) => Option.some(clean(Option.getOrUndefined(v)))),
-      encode: SchemaGetter.transformOptional((v) => v),
-    }),
-  );
+// ---------- forgiving fields (forgiving is in schemas.ts) ----------
 
 const isNumber = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v);
 

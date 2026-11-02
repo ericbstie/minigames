@@ -4,7 +4,7 @@
 // The scene, the ants and the rules are plain code, set up when the page loads. The hub opens the game (`game`, at
 // the bottom) in a scope while its screen is shown: the listeners, the frame loop, the confetti and the link to the
 // per-user store run in it and stop when the player leaves. A level left unfinished waits for them to come back.
-import { Cause, Effect, Fiber, FiberHandle, Option, Predicate, Queue, Schema, SchemaGetter, Stream } from 'effect';
+import { Cause, Effect, Fiber, FiberHandle, Option, Predicate, Queue, Schema, Stream } from 'effect';
 import * as THREE from 'three';
 import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
 
@@ -12,6 +12,7 @@ import levels from './ant-sort-levels.json';
 import { type LevelData, Sim, type SimLevel, type TickEvent, simLevel } from './ant-sort-logic';
 import { type Game, GameHub } from './hub';
 import { animate, listen, load, nextFrame, run, save } from './page';
+import { keepOnly } from './schemas';
 
 const DATA = levels as { levels: LevelData[] };
 // number labels are drawn on canvas, so a level waits for the display face (one that fails to load leaves the
@@ -1088,12 +1089,7 @@ function toggleSpeed() {
 const STAR_KEY = 'antsort.stars.v1';
 // The names of the levels with a star, as a JSON array in the order they were earned. Only a name can match a
 // level, so anything else in there is dropped on the way in, and the rest kept.
-const StarNames = Schema.Array(Schema.Unknown).pipe(
-  Schema.decodeTo(Schema.Array(Schema.String), {
-    decode: SchemaGetter.transform((saved) => saved.filter(Predicate.isString)),
-    encode: SchemaGetter.passthroughSubtype(),
-  }),
-);
+const StarNames = keepOnly(Schema.String, Predicate.isString);
 const stars = new Set<string>();
 const saveStars = Effect.suspend(() => save(STAR_KEY, StarNames, [...stars]));
 function earnStar(name: string) {

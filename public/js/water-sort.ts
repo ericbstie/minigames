@@ -4,9 +4,10 @@
 // The hub opens the game (`game`, at the bottom) in a scope while its screen is shown: the listeners, the frame loop
 // and the timers for the note and the win sheet are set up in it and stop when the player leaves. The level being
 // played stays as it was, for when they come back. The rules, layout and drawing are plain functions.
-import { Effect, FiberHandle, FiberSet, Predicate, Schema, SchemaGetter } from 'effect';
+import { Effect, FiberHandle, FiberSet, Predicate, Schema } from 'effect';
 import { type Game, GameHub } from './hub';
 import { animate, listen, load, run, save } from './page';
+import { keepOnly } from './schemas';
 import {
   LEVELS,
   type State,
@@ -239,12 +240,7 @@ const S: GameState = {
 // The levels finished, numbered from 1, saved as a JSON array. Only a number can match a level, so anything else in
 // there is dropped on the way in, and the rest kept.
 const DONE_KEY = 'watersort.done.v1';
-const Done = Schema.Array(Schema.Unknown).pipe(
-  Schema.decodeTo(Schema.Array(Schema.Number), {
-    decode: SchemaGetter.transform((saved) => saved.filter(Predicate.isNumber)),
-    encode: SchemaGetter.passthroughSubtype(),
-  }),
-);
+const Done = keepOnly(Schema.Number, Predicate.isNumber);
 const done = new Set<number>();
 const saveDone = () => run(save(DONE_KEY, Done, [...done]));
 // Starts a timer from plain code (a frame) while the game is open. The hub's scope for the visit holds it, so it stops
