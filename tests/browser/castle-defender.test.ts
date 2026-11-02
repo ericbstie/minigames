@@ -627,7 +627,7 @@ const everything = (page: Page) =>
       buildings: sort(G.buildings.map((b) => [b.x, b.z, b.lv, b.fn.name, b.h])),
       towers: sort(G.towers.map((t) => [t.x, t.z, t.up, t.outer, t.built, t.level, t.built && t.outer ? t.idx : -1])),
       cannons: G.cannons.map((c) => [c.x, c.z, c.side, c.field ?? false, c.built, c.level, c.cost0, c.yaw]),
-      gold: [G.gold.built, G.gold.lv, G.gold.plot.value, G.gold.boys.map((b) => [b.x, b.z, b.load])],
+      gold: [G.gold.built, G.gold.lv, G.gold.boys.map((b) => [b.x, b.z, b.load, b.home])],
       walls: G.segs.map((s) => [s.hp, s.alive, s.tier, s.max]),
       wallsUp: G.wallsUp,
       claims: d.claims(),
@@ -1044,6 +1044,181 @@ describe('Bosses', () => {
 
   test('no errors in the page', () => {
     expect(page.errors).toEqual([]);
+  });
+});
+
+describe('Gold boys', () => {
+  // (the checks play a frame at a time with the enemies taken away, so the only coins are the ones they put down)
+  let gold: Page;
+  beforeAll(async () => {
+    gold = await open();
+  });
+  afterAll(() => gold.close());
+
+  test('their hut goes up inside the walls, once there is an outpost', async () => {
+    const got = await dbg(gold, (d) => {
+      const G = d.G;
+      d.rich(1e6);
+      d.buy('recruit');
+      for (let i = 0; i < 6; i++) d.buy('tower' + i);
+      d.buy('cannon0');
+      d.buy('cannon1');
+      d.advance(0.5);
+      const vis = d.pads().map((p) => p.id);
+      const east = d
+        .sites()
+        .filter((s) => vis.includes(s.id))
+        .reduce((a, b) => (b.x > a.x ? b : a));
+      d.buy(east.id);
+      d.advance(0.5);
+      d.buy('gold');
+      d.teleport(2, 3); // in the base, off the pads, his coin magnet far from where the checks put coins
+      G.free = false;
+      G.coinsOnGround.length = 0;
+      for (let i = 0; i < 60; i++) {
+        G.enemies.length = 0;
+        G.spawnQueue.length = 0;
+        d.advance(1 / 30, 1 / 30);
+      }
+      const hut = G.gold.b!;
+      return {
+        hut: [hut.x, hut.z],
+        boys: G.gold.boys.map((b) => [b.home, b.state]),
+        pad: d.pads().find((p) => p.id === 'gold'),
+      };
+    });
+    expect(Math.abs(got.hut[0]!)).toBeLessThan(10);
+    expect(Math.abs(got.hut[1]!)).toBeLessThan(9);
+    expect(got.boys).toEqual([['home', 'idle']]);
+    expect(Math.abs(got.pad!.x)).toBeLessThan(12);
+    expect(Math.abs(got.pad!.z)).toBeLessThan(10);
+  });
+
+  test('a boy picks a coin up at ten times its worth, and brings it home through a gate: the king gets it', async () => {
+    const got = await dbg(gold, (d) => {
+      const G = d.G,
+        b = G.gold.boys[0]!,
+        inWalls = (x: number, z: number) => Math.abs(x) < 14 && Math.abs(z) < 12;
+      G.coins = 0;
+      G.coinsOnGround.length = G.flying.length = 0;
+      G.coinsOnGround.push({
+        x: -4,
+        z: 22,
+        y: 0,
+        vx: 0,
+        vz: 0,
+        vy: 0,
+        v: 7,
+        spin: 0,
+        rest: true,
+        age: 1,
+        gone: false,
+        claimed: null,
+      });
+      const gates: string[] = [];
+      let carried = 0,
+        given = 0,
+        at: number[] = [],
+        dest: string | null = null;
+      for (let i = 0; i < 30 * 40 && !at.length; i++) {
+        const was = [b.x, b.z],
+          load = b.load,
+          coins = G.coins;
+        dest = b.dest ?? dest;
+        G.enemies.length = G.spawnQueue.length = 0;
+        d.advance(1 / 30, 1 / 30);
+        carried = Math.max(carried, b.load);
+        if (inWalls(was[0]!, was[1]!) !== inWalls(b.x, b.z))
+          gates.push(
+            Math.abs(b.z) < 2.2 ? 'E' : b.x > 4 && b.x < 8 && Math.abs(b.z) > 11 ? 'S' : `wall at ${b.x}, ${b.z}`,
+          );
+        if (load > 0 && b.load === 0) {
+          at = [b.x, b.z];
+          given = G.coins - coins;
+        }
+      }
+      return { carried, given, at, dest, gates, coins: G.coins };
+    });
+    expect(got.carried).toBe(70);
+    expect(got.given).toBe(70);
+    expect(got.coins).toBe(70);
+    expect(got.dest).toBe('home');
+    expect(Math.abs(got.at[0]!)).toBeLessThan(14);
+    expect(Math.abs(got.at[1]!)).toBeLessThan(12);
+    // out and back in, through the gates (never over a wall)
+    expect(got.gates.length).toBe(2);
+    expect(got.gates.every((g) => g === 'E' || g === 'S')).toBe(true);
+  });
+
+  test('with an outpost nearer than home, he takes his coins there', async () => {
+    const got = await dbg(gold, (d) => {
+      const G = d.G,
+        b = G.gold.boys[0]!,
+        t = G.towers.find((o) => o.outer && o.built)!,
+        l = Math.hypot(t.x, t.z);
+      G.coins = 0;
+      G.coinsOnGround.length = G.flying.length = 0;
+      G.coinsOnGround.push({
+        x: t.x + (t.x / l) * 6,
+        z: t.z + (t.z / l) * 6,
+        y: 0,
+        vx: 0,
+        vz: 0,
+        vy: 0,
+        v: 12,
+        spin: 0,
+        rest: true,
+        age: 1,
+        gone: false,
+        claimed: null,
+      });
+      let at: number[] = [],
+        dest: string | null = null;
+      for (let i = 0; i < 30 * 40 && !at.length; i++) {
+        const load = b.load;
+        dest = b.dest ?? dest;
+        G.enemies.length = G.spawnQueue.length = 0;
+        d.advance(1 / 30, 1 / 30);
+        if (load > 0 && b.load === 0) at = [b.x, b.z];
+      }
+      return { dest, outpost: 'outpost' + t.idx, from: Math.hypot(at[0]! - t.x, at[1]! - t.z), coins: G.coins };
+    });
+    expect(got.dest).toBe(got.outpost);
+    expect(got.from).toBeLessThan(3);
+    expect(got.coins).toBe(120);
+  });
+
+  test('the king carries a green bill for every thousand coins, and the coins left over on top', async () => {
+    const stack = await dbg(gold, (d) =>
+      [3140, 999, 40_000].map((n) => {
+        const G = d.G;
+        G.coins = n;
+        G.coinsOnGround.length = G.flying.length = G.enemies.length = G.spawnQueue.length = 0;
+        d.advance(1 / 30, 1 / 30);
+        return [d.world.bill.count, d.world.coin.count];
+      }),
+    );
+    expect(stack).toEqual([
+      [3, 140],
+      [0, 400],
+      [40, 0],
+    ]);
+  });
+
+  test('a game saved before the boys took coins home: what lay on their plot goes to the king', async () => {
+    await dbg(gold, (d) => d.save());
+    const saved = JSON.parse((await savedWorld(gold))!);
+    expect(saved.gold.plot).toBeUndefined();
+    expect(saved.gold.lv).toBe(1);
+    const old = await open({ storage: { [WORLD]: JSON.stringify({ ...saved, gold: { ...saved.gold, plot: 250 } }) } });
+    const back = await dbg(old, (d) => ({ coins: d.G.coins, boys: d.G.gold.boys.length, paused: d.G.paused }));
+    expect(back).toEqual({ coins: saved.coins + 250, boys: 1, paused: true });
+    expect(old.errors).toEqual([]);
+    old.close();
+  });
+
+  test('no errors in the page', () => {
+    expect(gold.errors).toEqual([]);
   });
 });
 

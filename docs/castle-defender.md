@@ -106,6 +106,22 @@ is named after its biome (`BOSS_NAMES`: the Red Warlord, the Frost Jarl, the Bog
 bursts into a shower of 30 coins worth its reward (100 times a knight's coins); the game-over panel says how many were
 beaten. Only one comes at a time: while one is on the field, the next waits, and comes 20 seconds after it falls.
 
+## Gold boys
+
+Once the first outpost stands, a pad by the north wall of the base sells the gold hut (1500), and then upgrades it
+twice (3000, 6000): one, two and then three gold boys. The hut stands inside the walls, and the boys belong to the
+walled base: each has a `home` base, and waits in front of it. They run out after the coins on the ground outside the
+base (the king's own coin magnet takes the ones inside), and each coin a boy picks up is worth `GOLD_PICKUP` (10)
+times its value to him. With a full sack (400, 800 or 1500 coins, by the hut's level) or nothing left to pick up, a
+boy takes his load to the nearest base, `goldBases()`: the walled base, at the hut's door, or any outpost, at its
+tower. He hands it in there and it goes straight to the king. Outside the walls a boy goes round the base
+(`steer`); in and out of it he goes through the east or south gate (`GOLD_GATES`, the ones with a clear way to the
+hut's door), whichever makes the shorter way, and the gate opens for him as it does for the king.
+
+**Bills.** The king carries his coins as a stack on his back: a green bill for every thousand (`BILL`) at the
+bottom, and a coin for each one left over on top (at most 300 bills and 400 coins are drawn). A boy handing in a
+thousand or more sends a bill flying in for each thousand, up to four.
+
 ## Opening and leaving
 
 The game is a `Game` for the hub (`game`, at the end of `castle-defender.ts`; [development.md](development.md) has
@@ -137,6 +153,9 @@ stored once for all who share it, a boss among them) and the groups about to set
 from where, once its warning is up), and the coins on the ground. Arrows, cannon balls,
 dust and floating numbers start again empty. Coins flying to the king are added to his, and coins paid into a spot
 for an outpost go back to him: `refreshFrontier` works the spots out again from the border, in the same places.
+Each gold boy is saved with what he carries, and works out again which base to take it to. Saves from before the
+boys took their coins home have a `gold.plot`, the coins left on the plot where they used to drop them (the king
+had to fetch them): the king gets those.
 
 `restoreGame` starts a new game and sets it up as saved, putting each building up at its level straight away (no
 dust, no celebration) through the same helpers the purchases use (`makeForge`, `makeCannon`, `makeGoldHut`,
@@ -155,7 +174,10 @@ to buy (through the gates, round the buildings), buying the cheapest pad it can 
 about 11:10 to 12:15 and the border gets about 110 to 135 paces out with 10 or 11 outposts; the game from before the
 open world held about 11:00 to 11:45 with the same player. Building outposts last (`turtle`) lasts about as long,
 and rushing them before weapons (`expand`) falls before 5 minutes, just as rushing the old outer towers did. So
-pushing out costs no survival time and is the way the world opens up. Enemies from a camp 2 tiers out have about
+pushing out costs no survival time and is the way the world opens up. Since the gold boys bring their coins
+home ten times over (and to the king, so the bot gets them too), the bot ends with over a million coins it has
+nothing left to spend on, and the castle holds about as long: 12:10 with 12 outposts and the border 138 paces out,
+against 12:22, 11 and 113 just before (one run each, before the bosses came), and 12:15 with the bosses. Enemies from a camp 2 tiers out have about
 2.6 times the hit points and 2.1 times the coins of ones from home.
 
 With bosses the bot held 11:21, 11:48 and 11:11 (12:19 and 11:01 without them, the same day) and beat every boss that
