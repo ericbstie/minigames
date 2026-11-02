@@ -1221,3 +1221,143 @@ describe('Gold boys', () => {
     expect(gold.errors).toEqual([]);
   });
 });
+
+describe('The forge: weapon after weapon, bazookas last', () => {
+  beforeAll(async () => {
+    page = await open();
+  });
+  afterAll(() => page.close());
+
+  test('each weapon costs twice what it did, and bazookas four times the step after machine guns', async () => {
+    const prices = await dbg(page, (d) => {
+      const G = d.G;
+      d.rich(1e9);
+      for (let i = 0; i < 4; i++) d.buy('recruit');
+      for (let i = 0; i < 6; i++) d.buy('tower' + i);
+      d.buy('forgebuild');
+      const out: [tier: number, extra: number, cost: number][] = [];
+      for (let i = 0; i < 9; i++) {
+        out.push([G.tier, G.extraDmg, d.pads().find((p) => p.id === 'forge')!.cost]);
+        d.buy('forge');
+      }
+      return out;
+    });
+    expect(prices).toEqual([
+      [0, 0, 270],
+      [1, 0, 720],
+      [2, 0, 1680],
+      [3, 0, 3600],
+      [4, 0, 7200],
+      [5, 0, 14400],
+      [6, 0, 115200],
+      [7, 0, 28800],
+      [7, 1, 46080],
+    ]);
+  });
+
+  test('a price of any length fits on its pad', async () => {
+    const spilt = await dbg(page, (d) => {
+      const G = d.G,
+        pad = G.pads.find((p) => p.id === 'forge')!,
+        out: [cost: number, inkOutside: number][] = [];
+      for (const extra of [1, 5, 12, 40]) {
+        G.extraDmg = extra;
+        d.advance(0.1);
+        const img = (pad.tex.image as HTMLCanvasElement).getContext('2d')!.getImageData(0, 0, 256, 256).data;
+        let ink = 0;
+        for (let y = 0; y < 256; y++)
+          for (let x = 0; x < 256; x++) if ((x < 16 || x > 240) && img[(y * 256 + x) * 4 + 3] > 0) ink++;
+        out.push([pad.cost, ink]);
+      }
+      G.extraDmg = 0;
+      return out;
+    });
+    // from five figures up to thirteen: nothing is drawn past the outline of the pad
+    expect(spilt.map(([cost]) => String(cost).length)).toEqual([5, 6, 7, 13]);
+    for (const [cost, ink] of spilt) expect(ink, String(cost)).toBe(0);
+  });
+
+  test("a rocket blows up where it lands, hurting an enemy out of the king's reach beside the one it hit", async () => {
+    // the king alone, far from the towers, with two tough enemies that stand still: one in his reach, one 2.5 paces
+    // past it and out of reach of anything
+    const hurt = await dbg(page, (d) => {
+      const G = d.G;
+      G.tier = 6; // machine guns, from where the test before left the forge
+      G.extraDmg = 0;
+      while (G.enemies.length < 2) d.advance(0.5);
+      const [a, b] = G.enemies;
+      const setUp = () => {
+        d.teleport(-40, 60);
+        G.followers.length = 0;
+        G.joiners.length = 0;
+        G.enemies = [a, b];
+        G.projectiles.length = 0;
+        for (const [e, x] of [
+          [a, -40 + 14.5],
+          [b, -40 + 17],
+        ] as const) {
+          Object.assign(e, { x, z: 60, hp: 1e9, max: 1e9, speed: 0, state: 'path' });
+          e.route = [[x, 60]];
+          e.wp = 0;
+        }
+        d.advance(1.5);
+        return [Math.round(a.max - a.hp), Math.round(b.max - b.hp)];
+      };
+      const machineGuns = [G.tier, ...setUp()];
+      d.buy('forge');
+      const bazookas = [G.tier, ...setUp()];
+      return { machineGuns, bazookas };
+    });
+    expect(hurt.machineGuns[0]).toBe(6);
+    expect(hurt.machineGuns[1]).toBeGreaterThan(0);
+    expect(hurt.machineGuns[2]).toBe(0);
+    expect(hurt.bazookas[0]).toBe(7);
+    expect(hurt.bazookas[1]).toBeGreaterThan(0);
+    expect(hurt.bazookas[2]).toBeGreaterThan(0);
+  });
+
+  test('no errors in the page', () => {
+    expect(page.errors).toEqual([]);
+  });
+});
+
+describe('Saves from before there were bazookas', () => {
+  test('machine guns +2 carry on, with bazookas next at the forge; bazookas are saved and come back', async () => {
+    // a save then had the same fields as now, with the forge's tier at most 6 (machine guns) and +1s on top
+    const first = await open();
+    await dbg(first, (d) => {
+      const G = d.G;
+      d.rich(1e9);
+      for (let i = 0; i < 4; i++) d.buy('recruit');
+      for (let i = 0; i < 6; i++) d.buy('tower' + i);
+      d.buy('forgebuild');
+      while (G.tier < 6) d.buy('forge');
+      G.extraDmg = 2;
+      d.save();
+    });
+    const old = JSON.parse((await savedWorld(first))!);
+    first.close();
+    expect([old.forge, old.extraDmg]).toEqual([6, 2]);
+
+    const back = await open({ storage: { [WORLD]: JSON.stringify(old) } });
+    const forge = (d: CastleDebug) => [d.G.tier, d.G.extraDmg, d.pads().find((p) => p.id === 'forge')!.cost];
+    expect(await dbg(back, forge)).toEqual([6, 2, 115200]);
+    await dbg(back, (d) => {
+      d.rich(1e6);
+      d.buy('forge');
+      d.save();
+    });
+    expect(JSON.parse((await savedWorld(back))!).forge).toBe(7);
+    await back.reload();
+    await reopened(back);
+    expect(await dbg(back, forge)).toEqual([7, 2, Math.round(28800 * 1.6 ** 2)]);
+    expect(back.errors).toEqual([]);
+    back.close();
+
+    // a weapon there is none of yet is a save this game can't carry on from
+    const junk = await open({ storage: { [WORLD]: JSON.stringify({ ...old, forge: 8 }) } });
+    expect(await dbg(junk, (d) => [d.G.t < 2, d.G.tier, d.G.paused])).toEqual([true, 0, false]);
+    expect(junk.errors).toEqual([]);
+    junk.close();
+  });
+});

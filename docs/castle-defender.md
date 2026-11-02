@@ -76,6 +76,22 @@ that stretch plus the old road, so its march gets longer, through the king's lan
 keep the road they started on. `tests/castle-defender-world.test.ts` checks that nearly every outpost built on a
 front's road clears that front's camp.
 
+## The forge
+
+The forge sells the weapons in turn (`WEAPONS`): upgraded bows, crossbows, spears, iron swords, guns, machine guns
+and bazookas, for 270, 720, 1,680, 3,600, 7,200, 14,400 and 115,200 coins (`FORGE_COSTS`). Bazookas are four times
+the 28,800 the next step up after machine guns would be. After bazookas the forge sells +25% damage, 28,800 coins
+for the first and 1.6 times the one before after that (`forgeExtraCost`). The king, the troop and the archers on
+the towers all carry the forge's weapon (the archers keep spears while the troop has swords), and the forge grows
+with each one: for bazookas it becomes a rocket works, with a rocket standing in a gantry behind the shed.
+
+Bazookas fire rockets (olive, with a red nose and a puff of smoke behind them) that fly after their target and
+blow up where they get to, even if the target fell on the way: everyone within 2.6 paces takes the hit (`blast`).
+The blast's flash, ring and smoke are kept small, as a troop with bazookas fires a lot of them.
+
+A pad draws its price centred under its icon, smaller when it is too wide for the pad, and from 100,000 as three
+figures and k, M, B or T (`priceLabel`: 115k, 1.15M, 34.9B).
+
 ## Bosses
 
 Every 3 minutes of play (`BOSS_EVERY`, from when the last one came) a boss marches on the castle from one of the
@@ -147,7 +163,9 @@ dust, no celebration) through the same helpers the purchases use (`makeForge`, `
 every stretch of wall, the five fronts in order, enemies on roads that are there, looks their kind has, one boss at
 most). A game saved before there were bosses meets its first a minute after it carries on. A save that
 doesn't fit starts a new game, and `castle.bestTime` is a key of its own, so it is kept either way. A save that
-fits but still can't be set up (a mistake in this code) is reported, removed, and a new game starts.
+fits but still can't be set up (a mistake in this code) is reported, removed, and a new game starts. A save from
+before there were bazookas (the forge at machine guns, maybe with +1s on them) fits: the forge offers bazookas next,
+and the +1s are kept.
 
 ## Balance
 
@@ -165,6 +183,14 @@ against 12:22, 11 and 113 just before (one run each, before the bosses came), an
 With bosses the bot held 11:21, 11:48 and 11:11 (12:19 and 11:01 without them, the same day) and beat every boss that
 came, three a game, without the castle losing hit points to one: the 3:00 boss falls at the walls within about a
 minute of coming, most of it the walk in, and its 900 or so coins buy the next weapon early.
+
+Weapons cost twice what they did since bazookas came. Left at its old weighting the bot puts weapons off and falls
+before 5 minutes, so it counts the forge half as much as before, keeping the weapons coming in the same order, and
+goes for the forge first once it has the coins for it four times over. With bosses, the gold boys and that player
+the castle still stands at 15 minutes (two runs, 13 outposts, the border 137 paces out): bazookas come at about 9
+to 10 minutes and the +1s after them. Without the four-times rule the bot never gets to bazookas, riding from one
+cheaper pad to the next with 650,000 to 950,000 coins, and falls at about 11:06; before the gold boys came, doubled
+prices held 10:34 and 11:04 with bosses, and handed bazookas at 9 minutes the bot stood at 15.
 
 ## Checks
 
