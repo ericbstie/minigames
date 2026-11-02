@@ -3,7 +3,8 @@
 //
 // The first time the border reaches a land's distance from home, that land opens and something new shows up in it.
 // The first land brings shops: lots for sale beside the outposts, where the king buys a business that makes his army
-// stronger and fills its till with coins.
+// stronger and fills its till with coins. The second brings treasure: marks in the ground where the king digs up
+// relics that change how the fight goes.
 import { BIOME, type Biome, HOME, type Pt } from './castle-defender-world';
 
 export interface Land {
@@ -11,7 +12,10 @@ export interface Land {
   name: string;
   news: string; // what the banner says has opened
 }
-export const LANDS: Land[] = [{ at: 75, name: 'The market roads', news: 'Shops for sale' }];
+export const LANDS: Land[] = [
+  { at: 75, name: 'The market roads', news: 'Shops for sale' },
+  { at: 110, name: 'The old battlefields', news: 'Treasure in the ground' },
+];
 /** How many lands a border reaching `reach` paces from home has opened */
 export const landsReached = (reach: number) => LANDS.filter((l) => reach >= l.at).length;
 
@@ -54,6 +58,67 @@ export const landWealth = (x: number, z: number) =>
 /** Coins a second a shop at level `lv` (1 or more) takes, on a lot bought for `lot`, in land of wealth `wealth` */
 export const shopRate = (lot: number, lv: number, wealth: number) =>
   (lot / SHOP_PAYBACK) * Math.pow(SHOP_GAIN, lv - 1) * wealth;
+
+// ----- treasure
+// Once the second land is open, a mark shows on the ground now and then (one every DIG_EVERY seconds, DIG_MAX at most
+// waiting), out towards the border. The king stands on it for DIG_SECONDS to dig up a relic, or the next level of one
+// he has. There are as many digs as relic levels; then there is nothing left in the ground.
+export const DIG_SECONDS = 3,
+  DIG_EVERY = 45,
+  DIG_MAX = 2;
+export interface Relic {
+  name: string;
+  colour: string;
+  what: (lv: number) => string; // what it does at a level, for the banner
+}
+export const RELIC_MAX = 3;
+export const RELIC = { drum: 0, frost: 1, bone: 2, storm: 3, ember: 4 } as const;
+export const RELICS: Relic[] = [
+  { name: 'War Drum', colour: '#e0662a', what: (lv) => `Everything shoots ${Math.round(DRUM * lv * 100)}% faster` },
+  {
+    name: 'Frost Heart',
+    colour: '#7fd3ff',
+    what: (lv) => `Enemies walk and strike ${Math.round(FROST * lv * 100)}% slower`,
+  },
+  {
+    name: "Giant's Bone",
+    colour: '#efe3c2',
+    what: (lv) => `Walls and castle ${Math.round(BONE * lv * 100)}% tougher`,
+  },
+  {
+    name: 'Storm Horn',
+    colour: '#ffe14a',
+    what: (lv) => `Lightning strikes ${lv === 1 ? 'an enemy' : lv + ' enemies'} every ${STORM_EVERY} seconds`,
+  },
+  {
+    name: 'Ember Crown',
+    colour: '#ff4a2a',
+    what: (lv) => `Fallen enemies burst into flames${lv > 1 ? `, ${lv} times as hot` : ''}`,
+  },
+];
+export const DRUM = 0.2, // everything of the king's shoots this much faster a level
+  FROST = 0.12, // and the enemy walks this much slower
+  BONE = 0.5, // walls and castle have this much more hit points
+  STORM_EVERY = 4, // lightning strikes the toughest enemies near the border this often, one a level
+  STORM_HIT = 25, // as hard as this many hits of the king's weapon
+  EMBER = 2, // an enemy that falls burns the ones around it as hard as this many hits of the weapon, a level
+  EMBER_R = 3;
+// (the lightning and the flames hit as hard as the king's weapon does, not by a share of the enemy's hit points, so
+// they keep up with what the king builds, not with how tough the enemy gets)
+export const haste = (lv: number) => 1 + DRUM * lv;
+export const chill = (lv: number) => 1 - FROST * lv;
+export const sturdy = (lv: number) => 1 + BONE * lv;
+/** Which relic a dig brings, from the levels the king has of each and a random number in [0, 1): one he hasn't
+ * found while there are any, else one he can still level; -1 when there are none left */
+export function pickRelic(levels: readonly number[], r: number): number {
+  const ids = (ok: (lv: number) => boolean) => RELICS.map((_, i) => i).filter((i) => ok(levels[i] ?? 0));
+  const fresh = ids((lv) => lv === 0),
+    open = fresh.length ? fresh : ids((lv) => lv < RELIC_MAX);
+  return open.length ? open[Math.min(open.length - 1, Math.floor(r * open.length))] : -1;
+}
+/** How many digs are left in the ground for a king with relics at these levels */
+export const digsLeft = (levels: readonly number[]) =>
+  RELICS.reduce((n, _, i) => n + RELIC_MAX - Math.min(RELIC_MAX, levels[i] ?? 0), 0);
 
 /** The point of a road nearest to (x, z): where it is, how far along the road, the road's direction there, and how
  * far away it is */

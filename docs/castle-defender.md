@@ -159,6 +159,27 @@ times the last and earning 2.2 times as much (a first level shop takes its lot's
 with them (crates, an upper floor, a side room, a turret). Shops further out, in richer land, take more for the same
 price (`landWealth`).
 
+**Treasure** (the old battlefields, 110 paces out). A mark shows on the ground, a red X with a shovel stuck in it,
+somewhere in the land the outposts claimed, well away from home and at least 4 paces inside the border (`digSpot`,
+`digFree`), then another every 45 seconds while fewer than two wait (`updateDigs`). A marker at the edge of the
+screen points the way to the nearest while it is off the screen, as one does for the boss. The king stands on it to
+dig: a ring round it fills in 3 seconds (stepping off loses a quarter of a second of it a second), and then a chest
+comes up with a relic in it (`digUp`). The first five digs bring the five relics, one each, in a random order; the
+next ones level them up, to level 3 (`pickRelic`), so there are 15 digs in all and then no more marks. What each
+does starts at once, and the ones found show in the bottom corner with their level (`updateRelicHud`):
+
+- **War Drum**: everything of the king's (him, his troop, the towers, the cannons) reloads 20% faster a level.
+- **Frost Heart**: the enemy walks and strikes 12% slower a level.
+- **Giant's Bone**: walls and castle have 50% more hit points a level, each keeping the share of them it had.
+- **Storm Horn**: every 4 seconds lightning strikes the toughest enemies near the border (one a level), each as hard
+  as 25 hits of the king's weapon.
+- **Ember Crown**: an enemy that falls bursts into flames, hitting every enemy within 3 paces as hard as two hits of
+  the weapon a level; the ones that brings down burst a frame later, so a weak crowd goes up one after the other.
+
+The lightning and the flames hit by the weapon (and the shops), not by a share of the enemy's hit points: that way
+they keep up with what the king builds, not with how tough the enemy gets, and the enemy still outgrows them in the
+end. The numbers are in `castle-defender-lands.ts`.
+
 ## Opening and leaving
 
 The game is a `Game` for the hub (`game`, at the end of `castle-defender.ts`; [development.md](development.md) has
@@ -186,7 +207,8 @@ falls the save is removed, so the next visit starts a new game.
 towers, cannons and their aim, the gold hut and its boys), each stretch of wall's hit points, the claims, every
 front (its road, the stretches added as it fell back, whether and when it opened, its timers and its camp, the
 outposts' camps after the first five, and their timer), the
-ruins, the outposts and their field cannons, the lands open, the lots and shops with their tills, the coins paid into
+ruins, the outposts and their field cannons, the lands open, the lots and shops with their tills, the relics, the
+marks waiting to be dug (and how far each is dug) and when the next comes, the coins paid into
 pads, the enemies (each with the road it walks, stored once for all who share it, a boss among them) and the groups
 about to set off, when the next boss comes (and from where, once its warning is up), and the coins on the ground.
 Arrows, cannon balls,
@@ -202,7 +224,8 @@ dust, no celebration) through the same helpers the purchases use (`makeForge`, `
 `outpostPad`). The `SavedWorld` Schema checks every field and that the save fits this game (six wall towers,
 every stretch of wall, the five first fronts in order and then only camps of outposts that stand, enemies on roads
 that are there, looks their kind has, one boss at most). A game saved before there were bosses meets its first a minute after it carries on. A save from before the
-lands (no `land`, `lotSeq` or `shops`) carries on with none open; they open as the border gets there. A save that
+lands (no `land`, `lotSeq` or `shops`, no `relics`, `digs` or `digNext`) carries on with none open; they open as
+the border gets there. A save that
 doesn't fit starts a new game, and `castle.bestTime` is a key of its own, so it is kept either way. A save that
 fits but still can't be set up (a mistake in this code) is reported, removed, and a new game starts. A save from
 before there were bazookas (the forge at machine guns, maybe with +1s on them) fits: the forge offers bazookas next,
@@ -255,6 +278,13 @@ before them). The market roads open at about 6:15; the
 bot buys 9 to 12 shops by the end, most of them to level 2 to 5, which beats the boss at 18 minutes, and falls to the
 one at 21. It still ends with 2 to 8 million coins it has nothing to spend on.
 
+With the treasure the bot held 29:35, 29:10 and 26:48. The old battlefields open at 10 to 11 minutes, with the ring of
+outposts that takes the border past 110 paces (at 120 they waited for the next ring, at 17 to 19 minutes, and the
+bot held 30:27 and 22:43); it rides to every mark and has all five relics at level 3 by 21 or 22 minutes. It beats
+the bosses at 18 and 21 minutes and falls to the one at 24 or 27. When the lightning and the flames took a share
+of the enemy's hit points instead of hitting by the weapon, the castle still stood at 60 minutes: the enemy could
+never outgrow them.
+
 ## Checks
 
 ```sh
@@ -270,4 +300,5 @@ balance change. `KEEP_SHOTS=1` keeps the browser test's screenshots in `.shots/`
 `CastleDefender._debug()` in the page gives the tests the game state, a `teleport(x, z)` (which also lets the king
 past the border), an `advance(seconds)` that runs the game faster than real time, `buy(padId)`, `lockLands()`, lists
 of the pads, outpost spots, fronts, claims, and lots and shops with their tills, and the boss on the field (`boss()`;
-set `G.boss.next` to bring one sooner).
+set `G.boss.next` to bring one sooner). For the treasure: `digs()`, `dig(at?)` for a new mark, `relic(i?)` to dig
+one up where the king stands, `setRelics(levels)` and `hurt(enemy, dmg, raw?)`.
