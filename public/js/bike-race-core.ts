@@ -1,6 +1,7 @@
-// Bike Race core: terrain, worlds and levels, bikes, the physics step and the computer rider.
-// No DOM access here, so Bun can load this file to check that every level can be finished
+// Bike Race core: terrain, worlds and levels, bikes, the physics step and the computer rider, and the format of a
+// saved ghost. No DOM access here, so Bun can load this file to check that every level can be finished
 // (see tools/check-bike-levels.ts). The game, the editor and the drawing code import it.
+import { Option, Predicate, Schema, SchemaGetter } from 'effect';
 
 export const TAU = Math.PI * 2;
 export const clamp = (v: number, a: number, b: number) => (v < a ? a : v > b ? b : v);
@@ -251,12 +252,6 @@ export interface BotConfig {
 }
 /** A ghost frame: x, y, angle */
 export type GhostFrame = [x: number, y: number, a: number];
-/** A best run as bike-race.ts saves it in localStorage (bikerace.ghost.v1.<level id>); f is encodeGhost's text */
-export interface SavedGhost {
-  time: number;
-  bike: string;
-  f: string;
-}
 
 // ---------------------------------------------------------------------------------------------
 // Terrain: polylines in metres, y up. Each segment can have a kind (ground, ice, pit, lava) and a
@@ -1394,3 +1389,33 @@ export function decodeGhost(str: string | null | undefined): GhostFrame[] {
   }
   return out;
 }
+
+// ---------------------------------------------------------------------------------------------
+// Saved data. localStorage can hold anything (an older version's save, or one edited by hand), so the schemas for
+// it are forgiving: a field that is missing or doesn't fit is cleaned into a value, the way the game always read
+// its saves, instead of throwing the whole save away.
+
+/**
+ * A field of saved data that always decodes: whatever is stored, missing included, is cleaned into a value. (What is
+ * stored is Any, not Unknown: saves are read as JSON, which checks that Unknown holds JSON, and a number too big for
+ * it, 1e999, reads as Infinity, which would throw the whole save away.)
+ */
+export const forgiving = <S extends Schema.Top>(to: S, clean: (v: unknown) => S['Encoded']) =>
+  Schema.optionalKey(Schema.Any).pipe(
+    Schema.decodeTo(to, {
+      decode: SchemaGetter.transformOptional((v) => Option.some(clean(Option.getOrUndefined(v)))),
+      encode: SchemaGetter.transformOptional((v) => v),
+    }),
+  );
+
+/**
+ * A best run as bike-race.ts saves it in localStorage (bikerace.ghost.v1.<level id>); f is encodeGhost's text and
+ * bike the bike that set it. The first version saved no bike: those ghosts are Scout's, as is a bike that no longer
+ * exists. Without frames there is no ghost.
+ */
+export const SavedGhost = Schema.Struct({
+  time: forgiving(Schema.Number, (v) => (Predicate.isNumber(v) ? v : 0)),
+  bike: forgiving(Schema.String, (v) => bikeById(Predicate.isString(v) ? v : '').id),
+  f: Schema.String.check(Schema.isMinLength(1)),
+});
+export type SavedGhost = typeof SavedGhost.Type;

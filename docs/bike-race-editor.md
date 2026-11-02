@@ -97,7 +97,10 @@ Built-in levels set none of these, and `bun tools/check-bike-levels.ts` gives ex
 
 `public/js/bike-race-editor.ts` is the editor's screens. `bike-race.ts` imports it, hands it an `EditorApi` with
 `connect()` at load (start a ride on a level, switch screens, toasts), tells it which view is up (`onView`) and has
-it draw on the game's canvas while the `editor` view is up (`frame`).
+it draw on the game's canvas while the `editor` view is up (`frame`). The game's `open` runs the editor's `open`, so
+the editor's listeners and timers (the hint, the armed Delete button) last as long as the visit to Bike Race. The
+cards in My levels and the row of pieces are made again on every render, so the list and the row listen for taps
+rather than each card or piece.
 
 - **Level editor** on the home menu opens **My levels**: a card per level with a picture of the track, the name (tap
   to rename), the piece count and best time, and Play, Edit and Delete (tap twice). **New level** starts one.
@@ -119,8 +122,9 @@ it draw on the game's canvas while the `editor` view is up (`frame`).
 
 `localStorage` key `bikerace.levels.v1` holds `{ v: 1, levels: [{ id, data, best, updated }] }`: at most 100
 levels, `data` as above, `best` as `{ t, key }`. `key` is the track's `trackKey` when the time was set, so a best
-time no longer shows once the track is changed. On load, entries with a bad id or a repeated one are dropped and
-each level goes through `sanitize`. Names are only ever put in the page as text.
+time no longer shows once the track is changed. It is read and written through `SavedLevels`, a Schema in
+`bike-race-pieces.ts`: on load, entries with a bad id or a repeated one are dropped, each level goes through
+`sanitize`, and a store that isn't one at all loads as no levels. Names are only ever put in the page as text.
 
 ## Checking
 

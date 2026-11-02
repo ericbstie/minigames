@@ -1,6 +1,6 @@
 // What the page puts on window: the hub and the debug hooks the browser tests reach for. The games themselves are
 // modules and import each other. Shared by public/tsconfig.json and the root tsconfig.json, which checks the tests.
-import type { GameHub, ShowHide } from './hub';
+import type { GameHub } from './hub';
 
 declare global {
   interface Window {
@@ -44,7 +44,7 @@ declare global {
 
     // Bike Race and its level editor: their state for the browser tests (the game reaches the editor through
     // imports, not these)
-    BikeRace?: ShowHide & { editor: import('./bike-race').EditorApi; _debug(): import('./bike-race').BikeRaceDebug };
+    BikeRace?: { editor: import('./bike-race').EditorApi; _debug(): import('./bike-race').BikeRaceDebug };
     BikeRaceEditor?: {
       onView: typeof import('./bike-race-editor').onView;
       frame: typeof import('./bike-race-editor').frame;

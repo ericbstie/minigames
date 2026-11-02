@@ -2,11 +2,15 @@
 //   - each piece's shape and ends, and the edits the editor makes (add, rotate, flip, move, remove, load)
 //   - that every bike gets round a full loop made of pieces, with the rider's head clear of the track,
 //     and that each ramp clears a gap and lands
+//   - that saved levels (P.SavedLevels) load from storage just as the editor's loader before it did, junk included
 import { describe, expect, test } from 'bun:test';
+import { Effect } from 'effect';
+import * as KeyValueStore from 'effect/persistence/KeyValueStore';
 import * as C from '../public/js/bike-race-core';
 import type { Bike, BikeInput } from '../public/js/bike-race-core';
 import * as P from '../public/js/bike-race-pieces';
-import type { Cursor, End, LevelData, PieceTypeId } from '../public/js/bike-race-pieces';
+import type { Cursor, End, LevelData, PieceTypeId, SavedLevel, SavedLevels } from '../public/js/bike-race-pieces';
+import { load, save } from '../public/js/page';
 
 const near = (a: number, b: number, e = 1e-3) => Math.abs(a - b) <= e;
 const endAt = (data: LevelData, i: number, e: number) => P.geom(P.getPiece(data, i)).ends[e];
@@ -364,4 +368,170 @@ describe('Riding', () => {
           ).toBe(true);
         });
   }
+});
+
+describe('Saved levels', () => {
+  const KEY = 'bikerace.levels.v1';
+  const empty = (): SavedLevels => ({ v: 1, levels: [] });
+  // The editor's loader from before P.SavedLevels, word for word: the Schema must load every store to the same levels
+  function oldLoad(text: string | null): SavedLevels {
+    const isObj = (v: unknown): v is Record<string, unknown> => !!v && typeof v === 'object';
+    let raw: unknown = null;
+    try {
+      raw = JSON.parse(text || 'null');
+    } catch {}
+    const list: unknown[] = isObj(raw) && Array.isArray(raw.levels) ? raw.levels : [];
+    const seen = new Set<string>();
+    const store: SavedLevels = { v: 1, levels: [] };
+    for (const L of list.slice(0, 100)) {
+      if (!isObj(L) || typeof L.id !== 'string' || !/^[a-z0-9]{1,24}$/.test(L.id) || seen.has(L.id)) continue;
+      seen.add(L.id);
+      const best =
+        isObj(L.best) && Number(L.best.t) > 0 && typeof L.best.key === 'string'
+          ? { t: Number(L.best.t), key: L.best.key.slice(0, 16) }
+          : null;
+      store.levels.push({ id: L.id, data: P.sanitize(L.data), best, updated: Number(L.updated) || 0 });
+    }
+    return store;
+  }
+  // the way the editor reads and writes them now: page.ts's load and save, here on a store in memory
+  const inMemory = <A>(effect: Effect.Effect<A, never, KeyValueStore.KeyValueStore>) =>
+    Effect.runSync(Effect.provide(effect, KeyValueStore.layerMemory));
+  const newLoad = (text: string | null) =>
+    inMemory(
+      Effect.gen(function* () {
+        if (text != null) yield* (yield* KeyValueStore.KeyValueStore).set(KEY, text).pipe(Effect.orDie);
+        return yield* load(KEY, P.SavedLevels, empty);
+      }),
+    );
+  const written = (store: SavedLevels) =>
+    inMemory(
+      Effect.gen(function* () {
+        yield* save(KEY, P.SavedLevels, store);
+        return (yield* (yield* KeyValueStore.KeyValueStore).get(KEY).pipe(Effect.orDie)) ?? null;
+      }),
+    );
+
+  // a store as the editor writes one: three levels, one with a best time
+  const level = (id: string, types: PieceTypeId[], best: number | null): SavedLevel => {
+    const data = P.sanitize(chain(types)); // (its numbers rounded as loading rounds them)
+    data.name = 'Level ' + id;
+    return { id, data, best: best == null ? null : { t: best, key: P.trackKey(data) }, updated: 1700000000000 };
+  };
+  const good = (): SavedLevels =>
+    // (as JSON holds it, where -0 is 0)
+    JSON.parse(
+      JSON.stringify({
+        v: 1,
+        levels: [
+          level('abc123', ['line3', 'ramp2', 'line1'], 21.5),
+          level('k9', ['line2', 'loop3', 'loop1'], null),
+          level('z', [], null),
+        ],
+      }),
+    );
+
+  test('a store the editor wrote loads as it was', () => {
+    const text = JSON.stringify(good());
+    expect(newLoad(text)).toEqual(oldLoad(text));
+    expect(newLoad(text)).toEqual(good());
+  });
+  test('writing a store saves the same JSON as before', () => {
+    const text = written(good());
+    expect(JSON.parse(text ?? 'null')).toEqual(JSON.parse(JSON.stringify(good())));
+    expect(newLoad(text)).toEqual(good());
+  });
+  // junk all through: bad and repeated ids, levels that aren't objects, odd best times and dates
+  const damaged = [
+    null,
+    '',
+    'not json',
+    '{',
+    'null',
+    '5',
+    '"levels"',
+    '[]',
+    '[{"id":"a"}]',
+    '{}',
+    '{"levels": 7}',
+    '{"levels": {"0": {"id": "a"}}}',
+    '{"v": 2, "levels": [{"id": "a"}]}',
+    '{"v":1,"levels":[{"id":"a","data":{},"best":{"t":1e999,"key":"k"},"updated":1e999}]}',
+    '{"v":1,"levels":[{"id":"a","data":{"pieces":[{"t":"line1","x":1e999}]},"best":{"t":-1e999,"key":"k"}}]}',
+    '{"v":1e999,"other":1e999,"levels":[{"id":"a","more":-1e999}]}',
+    '{"levels":[{"id":"__proto__"},{"id":"constructor","data":{"__proto__":{"name":"x"}}},{"__proto__":{"id":"b"}}]}',
+    JSON.stringify({
+      v: 1,
+      levels: [
+        { id: '../x', data: {} },
+        null,
+        5,
+        [],
+        'abc',
+        { id: 'okay1', data: { name: '<b>hi</b>', pieces: [{ t: 'nope' }, { t: 'line1', x: 'NaN', y: 1e99 }] } },
+        { id: 'okay1', data: {} },
+        { id: 'UPPER' },
+        { id: 'x'.repeat(25) },
+        { id: 'two', best: { t: '12.5', key: 'k'.repeat(40) }, updated: '1700000000000' },
+        { id: 'three', best: { t: 0, key: 'k' }, updated: 'soon' },
+        { id: 'four', best: { t: 5, key: 7 }, updated: null, extra: { a: 1 } },
+        { id: 'five', best: [1, 2], data: [1, 2, 3] },
+        { id: 'six', best: 'fast', data: 'level' },
+      ],
+    }),
+    JSON.stringify({ v: 1, levels: Array.from({ length: 150 }, (_, i) => ({ id: 'l' + i, data: {} })) }),
+  ];
+  for (const text of damaged)
+    test(`storage holding ${String(text).slice(0, 60)} loads as before`, () => {
+      expect(newLoad(text)).toEqual(oldLoad(text));
+    });
+
+  // and a few hundred made up at random, from scratch or by breaking bits of a good store
+  function random(seed: number) {
+    return () => {
+      seed = (seed + 0x6d2b79f5) | 0;
+      let t = Math.imul(seed ^ (seed >>> 15), 1 | seed);
+      t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+      return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+    };
+  }
+  const KEYS = ['v', 'levels', 'id', 'data', 'best', 'updated', 't', 'key', 'name', 'pieces', 'finish', 'x', 'y'];
+  const ATOMS = [null, true, false, 0, 1, -1, 2.5, 1e99, -1e99, '', '1', '-3', 'NaN', 'Infinity', 'abc', 'okay1'];
+  const MORE = ['a'.repeat(30), 'line1', 'loop3', 'start', 'finish', 'toString', '\u0007x', '__proto__'];
+  const pick = <T>(r: () => number, list: readonly T[]) => list[Math.floor(r() * list.length)]!;
+  function junk(r: () => number, depth: number): unknown {
+    const k = r();
+    if (depth <= 0 || k < 0.5) return pick(r, [...ATOMS, ...MORE]);
+    if (k < 0.7) return Array.from({ length: Math.floor(r() * 4) }, () => junk(r, depth - 1));
+    return Object.fromEntries(
+      Array.from({ length: Math.floor(r() * 5) }, () => [pick(r, [...KEYS, 'a', 'm', 'd']), junk(r, depth - 1)]),
+    );
+  }
+  function breakBits(r: () => number, v: unknown, rate: number): unknown {
+    if (r() < rate) return junk(r, 2);
+    if (Array.isArray(v)) return v.filter(() => r() > rate).map((x) => breakBits(r, x, rate));
+    if (v && typeof v === 'object')
+      return Object.fromEntries(
+        Object.entries(v)
+          .filter(() => r() > rate)
+          .map(([k, x]) => [k, breakBits(r, x, rate)]),
+      );
+    return v;
+  }
+  test('stores made up at random load as before', () => {
+    const r = random(1234);
+    let withLevels = 0;
+    for (let i = 0; i < 600; i++) {
+      const store = { ...good(), levels: [...good().levels, ...good().levels] }; // (each id twice)
+      const v = i % 2 ? junk(r, 5) : breakBits(r, store, r() * 0.2);
+      let text = JSON.stringify(v) ?? null;
+      if (text && i % 4 < 2) text = text.replaceAll('1e+99', '1e999'); // (which JSON reads as Infinity)
+      const now = newLoad(text),
+        before = oldLoad(text);
+      if (!Bun.deepEquals(now, before)) expect(now, text ?? 'nothing').toEqual(before);
+      if (before.levels.length) withLevels++;
+    }
+    // (most of the broken stores still hold some levels)
+    expect(withLevels).toBeGreaterThan(200);
+  });
 });

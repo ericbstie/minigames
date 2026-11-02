@@ -3,14 +3,14 @@ import { Effect } from 'effect';
 import * as AntSort from './ant-sort';
 import * as BikeRace from './bike-race';
 import * as CastleDefender from './castle-defender';
-import { GameHub, registerGame, route, showHideGame } from './hub';
+import { GameHub, registerGame, route } from './hub';
 import { listen, run } from './page';
 import * as WaterSort from './water-sort';
 
 registerGame('ant', AntSort.game);
 registerGame('castle', CastleDefender.game);
 registerGame('ws', WaterSort.game);
-registerGame('br', showHideGame(BikeRace));
+registerGame('br', BikeRace);
 
 // The menu's cards and the address bar, for as long as the page is open
 run(

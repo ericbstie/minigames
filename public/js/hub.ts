@@ -26,21 +26,6 @@ export function registerGame(id: GameId, game: Game): void {
   games[id] = game;
 }
 
-/** A game written as show() and hide() functions */
-export interface ShowHide {
-  show(): void | Promise<void>;
-  hide(): void;
-}
-
-/** A show/hide game as a Game: show when it opens (and when the address changes), hide when the player leaves */
-export const showHideGame = (game: ShowHide): Game => ({
-  open: Effect.acquireRelease(
-    Effect.promise(async () => game.show()),
-    () => Effect.sync(() => game.hide()),
-  ),
-  reroute: Effect.promise(async () => game.show()),
-});
-
 function wanted(): GameId | 'menu' {
   const h = location.hash.slice(1);
   if (h === 'ant-sort') return 'ant';

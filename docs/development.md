@@ -73,7 +73,7 @@ wrapping per-frame maths in Effect would cost frame rate and gain nothing. The p
 - **Games are scoped.** A game registers a `Game` with the hub: an `open` effect that the hub runs in a fresh scope
   when the player arrives, and closes when they leave. Whatever `open` sets up with `listen`, `animate` or a forked
   fiber stops then, so nothing keeps running behind the menu. `reroute` handles a new address while the game is
-  open (Bike Race's `#bike-race/CODE`). `showHideGame` wraps a game still written as `show()` and `hide()`.
+  open (Bike Race's `#bike-race/CODE`).
 
 Conventions:
 

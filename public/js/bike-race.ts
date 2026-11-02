@@ -1,7 +1,14 @@
 // Bike Race: menus, the play loop, ghosts, saving, sound, tilt/touch input, races against
-// computer riders and live races through the race server. Exports show() and hide() for the hub.
+// computer riders and live races through the race server. Exports the game for the hub: open, run in a scope while
+// Bike Race is on screen, and reroute, for a new address while it is (#bike-race/CODE joins a room).
+//
+// Effect handles what the game does to the world around it: saved data (load and write with Schemas), listeners,
+// the frame loop, timers (fibers that stop when the player leaves), the browser's promise APIs. The rules, physics,
+// layout, sound synthesis and drawing are plain functions called from inside those. See "The visit" below.
+import { Effect, FiberHandle, FiberSet, Predicate, Result, Schedule, Schema, type Scope } from 'effect';
 import * as A from './bike-race-art';
 import * as C from './bike-race-core';
+import { forgiving } from './bike-race-core';
 import type {
   Bike,
   BikeEvent,
@@ -17,9 +24,10 @@ import type {
 } from './bike-race-core';
 import * as Editor from './bike-race-editor';
 import { Net } from './bike-race-net';
-import type { CountdownMessage, RaceResult, RoomMessage, RoomSummary } from './bike-race-net';
+import type { CountdownMessage, NetEvent, RaceResult, RoomMessage, RoomSummary } from './bike-race-net';
 import type { CustomLevel } from './bike-race-pieces';
 import { GameHub } from './hub';
+import { animate, listen, load, nextFrame, type PageServices, run, runSync, save as write } from './page';
 
 const $ = (id: string) => document.getElementById(id)!;
 const STEP = C.STEP;
@@ -30,12 +38,17 @@ const ordinal = (n: number) =>
   n + (['th', 'st', 'nd', 'rd'][((n % 100) - 20) % 10] || ['th', 'st', 'nd', 'rd'][n % 100] || 'th');
 const isTouch = () => matchMedia('(pointer: coarse)').matches || 'ontouchstart' in window;
 const FEATURES = { garage: true, multiplayer: true };
+// A flag in the address, such as ?keyboard: the name as a whole word after ? or &
+const flag = (name: 'autopilot' | 'keyboard') => new RegExp(`[?&]${name}\\b`).test(location.search);
 // ?autopilot lets the computer rider drive your bike (used by the browser tests)
-const AUTOPILOT = /[?&]autopilot\b/.test(location.search);
+const AUTOPILOT = flag('autopilot');
 // The game is made for phones held sideways. On a computer it shows a "play on your phone" screen, unless the
 // player picks "Try it with the keyboard" there, or the address has ?autopilot or ?keyboard (for testing).
-let allowKeyboard = AUTOPILOT || /[?&]keyboard\b/.test(location.search);
+let allowKeyboard = AUTOPILOT || flag('keyboard');
 const isPhone = () => isTouch();
+// #bike-race/CODE, an invite link: the room's four letters (in any case), or null
+const INVITE = /^#bike-race\/([A-Za-z]{4})$/;
+const invitedTo = (hash: string) => INVITE.exec(hash)?.[1]!.toUpperCase() ?? null;
 
 // ------------------------------------------------------------------------------------------------
 // Types
@@ -179,32 +192,49 @@ const defaults = (): Save => ({
   cpu: 2,
   lastWorld: 'clover',
 });
-let save = defaults();
-try {
-  save = Object.assign(defaults(), JSON.parse(localStorage.getItem(SAVE_KEY) || '{}') as unknown);
-} catch {}
-const persist = () => {
-  try {
-    localStorage.setItem(SAVE_KEY, JSON.stringify(save));
-  } catch {}
-};
 const cleanName = (v: unknown) =>
   String(v || '')
     .replace(/[\u0000-\u001f\u007f]/g, '')
     .slice(0, 16);
+// The save is read the way it always was, merged over the defaults: a missing field is the default, and so is one
+// that doesn't fit (best times that aren't numbers, say). The paint wraps into range and the name loses control
+// characters and is cut to 16; a bike that is locked or doesn't exist goes back to Scout below (that needs the stars).
+const times = (v: unknown): Record<string, number> =>
+  Predicate.isObject(v)
+    ? Object.fromEntries(Object.entries(v).filter((e): e is [string, number] => Predicate.isNumber(e[1])))
+    : {};
+const or =
+  <A>(is: (v: unknown) => v is A, fallback: A) =>
+  (v: unknown): A =>
+    is(v) ? v : fallback;
+// a setting kept as it was taken before: missing is the default, anything else on or off by its truthiness
+const setting = (fallback: boolean) => (v: unknown) => (v === undefined ? fallback : !!v);
+const SaveSchema: Schema.Codec<Save, unknown> = Schema.Struct({
+  best: forgiving(Schema.Record(Schema.String, Schema.Number), times),
+  stars: forgiving(Schema.Record(Schema.String, Schema.Number), times),
+  bike: forgiving(Schema.String, or(Predicate.isString, 'scout')),
+  paint: forgiving(Schema.Number, (v) => {
+    const n = A.PAINTS.length;
+    return (((Math.floor(+(v as number)) || 0) % n) + n) % n;
+  }),
+  name: forgiving(Schema.String, cleanName),
+  seen: forgiving(Schema.mutable(Schema.Array(Schema.String)), (v) =>
+    Array.isArray(v) ? v.filter(Predicate.isString) : ['scout'],
+  ),
+  ghost: forgiving(Schema.Boolean, setting(true)),
+  sound: forgiving(Schema.Boolean, setting(true)),
+  tilt: forgiving(Schema.Boolean, setting(true)),
+  cpu: forgiving(Schema.Number, or(Predicate.isNumber, 2)),
+  lastWorld: forgiving(Schema.String, or(Predicate.isString, 'clover')),
+});
+let save = runSync(load(SAVE_KEY, SaveSchema, defaults));
+const persist = () => runSync(write(SAVE_KEY, SaveSchema, save));
 function loadGhost(id: string): Ghost | null {
-  try {
-    const g = JSON.parse(localStorage.getItem(GHOST_KEY + id) || 'null') as SavedGhost | null;
-    return g && g.f ? { time: g.time, bike: C.bikeById(g.bike).id, frames: C.decodeGhost(g.f) } : null;
-  } catch {
-    return null;
-  }
+  const g = runSync(load<SavedGhost | null>(GHOST_KEY + id, C.SavedGhost, () => null));
+  return g ? { time: g.time, bike: g.bike, frames: C.decodeGhost(g.f) } : null;
 }
 function saveGhost(id: string, time: number, frames: GhostFrame[], bike: string) {
-  try {
-    const g: SavedGhost = { time, bike, f: C.encodeGhost(frames) };
-    localStorage.setItem(GHOST_KEY + id, JSON.stringify(g));
-  } catch {}
+  runSync(write(GHOST_KEY + id, C.SavedGhost, { time, bike, f: C.encodeGhost(frames) }));
 }
 const totalStars = () => C.LEVELS.reduce((n, L) => n + (save.stars[L.id] || 0), 0);
 const worldStars = (w: World) => w.levels.reduce((n, L) => n + (save.stars[L.id] || 0), 0);
@@ -221,12 +251,7 @@ const bikeUnlocked = (b: BikeType) => totalStars() >= b.stars;
 const nextLockedBike = () => C.BIKES.find((b) => !bikeUnlocked(b)) || null;
 const newBikes = () => C.BIKES.filter((b) => bikeUnlocked(b) && !save.seen.includes(b.id));
 // a save from an older version, or edited by hand, could name a bike that is locked or doesn't exist
-(function checkSave() {
-  if (!Array.isArray(save.seen)) save.seen = ['scout'];
-  if (!C.BIKES.some((b) => b.id === save.bike) || !bikeUnlocked(C.bikeById(save.bike))) save.bike = 'scout';
-  save.paint = (((Math.floor(+save.paint) || 0) % A.PAINTS.length) + A.PAINTS.length) % A.PAINTS.length;
-  save.name = cleanName(save.name);
-})();
+if (!C.BIKES.some((b) => b.id === save.bike) || !bikeUnlocked(C.bikeById(save.bike))) save.bike = 'scout';
 const myLook = (): RiderLook => ({ bike: save.bike, paint: A.paintAt(save.paint), name: save.name || 'You' });
 
 const builtLevels = new Map<string, Level>();
@@ -267,8 +292,11 @@ const Sound = {
     this.master.gain.value = save.sound ? 0.6 : 0;
     this.master.connect(this.ctx.destination);
   },
+  // (a browser that won't resume or suspend now is no reason for an error: the next tap tries again)
   resume() {
-    if (this.ctx && this.ctx.state !== 'running' && !document.hidden) this.ctx.resume().catch(() => {});
+    const ctx = this.ctx;
+    if (ctx && ctx.state !== 'running' && !document.hidden)
+      run(Effect.tryPromise(() => ctx.resume()).pipe(Effect.ignore));
   },
   // iPhones start Web Audio only from inside a tap; a silent sound played then unlocks it for good
   unlock() {
@@ -285,7 +313,8 @@ const Sound = {
   },
   // a page in the background must not keep humming (phones keep Web Audio running for other tabs and apps)
   suspend() {
-    if (this.ctx && this.ctx.state === 'running') this.ctx.suspend().catch(() => {});
+    const ctx = this.ctx;
+    if (ctx && ctx.state === 'running') run(Effect.tryPromise(() => ctx.suspend()).pipe(Effect.ignore));
   },
   setOn(on: boolean) {
     if (this.master) this.master.gain.setTargetAtTime(on ? 0.6 : 0, this.ctx!.currentTime, 0.05);
@@ -329,12 +358,14 @@ const Sound = {
     const e = this.eng;
     this.eng = null;
     e.gn.gain.setTargetAtTime(0, this.ctx!.currentTime, 0.05);
-    setTimeout(() => {
-      try {
+    // the oscillators stop once the hum has faded. Leaving Bike Race is one of the ways the engine goes off, so this
+    // runs on its own rather than in the visit, which is closing then.
+    run(
+      Effect.try(() => {
         e.o1.stop();
         e.o2.stop();
-      } catch {}
-    }, 300);
+      }).pipe(Effect.delay(300), Effect.ignore),
+    );
   },
   noise(dur: number, from: number, to: number, vol: number) {
     if (!this.ctx) return;
@@ -423,7 +454,15 @@ const TILT_FULL = 14,
 const DEG = Math.PI / 180;
 // state: idle (not started) | asking (iOS prompt open) | waiting (listening, no reading yet) | on | denied | nosensor | insecure
 type TiltState = 'idle' | 'asking' | 'waiting' | 'on' | 'denied' | 'nosensor' | 'insecure';
-const tilt = { state: 'idle' as TiltState, angle: 0, lean: 0, asked: false, told: '' as TiltState | '', timer: 0 };
+// listening: the game wants motion events (each visit listens again while this is set)
+const tilt = {
+  state: 'idle' as TiltState,
+  angle: 0,
+  lean: 0,
+  asked: false,
+  told: '' as TiltState | '',
+  listening: false,
+};
 // iOS asks for motion access, and only from inside a tap. Its DeviceOrientationEvent.requestPermission is not in
 // the DOM types.
 type AskMotion = typeof DeviceOrientationEvent & { requestPermission?: () => Promise<PermissionState> };
@@ -440,7 +479,7 @@ const anyControl = () => {
 const useTilt = () => isPhone() && save.tilt && tilt.state === 'on';
 function screenAngle() {
   const a =
-    screen.orientation && typeof screen.orientation.angle === 'number'
+    screen.orientation && Predicate.isNumber(screen.orientation.angle)
       ? screen.orientation.angle
       : window.orientation || 0;
   return ((a % 360) + 360) % 360;
@@ -462,8 +501,7 @@ function onOrientation(e: DeviceOrientationEvent) {
   if (e.beta == null || e.gamma == null) return;
   const a = tiltAngle(e.beta, e.gamma, screenAngle());
   if (tilt.state === 'waiting' || tilt.state === 'nosensor') {
-    tilt.state = 'on';
-    clearTimeout(tilt.timer);
+    tilt.state = 'on'; // (the wait below then finds it on, and leaves it)
     refreshControls();
   } // a slow sensor can still switch tilt on
   if (a == null) return;
@@ -472,18 +510,31 @@ function onOrientation(e: DeviceOrientationEvent) {
   tilt.lean = Math.sign(a) * Math.min(1, m); // turning the phone anticlockwise leans the bike back (anticlockwise)
 }
 function listenTilt() {
-  window.removeEventListener('deviceorientation', onOrientation);
-  window.addEventListener('deviceorientation', onOrientation);
+  tilt.listening = true;
+  watchOrientation();
   if (tilt.state !== 'on') {
     tilt.state = 'waiting';
-    clearTimeout(tilt.timer);
-    tilt.timer = window.setTimeout(() => {
+    waitForTilt();
+  }
+}
+// Motion events for as long as the visit lasts, once a visit
+function watchOrientation() {
+  if (!visit || visit.orientation) return;
+  visit.orientation = true;
+  visit.fork(Effect.scoped(Effect.andThen(listen(window, 'deviceorientation', onOrientation), Effect.never)));
+}
+// No reading within 1.5 s means no sensor (a new wait replaces the last)
+function waitForTilt() {
+  if (!visit) return; // (open waits again on the next visit)
+  replace(
+    visit.tiltWait,
+    Effect.sync(() => {
       if (tilt.state === 'waiting') {
         tilt.state = 'nosensor';
         refreshControls();
       }
-    }, 1500);
-  }
+    }).pipe(Effect.delay(1500)),
+  );
 }
 // Call from a tap or click: iOS shows its motion permission prompt only from inside one.
 function startTilt() {
@@ -498,21 +549,22 @@ function startTilt() {
     refreshControls();
     return;
   }
-  const DOE = DeviceOrientationEvent as AskMotion;
-  if (typeof DOE.requestPermission === 'function') {
+  const ask = (DeviceOrientationEvent as AskMotion).requestPermission;
+  if (Predicate.isFunction(ask)) {
     if (tilt.asked) return;
     tilt.asked = true;
     tilt.state = 'asking';
-    DOE.requestPermission()
-      .then((r) => {
-        if (r === 'granted') listenTilt();
-        else tilt.state = 'denied';
-        refreshControls();
-      })
-      .catch(() => {
-        tilt.state = 'denied';
-        refreshControls();
-      });
+    // iOS asks once a page, so the answer counts even if the player has left Bike Race by the time it comes: this
+    // runs on its own, not in the visit. (run starts it at once, still inside the tap.)
+    run(
+      Effect.tryPromise(() => ask.call(DeviceOrientationEvent)).pipe(
+        Effect.match({
+          onFailure: () => (tilt.state = 'denied'),
+          onSuccess: (r) => (r === 'granted' ? listenTilt() : (tilt.state = 'denied')),
+        }),
+        Effect.andThen(Effect.sync(refreshControls)),
+      ),
+    );
   } else listenTilt();
   refreshControls();
 }
@@ -562,15 +614,36 @@ let app: HTMLElement,
   dpr = 1;
 const cam = new A.Camera();
 const particles = new A.Particles();
-let running = false,
-  raf = 0,
-  last = 0,
+let last = 0, // the last frame's time stamp (ms)
   acc = 0,
   clockT = 0;
 let view: View = 'home'; // home | worlds | levels | garage | mp | mylevels | editor | desktop | play
 let S: Session | null = null; // the session being played
 let attract: Session | null = null; // the computer rider behind the menus
-let started = false;
+let started = false; // the page's elements have been found (on the first visit)
+
+// The visit: Bike Race on screen. The hub runs `open` (at the end of this file) in a scope when the player arrives
+// and closes it when they leave, which removes the listeners and stops the frame loop and every timer started in
+// it. Plain game code starts its timers through `visit`, which is null while the game is closed: nothing needs one
+// then, as no listener, frame or race message reaches the game.
+interface Visit {
+  /** Runs an effect in a fiber that stops when the player leaves */
+  readonly fork: (effect: Effect.Effect<void, never, PageServices>) => unknown;
+  /** Timers that replace the one before: the toast's, the tilt wait and the lobby's refresh */
+  readonly toast: FiberHandle.FiberHandle<void, never>;
+  readonly tiltWait: FiberHandle.FiberHandle<void, never>;
+  readonly lobby: FiberHandle.FiberHandle<void, never>;
+  /** Motion events are coming in to onOrientation */
+  orientation: boolean;
+}
+let visit: Visit | null = null;
+/** Runs effect in handle h, in place of whatever ran there */
+const replace = (h: FiberHandle.FiberHandle<void, never>, effect: Effect.Effect<void>) =>
+  void run(FiberHandle.run(h, effect));
+/** fn after ms, unless the player has left Bike Race by then */
+const later = (ms: number, fn: () => void) => visit?.fork(Effect.sync(fn).pipe(Effect.delay(ms)));
+/** fn on the next frame, once the page has laid out what was just added (to draw on a new canvas, say) */
+const afterFrame = (fn: () => void) => visit?.fork(Effect.map(nextFrame, () => fn()));
 
 function resize() {
   dpr = Math.min(2, window.devicePixelRatio || 1);
@@ -585,9 +658,9 @@ function basePpm() {
   return Math.max(16, Math.min(72, Math.min(cam.H / 11.5, cam.W / 17)));
 }
 
+// One frame, from animate (in open). The game keeps its own clock from the frame's time stamp: a frame counts for up
+// to 0.1 s (animate's own step stops at 0.05), and resume() restarts it after a pause.
 function frame(now: number) {
-  if (!running) return;
-  raf = requestAnimationFrame(frame);
   const dt = Math.min(0.1, Math.max(0, (now - last) / 1000));
   last = now;
   clockT += dt;
@@ -786,9 +859,9 @@ function onEvent(sess: Session, me: Rider, e: BikeEvent) {
         sess.finishedSent = true;
       } // resent after a reconnect until the server echoes it
       center(`${fmt(me.finishTime)}s`, 'big');
-      setTimeout(() => {
+      later(1600, () => {
         if (S === sess && !sess.results) center('Waiting for the others…', 'small');
-      }, 1600);
+      });
     }
   }
 }
@@ -812,9 +885,9 @@ function sessionTimers(sess: Session, dt: number) {
         center('GO!', 'count go');
         Sound.count(true);
         startClock(sess);
-        setTimeout(() => {
+        later(700, () => {
           if (S === sess) center('');
-        }, 700);
+        });
       }
     }
   }
@@ -1021,15 +1094,13 @@ function hud() {
     me.running && !me.crashed && !me.finished && !s.paused,
   );
 }
-let toastTimer = 0;
 function toast(text: string, ms = 1800, cls = '') {
   ui.toast.textContent = text;
   ui.toast.className = 'br-toast outlined' + (cls ? ' ' + cls : '');
   ui.toast.style.animationDuration = ms + 'ms';
   void ui.toast.offsetWidth;
   ui.toast.classList.add('show');
-  clearTimeout(toastTimer);
-  toastTimer = window.setTimeout(() => ui.toast.classList.remove('show'), ms);
+  if (visit) replace(visit.toast, Effect.sync(() => ui.toast.classList.remove('show')).pipe(Effect.delay(ms)));
 }
 function center(text: string, cls = '', tip = '') {
   ui.tipbar.textContent = tip;
@@ -1269,10 +1340,11 @@ function showStandings(rows: StandingRow[], mode: 'cpu' | 'online') {
 let roomState: RoomMessage | null = null,
   roomsList: RoomSummary[] = [],
   pendingJoin: string | null = null,
-  listTimer = 0,
   lastResults: { code: string | null; rows: StandingRow[] } | null = null;
 const inRace = () => !!(S && S.mode === 'online' && view === 'play');
-Net.on((m) => {
+// Everything from the race server, and Net's own status changes. open listens while Bike Race is on screen; leaving
+// closes the connection, so nothing comes while it is closed.
+function onNet(m: NetEvent) {
   switch (m.t) {
     case 'status':
       if (m.status === 'online') sendProfile();
@@ -1345,7 +1417,7 @@ Net.on((m) => {
       const r = S.remote.get(m.id);
       if (!r) break;
       const now = performance.now() / 1000,
-        c = typeof m.c === 'number' ? m.c : null;
+        c = Predicate.isNumber(m.c) ? m.c : null;
       // map the sender's race clock onto ours by the quickest delivery seen; slower ones only add delay. The slow
       // creep upwards follows a sender whose game stalled for a moment (a phone pausing a page in the background).
       if (c != null) r.off = r.off == null ? now - c : Math.min(now - c, r.off + 0.02);
@@ -1374,7 +1446,7 @@ Net.on((m) => {
       break;
     }
     case 'ending':
-      if (S && S.mode === 'online' && typeof m.seconds === 'number') S.endsAt = performance.now() / 1000 + m.seconds;
+      if (S && S.mode === 'online' && Predicate.isNumber(m.seconds)) S.endsAt = performance.now() / 1000 + m.seconds;
       break;
     case 'results': {
       const rows = resultRows(m.results);
@@ -1384,31 +1456,28 @@ Net.on((m) => {
       break;
     }
   }
-});
+}
 const resultRows = (list: RaceResult[] | null): StandingRow[] =>
   (Array.isArray(list) ? list : []).map((r) => ({
     name: String(r.name),
     color: A.paintAt(r.paint).body,
-    time: typeof r.time === 'number' ? r.time : null,
+    time: Predicate.isNumber(r.time) ? r.time : null,
     me: r.id === Net.id,
   }));
 function showOnlineResults(rows: StandingRow[]) {
   const sess = S!;
   sess.results = rows;
   sess.endsAt = 0;
-  setTimeout(
-    () => {
-      if (S === sess && view === 'play') {
-        center('');
-        closeModals();
-        showStandings(
-          rows.map((r) => ({ ...r })),
-          'online',
-        );
-      }
-    },
-    sess.me.finished ? 700 : 0,
-  );
+  later(sess.me.finished ? 700 : 0, () => {
+    if (S === sess && view === 'play') {
+      center('');
+      closeModals();
+      showStandings(
+        rows.map((r) => ({ ...r })),
+        'online',
+      );
+    }
+  });
 }
 function sendProfile() {
   Net.send({ t: 'hello', name: (save.name || '').trim() || 'Rider', paint: save.paint, bike: save.bike, key: Net.key });
@@ -1416,12 +1485,12 @@ function sendProfile() {
 function lostRace(text: string) {
   const sess = S;
   toast(text, 2600, 'small');
-  setTimeout(() => {
+  later(1800, () => {
     if (S === sess && view === 'play') {
       exitPlay();
       showView('mp');
     }
-  }, 1800);
+  });
 }
 function startOnlineRace(m: CountdownMessage) {
   if (!roomState || !Array.isArray(m.racers) || !m.racers.includes(Net.id!) || !C.levelById(m.level)) return;
@@ -1459,7 +1528,7 @@ function syncRemote(sess: Session) {
   }
   for (const [id, r] of sess.remote) if (!here.has(id)) r.gone = true;
 }
-const canShare = () => isPhone() && typeof navigator.share === 'function';
+const canShare = () => isPhone() && Predicate.isFunction(navigator.share);
 // The link that joins the room. A page opened on this computer as localhost would hand out a link nobody else can
 // open, so when the server is reachable on the network it uses the server's network address instead.
 function inviteLink() {
@@ -1467,24 +1536,27 @@ function inviteLink() {
   const base = local && Net.share ? Net.share + '/' : location.origin + location.pathname;
   return `${base}#bike-race/${roomState ? roomState.code : ''}`;
 }
-async function invite() {
+// Shares the invite link on a phone, or copies it. Both need the tap that asked, so the Invite button's listener
+// returns this, and it starts there and then.
+const invite = Effect.gen(function* () {
   if (!roomState) return;
-  const link = inviteLink();
+  const link = inviteLink(),
+    code = roomState.code;
   if (canShare()) {
-    try {
-      await navigator.share({ title: 'Bike Race', text: `Race me in Bike Race! Room ${roomState.code}`, url: link });
-      return;
-    } catch (e) {
-      if ((e as Error | null)?.name === 'AbortError') return;
-    }
+    const shared = yield* Effect.result(
+      Effect.tryPromise({
+        try: () => navigator.share({ title: 'Bike Race', text: `Race me in Bike Race! Room ${code}`, url: link }),
+        catch: (e) => e,
+      }),
+    );
+    // shared, or the player closed the share sheet; any other failure copies the link instead
+    if (Result.isSuccess(shared)) return;
+    if (Predicate.hasProperty(shared.failure, 'name') && shared.failure.name === 'AbortError') return;
   }
-  try {
-    await navigator.clipboard.writeText(link);
-    toast('Invite link copied', 1800, 'small');
-  } catch {
-    prompt('Copy this link', link);
-  }
-}
+  const copied = yield* Effect.result(Effect.tryPromise(() => navigator.clipboard.writeText(link)));
+  if (Result.isSuccess(copied)) toast('Invite link copied', 1800, 'small');
+  else prompt('Copy this link', link);
+});
 
 // ------------------------------------------------------------------------------------------------
 // Menus
@@ -1608,14 +1680,15 @@ function showView(v: View) {
   if (v === 'mp') {
     Net.connect();
     renderMp();
-    clearInterval(listTimer);
-    listTimer = window.setInterval(() => {
+    // every 3 s while the lobby is up: the open rooms, and how this phone is connected
+    const refresh = Effect.sync(() => {
       if (view === 'mp') {
         if (!roomState) Net.send({ t: 'list' });
         renderConn();
       }
-    }, 3000);
-  } else clearInterval(listTimer);
+    });
+    if (visit) replace(visit.lobby, Effect.asVoid(Effect.schedule(refresh, Schedule.spaced('3 seconds'))));
+  } else if (visit) run(FiberHandle.clear(visit.lobby));
   const scr = document.getElementById('br-' + v);
   if (scr) scr.scrollTop = 0;
 }
@@ -1685,24 +1758,27 @@ function renderWorlds() {
     b.disabled = !open;
     b.innerHTML = `<canvas width="320" height="200"></canvas><div class="nm outlined">${esc(w.name)}</div><div class="ds">${esc(open ? w.blurb : 'Finish ' + C.WORLDS[i - 1].name + ' to unlock')}</div>
       <div class="br-wstars">${starSvg(true)}<span>${worldStars(w)} / ${w.levels.length * 3}</span></div>${open ? '' : lockSvg}`;
-    b.onclick = () => {
-      save.lastWorld = w.id;
-      persist();
-      renderLevels(w);
-      showLevels();
-    };
     ui.worldCards.appendChild(b);
-    requestAnimationFrame(() =>
+    afterFrame(() =>
       A.drawThumb(b.querySelector('canvas')!, w, getLevel(w.levels[Math.min(2, w.levels.length - 1)].id)),
     );
   });
+}
+// a world's card was tapped (see tapped)
+function pickWorld(w: World) {
+  save.lastWorld = w.id;
+  persist();
+  renderLevels(w);
+  showLevels();
 }
 function showLevels() {
   view = 'levels';
   for (const id of VIEWS) $('br-' + id).hidden = id !== 'levels';
   $('br-levels').scrollTop = 0;
 }
+let levelsWorld: World = C.WORLDS[0]; // the world whose levels are listed
 function renderLevels(w: World) {
+  levelsWorld = w;
   ui.levelsTitle.textContent = w.name;
   ui.levelsStars.textContent = `${worldStars(w)} / ${w.levels.length * 3}`;
   ui.levelsSub.textContent = w.blurb;
@@ -1717,9 +1793,16 @@ function renderLevels(w: World) {
     b.disabled = !open;
     b.innerHTML = `<div class="lv">Level ${i + 1}</div><div class="n outlined">${i + 1}</div><div class="nm2">${esc(L.name)}</div>
       <div class="br-lstars">${[0, 1, 2].map((k) => starSvg(k < st)).join('')}</div><div class="bt">${best ? 'Best ' + fmt(best) + 's' : open ? 'Par ' + fmt(L.par) + 's' : ''}</div>${open ? '' : lockSvg}`;
-    b.onclick = () => startSolo(L.id);
     ui.levelGrid.appendChild(b);
   });
+}
+// The cards of the worlds and levels and the garage's bikes and paints are made again on every render, so the list
+// holding them listens for taps (see open), and this finds the card tapped: its place in the list, or -1 (none, or
+// switched off).
+function tapped(list: HTMLElement, e: Event): number {
+  let el = e.target instanceof Element ? e.target : null;
+  while (el && el.parentElement !== list) el = el.parentElement;
+  return el && !(el as HTMLButtonElement).disabled ? Array.prototype.indexOf.call(list.children, el) : -1;
 }
 
 // ------------------------------------------------------------------------------------------------
@@ -1829,7 +1912,6 @@ function renderGarage() {
       `<span class="st">${riding ? 'Riding' : open ? esc(b.perk) : `${starTiny}${b.stars}`}</span>` +
       (fresh ? '<em class="br-new">New</em>' : '') +
       (open ? '' : lockSvg);
-    el.onclick = () => pickBike(b);
     ui.bikes.appendChild(el);
     drawBikeThumb(el.querySelector('canvas')!, b, !open);
   }
@@ -1843,7 +1925,6 @@ function renderGarage() {
     el.setAttribute('role', 'radio');
     el.setAttribute('aria-label', p.id);
     el.setAttribute('aria-checked', String(i === save.paint));
-    el.onclick = () => pickPaint(i);
     ui.paints.appendChild(el);
   });
   // the bike on show
@@ -1857,10 +1938,10 @@ function renderGarage() {
     ([k, label]) => `<div><span>${label}</span><i><b style="width:${Math.round(12 + st[k] * 88)}%"></b></i></div>`,
   ).join('');
   if (save.bike === b.id) ui.gStatus.innerHTML = '<span class="br-chip go">Riding this bike</span>';
-  else if (open) {
+  // (its Ride button picks the bike on show: a listener in open)
+  else if (open)
     ui.gStatus.innerHTML = `<button class="b go outlined br-ride" type="button">Ride ${esc(b.name)}</button>`;
-    (ui.gStatus.firstElementChild as HTMLElement).onclick = () => pickBike(b);
-  } else {
+  else {
     const prev = Math.max(0, ...C.BIKES.filter((x) => x.stars < b.stars).map((x) => x.stars)),
       need = b.stars - total;
     const pct = Math.max(0, Math.min(1, (total - prev) / (b.stars - prev)));
@@ -2119,11 +2200,7 @@ function renderMp() {
           })
           .join('')
       : '<li class="empty">No open rooms yet. Start one and share the code.</li>';
-    for (const b of ui.mpRooms.querySelectorAll<HTMLElement>('button[data-code]'))
-      b.onclick = () => {
-        sendProfile();
-        Net.send({ t: 'join', code: b.dataset.code! });
-      };
+    // (a room's Join button joins it: a listener on the list, in open)
   }
   if (online && roomState) {
     const r = roomState,
@@ -2172,7 +2249,7 @@ function renderMp() {
 function openModal(m: HTMLElement) {
   m.hidden = false;
   const b = m.querySelector<HTMLElement>('.b.go:not([hidden]), .b:not([hidden])');
-  if (b && !isPhone()) setTimeout(() => b.focus(), 50);
+  if (b && !isPhone()) later(50, () => b.focus());
 }
 function closeModals() {
   for (const m of [ui.pause, ui.crash, ui.result, ui.raceResult]) m.hidden = true;
@@ -2237,234 +2314,293 @@ function leaveToMenu() {
 }
 
 // ------------------------------------------------------------------------------------------------
-function setup() {
+// Opening and leaving: the listeners, the frame loop and what leaving does (see "The visit" above)
+
+// the page's elements, found on the first visit
+function findElements() {
   app = $('br-app');
   canvas = $('br-canvas') as HTMLCanvasElement;
   g = canvas.getContext('2d')!;
   ui = findUi();
   app.classList.toggle('touch', isPhone());
-  const go = (fn: (e: Event) => void) => (e: Event) => {
-    Sound.init();
-    Sound.resume();
-    fn(e);
-  };
+}
+// a menu button that may be the first tap: sound can start from inside it
+const go = (fn: (e: Event) => void) => (e: Event) => {
+  Sound.init();
+  Sound.resume();
+  fn(e);
+};
+const toHub = () => {
+  leaveFullscreen();
+  GameHub.menu();
+};
+const setName = (v: string) => {
+  save.name = cleanName(v);
+  persist();
+};
+function toggleSound() {
+  save.sound = !save.sound;
+  persist();
+  Sound.init();
+  Sound.setOn(save.sound);
+  syncToggles();
+}
+function joinCode() {
+  const c = ui.mpCode.value.trim().toUpperCase();
+  if (c.length !== 4) {
+    toast('Room codes have 4 letters', 2000, 'small');
+    ui.mpCode.focus();
+    return;
+  }
+  sendProfile();
+  Net.send({ t: 'join', code: c });
+}
+function onKey(e: KeyboardEvent) {
+  const tag = (e.target as Element | null)?.tagName || '';
+  if (view === 'garage' && e.code === 'Escape' && !/INPUT/.test(tag)) {
+    e.preventDefault();
+    closeGarage();
+    return;
+  }
+  if (view !== 'play') return;
+  if (e.target && /INPUT|SELECT|TEXTAREA/.test(tag)) return;
+  Sound.init();
+  Sound.resume();
+  if (KEYMAP[e.code]) {
+    keys.add(e.code);
+    e.preventDefault();
+  }
+  if (e.repeat) return;
+  if (e.code === 'Escape' || e.code === 'KeyP') {
+    e.preventDefault();
+    if (!ui.pause.hidden) resume();
+    else pause();
+  } else if (e.code === 'KeyR' && S && S.mode !== 'online') {
+    e.preventDefault();
+    restart();
+  } else if ((e.code === 'Enter' || e.code === 'Space') && !ui.crash.hidden) {
+    e.preventDefault();
+    restart();
+  }
+}
+// let go of every key and touch control
+function releaseAll() {
+  keys.clear();
+  for (const k of Object.keys(touchCtl) as Control[]) touchCtl[k] = false;
+  for (const el of document.querySelectorAll('.br-touch .on')) el.classList.remove('on');
+}
+
+/** Every button, key, touch and page event the game answers while it is open */
+const controls: Effect.Effect<void, never, Scope.Scope> = Effect.gen(function* () {
+  const click = (el: string | HTMLElement, fn: (e: MouseEvent) => void) =>
+    listen(typeof el === 'string' ? $(el) : el, 'click', fn);
   // home
-  const toHub = () => {
-    leaveFullscreen();
-    GameHub.menu();
-  };
-  $('br-home-back').onclick = toHub;
-  $('br-go-solo').onclick = go(() => {
-    goFullscreen();
-    showView('worlds');
-  });
-  $('br-desk-back').onclick = toHub;
-  $('br-desk-keys').onclick = () => {
+  yield* click('br-home-back', toHub);
+  yield* click(
+    'br-go-solo',
+    go(() => {
+      goFullscreen();
+      showView('worlds');
+    }),
+  );
+  yield* click('br-desk-back', toHub);
+  yield* click('br-desk-keys', () => {
     allowKeyboard = true;
     showView('home');
-  };
+  });
   // any tap in the game may be the first one: iOS only shows its motion permission prompt from a tap
-  app.addEventListener(
+  yield* listen(
+    app,
     'click',
     () => {
       startTilt();
       Sound.unlock();
     },
-    true,
+    { capture: true },
   );
-  app.addEventListener('touchend', () => Sound.unlock(), true);
+  yield* listen(app, 'touchend', () => Sound.unlock(), { capture: true });
   // a soft tick for menu buttons (not the gas and brake)
-  app.addEventListener('click', (e) => {
+  yield* listen(app, 'click', (e) => {
     const b = e.target instanceof Element ? e.target.closest('button') : null;
     if (b && !b.closest('.br-touch') && !b.disabled) Sound.tap();
   });
-  $('br-rotate-back').onclick = toHub;
-  $('br-go-mp').onclick = go(() => showView('mp'));
-  $('br-go-garage').onclick = go(() => openGarage());
-  $('br-go-editor').onclick = go(() => showView('mylevels'));
-  $('br-worlds-back').onclick = () => showView('home');
-  $('br-levels-back').onclick = () => showView('worlds');
-  $('br-garage-back').onclick = () => closeGarage();
-  $('br-mp-back').onclick = () => {
+  yield* click('br-rotate-back', toHub);
+  yield* click(
+    'br-go-mp',
+    go(() => showView('mp')),
+  );
+  yield* click(
+    'br-go-garage',
+    go(() => openGarage()),
+  );
+  yield* click(
+    'br-go-editor',
+    go(() => showView('mylevels')),
+  );
+  yield* click('br-worlds-back', () => showView('home'));
+  yield* click('br-levels-back', () => showView('worlds'));
+  yield* click('br-garage-back', () => closeGarage());
+  yield* click('br-mp-back', () => {
     if (roomState) Net.send({ t: 'leave' });
     roomState = null;
     showView('home');
-  };
-  // garage
-  const setName = (v: string) => {
-    save.name = cleanName(v);
-    persist();
-  };
-  ui.name.oninput = () => setName(ui.name.value);
-  ui.name.onchange = () => {
+  });
+  // the world and level cards (see tapped)
+  yield* click(ui.worldCards, (e) => {
+    const i = tapped(ui.worldCards, e);
+    if (i >= 0) pickWorld(C.WORLDS[i]);
+  });
+  yield* click(ui.levelGrid, (e) => {
+    const i = tapped(ui.levelGrid, e);
+    if (i >= 0) startSolo(levelsWorld.levels[i].id);
+  });
+  // garage: the bikes, the paints, the bike on show's Ride button and the name
+  yield* click(ui.bikes, (e) => {
+    const i = tapped(ui.bikes, e);
+    if (i >= 0) pickBike(C.BIKES[i]);
+  });
+  yield* click(ui.paints, (e) => {
+    const i = tapped(ui.paints, e);
+    if (i >= 0) pickPaint(i);
+  });
+  yield* click(ui.gStatus, (e) => {
+    if (e.target instanceof Element && e.target.closest('.br-ride')) pickBike(C.bikeById(garage.focus));
+  });
+  yield* listen(ui.name, 'input', () => setName(ui.name.value));
+  yield* listen(ui.name, 'change', () => {
     ui.name.value = save.name = cleanName(ui.name.value.trim());
     persist();
     if (Net.status === 'online') sendProfile();
-  };
-  ui.name.onkeydown = (e) => {
+  });
+  yield* listen(ui.name, 'keydown', (e) => {
     if (e.key === 'Enter') ui.name.blur();
-  };
+  });
   for (const id of ['br-p-garage', 'br-crash-garage', 'br-res-garage'])
-    $(id).onclick = go(() => openGarage(S && S.newBike && S.newBike.id));
-  ui.resUnlock.onclick = go(() => openGarage(S && S.newBike ? S.newBike.id : nextLockedBike()?.id));
+    yield* click(
+      id,
+      go(() => openGarage(S && S.newBike && S.newBike.id)),
+    );
+  yield* click(
+    ui.resUnlock,
+    go(() => openGarage(S && S.newBike ? S.newBike.id : nextLockedBike()?.id)),
+  );
   // play HUD
-  $('br-pause').onclick = () => pause();
-  ui.retry.onclick = () => restart();
-  ui.soundBtn.onclick = () => {
-    save.sound = !save.sound;
-    persist();
-    Sound.init();
-    Sound.setOn(save.sound);
-    syncToggles();
-  };
+  yield* click('br-pause', () => pause());
+  yield* click(ui.retry, () => restart());
+  yield* click(ui.soundBtn, () => toggleSound());
   // pause menu
-  $('br-p-resume').onclick = () => resume();
-  ui.pRestart.onclick = () => restart();
-  ui.pLevels.onclick = () => {
+  yield* click('br-p-resume', () => resume());
+  yield* click(ui.pRestart, () => restart());
+  yield* click(ui.pLevels, () => {
     if (S && S.mode === 'online') Net.send({ t: 'retire' });
     leaveToMenu();
-  };
-  ui.tGhost.onclick = () => {
+  });
+  yield* click(ui.tGhost, () => {
     save.ghost = !save.ghost;
     persist();
     if (S && S.mode === 'solo') S.ghost = save.ghost ? loadGhost(S.levelId) : null;
     syncToggles();
-  };
-  ui.tSound.onclick = () => {
-    save.sound = !save.sound;
-    persist();
-    Sound.init();
-    Sound.setOn(save.sound);
-    syncToggles();
-  };
-  ui.pTilt.onclick = () => setTilt(!save.tilt);
+  });
+  yield* click(ui.tSound, () => toggleSound());
+  yield* click(ui.pTilt, () => setTilt(!save.tilt));
   // crash and result
-  $('br-crash-retry').onclick = () => restart();
-  $('br-crash-levels').onclick = () => leaveToMenu();
-  ui.resNext.onclick = () => {
+  yield* click('br-crash-retry', () => restart());
+  yield* click('br-crash-levels', () => leaveToMenu());
+  yield* click(ui.resNext, () => {
     const n = nextLevelId(S!.levelId);
     if (n) startSolo(n);
-  };
-  $('br-res-retry').onclick = () => restart();
-  $('br-res-levels').onclick = () => leaveToMenu();
+  });
+  yield* click('br-res-retry', () => restart());
+  yield* click('br-res-levels', () => leaveToMenu());
   // race results
-  ui.rrAgain.onclick = () => {
+  yield* click(ui.rrAgain, () => {
     if (!S) return;
     if (S.mode === 'cpu') startCpuRace(S.levelId, S.cpus.length);
     else if (S.mode === 'online') Net.send({ t: 'start' }); // the countdown closes the sheet
-  };
-  ui.rrRoom.onclick = () => {
+  });
+  yield* click(ui.rrRoom, () => {
     exitPlay();
     showView('mp');
-  };
-  $('br-rr-leave').onclick = () => {
+  });
+  yield* click('br-rr-leave', () => {
     if (S && S.mode === 'online') Net.send({ t: 'leave' });
     roomState = null;
     exitPlay();
     showView('mp');
-  };
+  });
   // multiplayer lobby
-  ui.mpName.oninput = () => {
-    setName(ui.mpName.value);
-  };
-  ui.mpName.onchange = () => sendProfile();
-  $('br-mp-create').onclick = () => {
+  yield* listen(ui.mpName, 'input', () => setName(ui.mpName.value));
+  yield* listen(ui.mpName, 'change', () => sendProfile());
+  yield* click('br-mp-create', () => {
     sendProfile();
     Net.send({ t: 'create', level: ui.mpLevel.value });
-  };
-  const joinCode = () => {
-    const c = ui.mpCode.value.trim().toUpperCase();
-    if (c.length !== 4) {
-      toast('Room codes have 4 letters', 2000, 'small');
-      ui.mpCode.focus();
-      return;
-    }
-    sendProfile();
-    Net.send({ t: 'join', code: c });
-  };
-  ui.mpCode.oninput = () => {
+  });
+  yield* listen(ui.mpCode, 'input', () => {
     const v = ui.mpCode.value
       .toUpperCase()
       .replace(/[^A-Z]/g, '')
       .slice(0, 4);
     if (v !== ui.mpCode.value) ui.mpCode.value = v;
-  };
-  $('br-mp-join').onclick = joinCode;
-  ui.mpCode.onkeydown = (e) => {
+  });
+  yield* click('br-mp-join', () => joinCode());
+  yield* listen(ui.mpCode, 'keydown', (e) => {
     if (e.key === 'Enter') joinCode();
-  };
-  $('br-mp-retry').onclick = () => {
+  });
+  yield* click('br-mp-retry', () => {
     Net.close();
     Net.connect();
     renderMp();
-  };
-  ui.roomLevel.onchange = () => Net.send({ t: 'level', level: ui.roomLevel.value });
-  ui.roomStart.onclick = () => Net.send({ t: 'start' });
-  $('br-room-leave').onclick = () => {
+  });
+  // a room's Join button in the open rooms list
+  yield* click(ui.mpRooms, (e) => {
+    const b = e.target instanceof Element ? e.target.closest<HTMLElement>('button[data-code]') : null;
+    if (!b) return;
+    sendProfile();
+    Net.send({ t: 'join', code: b.dataset.code! });
+  });
+  yield* listen(ui.roomLevel, 'change', () => {
+    Net.send({ t: 'level', level: ui.roomLevel.value });
+  });
+  yield* click(ui.roomStart, () => {
+    Net.send({ t: 'start' });
+  });
+  yield* click('br-room-leave', () => {
     Net.send({ t: 'leave' });
     roomState = null;
     renderMp();
-  };
-  ui.roomCopy.onclick = () => invite();
+  });
+  yield* listen(ui.roomCopy, 'click', () => invite);
   for (const b of ui.cpuCount.querySelectorAll('button'))
-    b.onclick = () => {
+    yield* click(b, () => {
       save.cpu = +b.dataset.n!;
       persist();
       renderMp();
-    };
-  $('br-cpu-start').onclick = go(() => startCpuRace(ui.cpuLevel.value, save.cpu));
+    });
+  yield* click(
+    'br-cpu-start',
+    go(() => startCpuRace(ui.cpuLevel.value, save.cpu)),
+  );
   // keyboard
-  window.addEventListener('keydown', (e) => {
-    const tag = (e.target as Element | null)?.tagName || '';
-    if (running && view === 'garage' && e.code === 'Escape' && !/INPUT/.test(tag)) {
-      e.preventDefault();
-      closeGarage();
-      return;
-    }
-    if (!running || view !== 'play') return;
-    if (e.target && /INPUT|SELECT|TEXTAREA/.test(tag)) return;
-    Sound.init();
-    Sound.resume();
-    if (KEYMAP[e.code]) {
-      keys.add(e.code);
-      e.preventDefault();
-    }
-    if (e.repeat) return;
-    if (e.code === 'Escape' || e.code === 'KeyP') {
-      e.preventDefault();
-      if (!ui.pause.hidden) resume();
-      else pause();
-    } else if (e.code === 'KeyR' && S && S.mode !== 'online') {
-      e.preventDefault();
-      restart();
-    } else if ((e.code === 'Enter' || e.code === 'Space') && !ui.crash.hidden) {
-      e.preventDefault();
-      restart();
-    }
+  yield* listen(window, 'keydown', onKey);
+  yield* listen(window, 'keyup', (e) => {
+    keys.delete(e.code);
   });
-  window.addEventListener('keyup', (e) => keys.delete(e.code));
-  const releaseAll = () => {
-    keys.clear();
-    for (const k of Object.keys(touchCtl) as Control[]) touchCtl[k] = false;
-    for (const el of document.querySelectorAll('.br-touch .on')) el.classList.remove('on');
-  };
-  window.addEventListener('blur', () => {
+  yield* listen(window, 'blur', () => {
     releaseAll();
     if (shouldAutoPause()) pause();
   });
-  document.addEventListener('visibilitychange', () => {
+  // phones stop pages in the background, and the connection may have died meanwhile
+  yield* listen(document, 'visibilitychange', () => {
     if (document.hidden) {
       releaseAll();
       if (shouldAutoPause()) pause();
       Sound.suspend();
-    } else if (running) {
+    } else {
       Net.wake();
       Sound.resume();
-    } // phones stop pages in the background, and the connection may have died
+    }
   });
-  window.addEventListener('pageshow', () => {
-    if (running) Net.wake();
-  });
+  yield* listen(window, 'pageshow', () => Net.wake());
   // touch controls
   for (const [id, k] of [
     ['br-tgas', 'gas'],
@@ -2487,71 +2623,46 @@ function setup() {
       touchCtl[k] = false;
       el.classList.remove('on');
     };
-    el.addEventListener('pointerdown', on);
-    el.addEventListener('pointerup', off);
-    el.addEventListener('pointercancel', off);
-    el.addEventListener('lostpointercapture', off);
-    el.addEventListener('contextmenu', (e) => e.preventDefault());
+    yield* listen(el, 'pointerdown', on);
+    yield* listen(el, 'pointerup', off);
+    yield* listen(el, 'pointercancel', off);
+    yield* listen(el, 'lostpointercapture', off);
+    yield* listen(el, 'contextmenu', (e) => e.preventDefault());
   }
   // tapping the screen retries after a crash
-  canvas.addEventListener('pointerdown', () => {
+  yield* listen(canvas, 'pointerdown', () => {
     Sound.init();
     Sound.resume();
   });
-  window.addEventListener('resize', () => {
-    if (!running) return;
+  yield* listen(window, 'resize', () => {
     resize();
     if (isPhone() && innerHeight > innerWidth && shouldAutoPause()) pause();
   });
-  // Android and others send motion events without asking, so tilt can start now. iOS waits for the first tap.
-  if (
-    isPhone() &&
-    save.tilt &&
-    !(
-      typeof DeviceOrientationEvent !== 'undefined' &&
-      typeof (DeviceOrientationEvent as AskMotion).requestPermission === 'function'
-    )
-  )
-    startTilt();
-  started = true;
-}
+});
 
-// Android: play fullscreen and locked sideways. (iPhones can't do either from a web page.)
+// Android: play fullscreen and locked sideways. (iPhones can't do either from a web page.) A browser that says no is
+// no reason for an error. run starts it at once, still inside the tap that asked, which fullscreen needs.
 function goFullscreen() {
   const el = document.documentElement;
   if (!isPhone() || document.fullscreenElement || !el.requestFullscreen) return;
-  el.requestFullscreen({ navigationUI: 'hide' })
-    .then(() => (screen.orientation && screen.orientation.lock ? screen.orientation.lock('landscape') : null))
-    .catch(() => {});
+  const lock = Effect.suspend(() =>
+    screen.orientation && screen.orientation.lock
+      ? Effect.tryPromise(() => screen.orientation.lock('landscape'))
+      : Effect.void,
+  );
+  run(
+    Effect.tryPromise(() => el.requestFullscreen({ navigationUI: 'hide' })).pipe(Effect.andThen(lock), Effect.ignore),
+  );
 }
 function leaveFullscreen() {
-  if (document.fullscreenElement && document.exitFullscreen) document.exitFullscreen().catch(() => {});
+  if (document.fullscreenElement && document.exitFullscreen)
+    run(Effect.tryPromise(() => document.exitFullscreen()).pipe(Effect.ignore));
 }
-export function show(): void {
-  if (!started) setup();
-  resize();
-  const h = location.hash.slice(1),
-    m = /^bike-race\/([A-Za-z]{4})$/.exec(h);
-  if (!running) {
-    running = true;
-    last = performance.now();
-    raf = requestAnimationFrame(frame);
-  }
-  if (m) {
-    pendingJoin = m[1].toUpperCase();
-    try {
-      history.replaceState(null, '', location.pathname + location.search + '#bike-race');
-    } catch {}
-    if (Net.status === 'online' && Net.id) {
-      Net.send({ t: 'join', code: pendingJoin });
-      pendingJoin = null;
-    }
-    showView('mp');
-  } else if (view === 'play' && S) {
-    // coming back to a game in progress
-  } else showView(view === 'play' ? 'home' : view);
-}
-export function hide(): void {
+
+// The player left Bike Race (the visit's scope is closing, its listeners and loop already gone): leave any room,
+// close the connection, leave fullscreen, quiet the engine and pause a run.
+function leave() {
+  visit = null;
   // leaving Bike Race for the games menu leaves any room too
   if (roomState) Net.send({ t: 'leave' });
   roomState = null;
@@ -2560,12 +2671,72 @@ export function hide(): void {
     view = 'mp';
   }
   Net.close();
-  running = false;
-  cancelAnimationFrame(raf);
   leaveFullscreen();
   Sound.engineOff();
+  // keys and buttons let go of while the game was closed would otherwise still count as held when it opens again
+  releaseAll();
   if (view === 'play' && S) pause();
 }
+
+/**
+ * Bike Race on screen: the hub runs this in a scope when the player arrives and closes the scope when they leave.
+ * What it starts (listeners, the race server's messages, the frame loop, timers) stops then, and leave() does the
+ * rest of leaving.
+ */
+export const open: Effect.Effect<void, never, Scope.Scope | PageServices> = Effect.gen(function* () {
+  if (!started) findElements();
+  visit = {
+    fork: yield* FiberSet.makeRuntime<PageServices>(),
+    toast: yield* FiberHandle.make<void, never>(),
+    tiltWait: yield* FiberHandle.make<void, never>(),
+    lobby: yield* FiberHandle.make<void, never>(),
+    orientation: false,
+  };
+  // The race server's messages. leave() (the finalizer added next, so it runs first) closes the connection while
+  // this still listens, so the lobby hears that it is closed, as it always did.
+  yield* Effect.acquireRelease(
+    Effect.sync(() => Net.on(onNet)),
+    (off) => Effect.sync(off),
+  );
+  yield* Effect.addFinalizer(() => Effect.sync(leave));
+  // the editor's buttons and canvas gestures first, as they always came before the game's own
+  yield* Editor.open;
+  yield* controls;
+  // Android and others send motion events without asking, so tilt can start on the first visit (iOS waits for the
+  // first tap). Later visits listen again, and wait again for a first reading if the last visit was still waiting.
+  if (!started) {
+    started = true;
+    const ask =
+      typeof DeviceOrientationEvent !== 'undefined' && (DeviceOrientationEvent as AskMotion).requestPermission;
+    if (isPhone() && save.tilt && !Predicate.isFunction(ask)) startTilt();
+  } else if (tilt.listening) {
+    watchOrientation();
+    if (tilt.state === 'waiting') waitForTilt();
+  }
+  last = performance.now();
+  yield* animate((_dt, now) => frame(now));
+  yield* reroute;
+});
+
+/** The address on arrival, or a new one while the game is open: #bike-race/CODE joins that room */
+export const reroute: Effect.Effect<void, never, PageServices> = Effect.gen(function* () {
+  resize();
+  const code = invitedTo(location.hash);
+  if (code) {
+    pendingJoin = code;
+    // the address goes back to plain #bike-race (a page that refuses is no reason to stop)
+    yield* Effect.try(() => history.replaceState(null, '', location.pathname + location.search + '#bike-race')).pipe(
+      Effect.ignore,
+    );
+    if (Net.status === 'online' && Net.id) {
+      Net.send({ t: 'join', code });
+      pendingJoin = null;
+    }
+    showView('mp');
+  } else if (view === 'play' && S) {
+    // coming back to a game in progress
+  } else showView(view === 'play' ? 'home' : view);
+});
 // what the level editor (bike-race-editor.ts) uses from the game
 const editorApi = {
   startCustom,
@@ -2606,4 +2777,4 @@ function debug() {
   };
 }
 export type BikeRaceDebug = ReturnType<typeof debug>;
-window.BikeRace = { show, hide, editor: editorApi, _debug: debug };
+window.BikeRace = { editor: editorApi, _debug: debug };
