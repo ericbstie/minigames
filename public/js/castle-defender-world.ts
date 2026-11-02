@@ -251,6 +251,38 @@ export function nextCamp(from: XZ, claims: readonly Claim[], others: readonly XZ
   }
   return { x, z };
 }
+// The rest of a road from `dist` paces along it, starting at that very point
+export function roadFrom(road: readonly Pt[], dist: number): Pt[] {
+  let left = Math.max(0, dist);
+  for (let i = 0; i < road.length - 1; i++) {
+    const [ax, az] = road[i],
+      [bx, bz] = road[i + 1],
+      L = Math.hypot(bx - ax, bz - az);
+    if (left < L) {
+      const t = left / L;
+      return [[ax + (bx - ax) * t, az + (bz - az) * t], ...road.slice(i + 1).map((p): Pt => [p[0], p[1]])];
+    }
+    left -= L;
+  }
+  return road.slice(-2).map((p): Pt => [p[0], p[1]]);
+}
+// Where a new camp goes around an outpost: past the border off to one side (`side` 1 or -1) of the way out from home,
+// CAMP_CLEAR outside the border, clear of the canyon wall, the mesas and the other camps. Null if there is no room.
+export function campAround(post: XZ, side: number, claims: readonly Claim[], others: readonly XZ[]): XZ | null {
+  const out = Math.atan2(post.z - HOME.z, post.x - HOME.x);
+  for (const turn of [0.8, 1.1, 0.5, 1.4]) {
+    const a = out + side * turn;
+    for (let d = 24; d <= 80; d += 2) {
+      const x = post.x + Math.cos(a) * d,
+        z = post.z + Math.sin(a) * d;
+      if (borderDist(claims, x, z) < CAMP_CLEAR) continue;
+      if (x < cliffMinX(z) + 10 || pushOutOfMesas(x, z, 6)[0] !== x) continue;
+      if (others.some((o) => Math.hypot(o.x - x, o.z - z) < 26)) continue;
+      return { x, z };
+    }
+  }
+  return null;
+}
 // a road from a new camp back to the old one, wandering a little
 export function campRoad(from: XZ, to: XZ, rand: () => number): Pt[] {
   const dx = to.x - from.x,

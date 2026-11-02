@@ -32,6 +32,8 @@ import {
   roadCrossing,
   nextCamp,
   campRoad,
+  campAround,
+  roadFrom,
   pushOutOfMesas,
   type Biome,
   type Claim as LandClaim,
@@ -179,6 +181,11 @@ const GOLD_BOYS = [
   { n: 2, speed: 8.5, cap: 800 },
   { n: 3, speed: 9.5, cap: 1500 },
 ];
+// Each outpost can have a gold boy of its own, bought on a pad beside it: he waits at the outpost and picks up the
+// coins within OUTPOST_BOY.range of it. The first costs OUTPOST_BOY_COST and each one after OUTPOST_BOY_GROW times more.
+const OUTPOST_BOY = { speed: 8.5, cap: 800, range: 44 },
+  OUTPOST_BOY_COST = 2000,
+  OUTPOST_BOY_GROW = 1.3;
 // Bosses: every BOSS_EVERY seconds of play a boss marches on the castle from one of the open camps, with a warning
 // BOSS_WARN seconds before. One comes at a time: while one is still on the field, the next waits.
 const BOSS_EVERY = 180,
@@ -2031,6 +2038,7 @@ interface Tower {
   aim?: number;
   site?: Site;
   pad?: Pad;
+  goldPad?: Pt; // an outpost's: where its gold boy is bought
 }
 interface Cannon {
   x: number;
@@ -2155,6 +2163,7 @@ interface Camp extends XZ {
 }
 interface Front {
   id: string;
+  center?: number; // the outpost whose camp it is (a front an outpost brought: its id is 'o' and the outpost's idx)
   road: Pt[];
   segs: Pt[][];
   adv: number;
@@ -2367,6 +2376,9 @@ interface Game {
   spawnQueue: Spawn[];
   nextPath: number;
   boss: Bosses;
+  outpostBoys: number; // gold boys bought for outposts, which sets the next one's price
+  centerT: number; // the outposts' camps take turns on one spawn timer
+  nextCenter: number;
   kills: number;
   input: { x: number; z: number };
   padIn: Pad | null;
@@ -3357,8 +3369,8 @@ function buildWorld() {
       [billSide, billSide, billFace, billFace, billSide, billSide],
       320,
     ),
-    boy: inst(goldBoyGeo(), vmat, 4),
-    sack: inst(sackGeo(), vmat, 4),
+    boy: inst(goldBoyGeo(), vmat, 48),
+    sack: inst(sackGeo(), vmat, 48),
   } as World;
   // enemies: one mesh per size, variant and road theme
   W.emesh = {};
@@ -3951,6 +3963,9 @@ function newGame() {
     spawnQueue: [],
     nextPath: 0,
     boss: { next: BOSS_EVERY, front: null, came: 0, slain: 0, flareT: 0 },
+    centerT: 4,
+    nextCenter: 0,
+    outpostBoys: 0,
     kills: 0,
     input: { x: 0, z: 0 },
     padIn: null,
@@ -4712,6 +4727,71 @@ function buildOutpost(t: Tower): void {
     openFront('S');
     toast('The border moved out. Outposts on the border push it further.');
   }
+  campBeyond(t);
+  const s2 = t.site!,
+    nx = -s2.dz * s2.side,
+    nz = s2.dx * s2.side;
+  outpostGoldPad(t, [t.x + nx * 4.4, t.z + nz * 4.4]); // on the side away from the road
+}
+// An outpost's gold boy: a pad beside it sells him, and he belongs to the outpost
+const outpostBoy = (t: Tower) => G.gold.boys.find((b) => b.home === 'outpost' + t.idx);
+const outpostBoyCost = () => Math.round(OUTPOST_BOY_COST * Math.pow(OUTPOST_BOY_GROW, G.outpostBoys));
+function outpostGoldPad(t: Tower, at: Pt): void {
+  t.goldPad = at;
+  keepClear(at[0], at[1], 2.5);
+  const pad = createPad({
+    id: 'goldboy' + t.idx,
+    x: at[0],
+    z: at[1],
+    icon: ICONS.goldboy,
+    visible: () => !outpostBoy(t),
+    cost: outpostBoyCost,
+    buy: () => {
+      G.outpostBoys++;
+      addGoldBoy(at[0], at[1], 0, 'outpost' + t.idx);
+      celebrate(at[0], at[1], 2, false);
+      bigText('Gold boy', at[0], 5, at[1]);
+    },
+  });
+  pad.cost = pad.price();
+  G.pads.push(pad);
+}
+// An outpost is a new center: the enemy makes a camp past the border off to one side of it, and that camp's road runs
+// in to the outpost and on down the road the outpost stands by, to the castle. The outposts' camps take turns sending
+// groups on a timer of their own. They fall back like any camp when the border reaches them.
+function campBeyond(t: Tower): void {
+  const s = t.site!,
+    others = G.fronts.map((f) => f.camp),
+    side = G.outposts % 2 ? 1 : -1;
+  const p = campAround(t, side, G.claims, others) ?? campAround(t, -side, G.claims, others);
+  if (!p) return;
+  const seg = campRoad(p, { x: s.rx, z: s.rz }, G.rand);
+  const f = centerFront(t.idx, [...seg.slice(0, -1), ...roadFrom(s.road, s.at)], [seg], p.x, p.z);
+  f.openAt = G.t + 4;
+  f.restAt = G.t + 4;
+  addRoad(`front-${f.id}-0`, seg);
+  gust(seg, f.camp.theme);
+  toast(`The enemy made camp in ${placeName(f.camp.theme)}, by the new outpost`);
+  refreshFrontier();
+  refreshPosts(); // no flag on the new road
+}
+// the front of an outpost's camp (`post` is the outpost's idx)
+function centerFront(post: number, road: Pt[], segs: Pt[][], x: number, z: number): Front {
+  const f: Front = {
+    id: 'o' + post,
+    center: post,
+    road,
+    segs,
+    adv: 0,
+    open: true,
+    openAt: 0,
+    shared: false,
+    timer: 0,
+    restAt: 0,
+    camp: makeCamp(x, z, true),
+  };
+  G.fronts.push(f);
+  return f;
 }
 // the field cannon may stand closer to its own outpost than spots usually may
 function siteFreeFor(x: number, z: number, t: Tower): boolean {
@@ -4836,7 +4916,8 @@ function buildGold() {
     gd.lv++;
     upgradeBuilding(gd.b!, gd.lv);
   }
-  while (gd.boys.length < GOLD_BOYS[gd.lv - 1].n) addGoldBoy(GOLD_DROP[0], GOLD_DROP[1], 0);
+  while (gd.boys.filter((b) => b.home === 'home').length < GOLD_BOYS[gd.lv - 1].n)
+    addGoldBoy(GOLD_DROP[0], GOLD_DROP[1], 0);
   bigText(gd.lv === 1 ? 'Gold boy' : '+1 gold boy', GOLD_HUT[0], 5, GOLD_HUT[1]);
   refreshObstacles();
 }
@@ -5074,12 +5155,17 @@ function updateSpawns(dt: number): void {
       G.spawnT = Math.max(1.0, 3 * Math.pow(0.955, L));
     }
     for (const f of G.fronts) {
-      if (f.shared || !frontOpen(f) || G.t < f.restAt) continue;
+      if (f.shared || f.center !== undefined || !frontOpen(f) || G.t < f.restAt) continue;
       f.timer -= dt;
       if (f.timer <= 0) {
         queueGroup(f, L);
         f.timer = Math.max(2.4, 5.5 * Math.pow(0.96, L));
       }
+    }
+    const centers = G.fronts.filter((f) => f.center !== undefined && frontOpen(f) && G.t >= f.restAt);
+    if (centers.length && (G.centerT -= dt) <= 0) {
+      queueGroup(centers[G.nextCenter++ % centers.length], L);
+      G.centerT = Math.max(2.4, 5.5 * Math.pow(0.96, L));
     }
   }
   for (let i = G.spawnQueue.length - 1; i >= 0; i--) {
@@ -5545,11 +5631,15 @@ function steer(ax: number, az: number, bx: number, bz: number): Pt {
   return best || [bx, bz];
 }
 const inBase = (x: number, z: number) => Math.abs(x) < RX - 0.5 && Math.abs(z) < RZ - 0.5;
-function findCoin(b: GoldBoy): Coin | null {
+// the nearest coin for a boy to go after (an outpost's boy keeps to the ground around his outpost)
+function findCoin(b: GoldBoy, home?: GoldBase): Coin | null {
   let best: Coin | null = null,
     bd = 1e9;
+  const near = home && home.id !== 'home' ? home : null,
+    r2 = OUTPOST_BOY.range ** 2;
   for (const c of G.coinsOnGround) {
     if (c.age < 0.35 || (c.claimed && c.claimed !== b) || inBase(c.x, c.z)) continue;
+    if (near && (c.x - near.x) ** 2 + (c.z - near.z) ** 2 > r2) continue;
     const d = (c.x - b.x) ** 2 + (c.z - b.z) ** 2;
     if (d < bd) {
       bd = d;
@@ -5663,13 +5753,16 @@ function handIn(b: GoldBoy, base: GoldBase): void {
   floatText(`+${Math.round(v)}`, b.x, 2.4, b.z, '#ffd84a');
   b.load = 0;
 }
+// how fast a boy runs and how much he carries: the hut's boys by the hut's level, an outpost's boy the same always
+const boySpec = (b: GoldBoy) => (b.home === 'home' ? GOLD_BOYS[G.gold.lv - 1] : OUTPOST_BOY);
 function updateGold(dt: number): void {
   const gd = G.gold;
-  if (!gd.built) return;
-  const spec = GOLD_BOYS[gd.lv - 1],
-    bases = goldBases(),
+  if (!gd.boys.length) return;
+  const bases = goldBases(),
     byId = (id: string | null) => bases.find((s) => s.id === id);
   for (const b of gd.boys) {
+    const spec = boySpec(b),
+      home = byId(b.home) ?? bases[0];
     b.bob += dt * 13;
     b.retarget -= dt;
     let tx = b.x,
@@ -5677,20 +5770,19 @@ function updateGold(dt: number): void {
       speed = spec.speed;
     if (b.state === 'idle') {
       // waiting by his own base, strolling about in front of it
-      const home = byId(b.home) ?? bases[0],
-        a = G.t * 0.4 + gd.boys.indexOf(b) * 2;
+      const a = G.t * 0.4 + gd.boys.indexOf(b) * 2;
       tx = home.idle[0] + Math.cos(a) * 1.1;
       tz = home.idle[1] + Math.sin(a) * 1.1;
       if (Math.hypot(tx - b.x, tz - b.z) < 3) speed = 1.6;
       if (b.retarget <= 0) {
         b.retarget = 0.8;
-        if (findCoin(b)) b.state = 'seek';
+        if (findCoin(b, home)) b.state = 'seek';
       }
     }
     if (b.state === 'seek') {
       if (!b.target || b.target.gone || b.retarget <= 0) {
         if (b.target && b.target.claimed === b) b.target.claimed = null;
-        b.target = findCoin(b);
+        b.target = findCoin(b, home);
         b.retarget = 1.5;
         if (b.target) b.target.claimed = b;
       }
@@ -6468,10 +6560,11 @@ function syncScene(dt: number): void {
   // gold boys and their sacks
   let bn = 0;
   for (const b of G.gold.boys) {
+    if (bn >= W.boy.userData.cap) break;
     const by = b.moving ? Math.abs(Math.sin(b.bob)) * 0.14 : 0,
       roll = b.moving ? Math.sin(b.bob) * 0.08 : 0;
     setI(W.boy, bn, b.x, by, b.z, b.yaw, 1.05, roll);
-    const fill = Math.min(1, b.load / GOLD_BOYS[G.gold.lv - 1].cap),
+    const fill = Math.min(1, b.load / boySpec(b).cap),
       ss = 0.55 + fill * 0.75;
     tmpM.compose(
       tmpV.set(
@@ -6834,7 +6927,7 @@ const FRONT_IDS = FRONTS.map((d) => d.id),
   UNIT_KINDS = Object.keys(UNIT) as UnitKind[],
   SEG_COUNT = makeSegments().length;
 const SavedFront = Schema.Struct({
-  id: Schema.Literals(FRONT_IDS),
+  id: Schema.String, // the five first fronts' ids in order, then the outposts' camps ('o' and the outpost's idx)
   road: SavedRoad,
   segs: Schema.mutable(Schema.Array(SavedRoad)),
   open: Schema.Boolean,
@@ -6893,8 +6986,13 @@ const SavedWorld = Schema.Struct({
       at: SavedPt,
       up: SavedPt,
       level: Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: TOWER_LV.length })),
+      // where its gold boy is sold, and the boy once there is one: x, z, coins carried (a game saved before outposts
+      // had gold boys has neither)
+      goldPad: Schema.optionalKey(SavedPt),
+      boy: Schema.optionalKey(Schema.Tuple([Num, Num, Num])),
     }),
   ),
+  outpostBoys: Schema.optionalKey(Count),
   fieldCannons: Schema.Array(
     Schema.Struct({ at: SavedPt, side: SavedPt, cost0: Num, level: UpTo(CANNON_MAX), yaw: Num }),
   ),
@@ -6902,11 +7000,13 @@ const SavedWorld = Schema.Struct({
   paid: Schema.Record(Schema.String, Num), // coins paid into a pad so far, by its id
   spawnT: Num,
   nextPath: Count,
-  queue: Schema.Array(Schema.Tuple([Schema.Literals(FRONT_IDS), Schema.Literals(UNIT_KINDS), Num])), // front, kind, wait
+  queue: Schema.Array(Schema.Tuple([Schema.String, Schema.Literals(UNIT_KINDS), Num])), // front, kind, wait
+  centerT: Schema.optionalKey(Num), // the outposts' camps' spawn timer, and whose turn it is (a game saved before
+  nextCenter: Schema.optionalKey(Count), // outposts had camps has neither)
   // when the next boss comes, the front it comes from once the warning is up, how many have come and been beaten (a
   // game saved before there were bosses has none of this)
   boss: Schema.optionalKey(
-    Schema.Struct({ next: Num, front: Schema.NullOr(Schema.Literals(FRONT_IDS)), came: Count, slain: Count }),
+    Schema.Struct({ next: Num, front: Schema.NullOr(Schema.String), came: Count, slain: Count }),
   ),
   routes: Schema.Array(SavedRoad),
   enemies: Schema.Array(SavedEnemy),
@@ -6923,8 +7023,13 @@ const SavedWorld = Schema.Struct({
       w.cannons.length === CANNON_SPOTS.length &&
       w.gold.boys.length === (w.gold.lv ? GOLD_BOYS[w.gold.lv - 1].n : 0) &&
       w.claims.every(([, , r]) => r > 0) &&
-      w.fronts.length === FRONTS.length &&
-      w.fronts.every((f, i) => f.id === FRONT_IDS[i]) &&
+      w.fronts.length >= FRONTS.length &&
+      w.fronts.every((f, i) =>
+        i < FRONTS.length ? f.id === FRONT_IDS[i] : w.outposts.some((o) => 'o' + o.idx === f.id),
+      ) &&
+      new Set(w.fronts.map((f) => f.id)).size === w.fronts.length &&
+      w.queue.every(([id]) => w.fronts.some((f) => f.id === id)) &&
+      (!w.boss?.front || w.fronts.some((f) => f.id === w.boss!.front)) &&
       new Set(w.outposts.map((o) => o.idx)).size === w.outposts.length &&
       w.outposts.every((o) => o.idx < w.siteSeq) &&
       w.queue.every(([, kind]) => kind !== 'boss') &&
@@ -6979,7 +7084,7 @@ function snapshot(): SavedWorld {
     towers: G.towers.filter((t) => !t.outer).map((t) => t.level),
     walls: G.segs.map((s) => [s.hp, s.alive]),
     cannons: G.cannons.filter((c) => !c.field).map((c) => [c.level, c.yaw]),
-    gold: { lv: gd.lv, boys: gd.boys.map((b) => [b.x, b.z, b.load]) },
+    gold: { lv: gd.lv, boys: gd.boys.filter((b) => b.home === 'home').map((b) => [b.x, b.z, b.load]) },
     claims: G.claims.map((c) => [c.x, c.z, c.r]),
     fronts: G.fronts.map((f) => ({
       id: f.id,
@@ -6993,7 +7098,20 @@ function snapshot(): SavedWorld {
       camp: [f.camp.x, f.camp.z],
     })),
     ruins: G.ruins.map((c) => [c.x, c.z]),
-    outposts: outer.filter((t) => t.built).map((t) => ({ idx: t.idx, at: [t.x, t.z], up: t.up, level: t.level })),
+    outposts: outer
+      .filter((t) => t.built)
+      .map((t) => {
+        const b = outpostBoy(t);
+        return {
+          idx: t.idx,
+          at: [t.x, t.z],
+          up: t.up,
+          level: t.level,
+          ...(t.goldPad ? { goldPad: t.goldPad } : {}),
+          ...(b ? { boy: [b.x, b.z, b.load] as [number, number, number] } : {}),
+        };
+      }),
+    outpostBoys: G.outpostBoys,
     fieldCannons: G.cannons
       .filter((c) => c.field)
       .map((c) => ({ at: [c.x, c.z], side: c.side, cost0: c.cost0, level: c.level, yaw: c.yaw })),
@@ -7002,6 +7120,8 @@ function snapshot(): SavedWorld {
     spawnT: G.spawnT,
     nextPath: G.nextPath,
     queue: G.spawnQueue.map((q) => [q.f.id, q.kind, q.t]),
+    centerT: G.centerT,
+    nextCenter: G.nextCenter,
     boss: { next: G.boss.next, front: G.boss.front, came: G.boss.came, slain: G.boss.slain },
     enemies: G.enemies
       .filter((e) => e.hp > 0)
@@ -7105,10 +7225,14 @@ function restoreGame(w: SavedWorld): void {
   }
   G.coins += w.gold.plot ?? 0; // the coins on the old plot are the king's now
   // the fronts, their camps and roads, and the camps already cleared
+  // (the outposts' camps come after the first five)
   for (const [i, sf] of w.fronts.entries()) {
-    const f = G.fronts[i];
-    scene.remove(f.camp.group);
-    unkeepClear(f.camp.x, f.camp.z);
+    let f = G.fronts[i];
+    if (f) {
+      scene.remove(f.camp.group);
+      unkeepClear(f.camp.x, f.camp.z);
+      f.camp = makeCamp(sf.camp[0], sf.camp[1], sf.open);
+    } else f = centerFront(+sf.id.slice(1), sf.road, sf.segs, sf.camp[0], sf.camp[1]);
     f.road = sf.road;
     f.segs = sf.segs;
     f.open = sf.open;
@@ -7116,12 +7240,14 @@ function restoreGame(w: SavedWorld): void {
     f.shared = sf.shared;
     f.timer = sf.timer;
     f.restAt = sf.restAt;
-    f.camp = makeCamp(sf.camp[0], sf.camp[1], f.open);
     f.camp.state = f.open ? 'up' : 'hidden';
+    f.camp.group.visible = f.open;
     f.camp.t = 1;
     f.camp.group.scale.set(1, 1, 1);
     if (f.open) f.segs.forEach((seg, j) => addRoad(`front-${f.id}-${j}`, seg));
   }
+  G.centerT = w.centerT ?? G.centerT;
+  G.nextCenter = w.nextCenter ?? 0;
   for (const [x, z] of w.ruins) {
     const c = makeCamp(x, z, true);
     c.state = 'ruin';
@@ -7141,8 +7267,24 @@ function restoreGame(w: SavedWorld): void {
     G.towers.push(t);
     outpostPad(t);
     keepClear(x, z, 4);
+    // its gold boy's pad (for an outpost from before they had one: beside it, on the side away from the roads)
+    let pad = o.goldPad;
+    if (!pad) {
+      const hx = HOME.x - x,
+        hz = HOME.z - z,
+        hl = Math.hypot(hx, hz) || 1,
+        sides: Pt[] = [
+          [x - (hz / hl) * 4.4, z + (hx / hl) * 4.4],
+          [x + (hz / hl) * 4.4, z - (hx / hl) * 4.4],
+        ],
+        clear = ([px, pz]: Pt) => Math.min(...G.fronts.map((f) => pathDist(px, pz, f.road)));
+      pad = clear(sides[0]) >= clear(sides[1]) ? sides[0] : sides[1];
+    }
+    outpostGoldPad(t, pad);
+    if (o.boy) addGoldBoy(o.boy[0], o.boy[1], o.boy[2], 'outpost' + o.idx);
   }
   G.outposts = w.outposts.length;
+  G.outpostBoys = w.outpostBoys ?? w.outposts.filter((o) => o.boy).length;
   for (const fc of w.fieldCannons) {
     const [x, z] = fc.at;
     const cn: Cannon = {

@@ -288,6 +288,53 @@ describe('Territory', () => {
     expect(cr.length).toBeGreaterThanOrEqual(4);
   });
 
+  test('the rest of a road from a point along it starts at that point and keeps the rest of the road', () => {
+    const rest = W.roadFrom(road, 10);
+    const at = W.pointAlong(road, 10)!;
+    expect(Math.hypot(rest[0][0] - at.x, rest[0][1] - at.z)).toBeLessThan(1e-6);
+    expect(rest[rest.length - 1]).toEqual([-5.5, -4.5]);
+    expect(W.roadLength(rest)).toBeCloseTo(W.roadLength(road) - 10, 6);
+    expect(W.roadFrom(road, 0)[0]).toEqual(road[0]);
+    expect(W.roadFrom(road, 1e6)).toEqual(road.slice(-2));
+  });
+
+  // each outpost brings a camp off to one side of it, past the border, clear of the wall, the mesas and other camps
+  test("an outpost's camp stands off to the side asked, clear of the border, the wall and the other camps", () => {
+    const bad: unknown[] = [];
+    for (const post of [
+      { x: 40, z: 0 },
+      { x: 26, z: -34 },
+      { x: 30, z: 32 },
+      { x: 4, z: -44 },
+      { x: 8, z: 46 },
+    ]) {
+      const cl = [home, { ...post, r: W.CLAIM_OUTPOST }];
+      const others: XZ[] = [{ x: post.x + (post.x - W.HOME.x) * 0.9, z: post.z + (post.z - W.HOME.z) * 0.9 }];
+      for (const side of [1, -1]) {
+        const c = W.campAround(post, side, cl, others);
+        if (!c) {
+          bad.push({ post, side, none: true });
+          continue;
+        }
+        const ox = post.x - W.HOME.x,
+          oz = post.z - W.HOME.z,
+          cross = ox * (c.z - post.z) - oz * (c.x - post.x); // > 0 when the camp is to the left going out
+        const d = Math.hypot(c.x - post.x, c.z - post.z);
+        if (
+          Math.sign(cross) !== side ||
+          d < 24 ||
+          d > 80 ||
+          W.borderDist(cl, c.x, c.z) < W.CAMP_CLEAR ||
+          c.x < W.cliffMinX(c.z) + 10 ||
+          W.pushOutOfMesas(c.x, c.z, 6)[0] !== c.x ||
+          others.some((o) => Math.hypot(o.x - c.x, o.z - c.z) < 26)
+        )
+          bad.push({ post, side, c });
+      }
+    }
+    expect(bad).toEqual([]);
+  });
+
   test('the king is pushed out of a mesa and stays out, and left alone away from them', () => {
     for (const m of W.MESAS) {
       const cx = m.reduce((s, p) => s + p[0], 0) / m.length,
