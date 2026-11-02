@@ -68,7 +68,7 @@ wrapping per-frame maths in Effect would cost frame rate and gain nothing. The p
   room's timers, a game's visit). Cancelling one is interrupting it, and closing the scope stops them all. The
   server reads the time from `Clock`, so `tests/race-lobby.test.ts` runs whole races on a `TestClock`.
 - **The page.** `public/js/page.ts` has the services (`Saves` for localStorage and `SessionSaves` for
-  sessionStorage, both Effect's `KeyValueStore`) and the helpers: `load` and `save` for saved data, `listen` for an
+  sessionStorage, both Effect's `KeyValueStore`) and the helpers: `load`, `save` and `forget` for saved data, `listen` for an
   event listener that goes when its scope closes, `animate` for a frame loop, and `run` to run an effect from plain
   code. `main.ts` routes with `listen` and the hub.
 - **Games are scoped.** A game registers a `Game` with the hub: an `open` effect that the hub runs in a fresh scope
@@ -97,6 +97,27 @@ Conventions:
   A timer that replaces the one before (a toast, a hint) is a `FiberHandle`.
 - Tests run effects with `Effect.runPromise` under `bun test`, with `TestClock` from `effect/testing` for anything
   timed. `tests/support/browser.ts` builds the real server with `ManagedRuntime`.
+
+## Saved progress
+
+Every game keeps its progress in the browser's `localStorage`, each thing under a key of its own, so that a save that
+can't be read loses only itself. Each is read through a Schema (see Effect, above); what doesn't fit is as if nothing
+were saved. A game in progress is saved as it changes and removed when it ends, or when the player leaves it for the
+level picker.
+
+| Key                         | Game            | What it holds                                                                         |
+| --------------------------- | --------------- | ------------------------------------------------------------------------------------- |
+| `antsort.stars.v1`          | Ant Sort        | the names of the levels with a star                                                   |
+| `antsort.play.v1`           | Ant Sort        | the level being played: its name and the board, columns and slots (`simSave`)         |
+| `watersort.done.v1`         | Water Sort      | the levels finished, numbered from 1                                                  |
+| `watersort.play.v1`         | Water Sort      | the level being played: the tubes, the positions Undo goes back to, hints, spare tube |
+| `castle.bestTime`           | Castle Defender | the longest the castle has held, in seconds                                           |
+| `bikerace.v1`               | Bike Race       | stars, best times, the garage and settings ([bike-race.md](bike-race.md))             |
+| `bikerace.ghost.v1.<level>` | Bike Race       | the best run on a level, to ride against                                              |
+| `bikerace.levels.v1`        | Bike Race       | the levels made in the editor ([bike-race-editor.md](bike-race-editor.md))            |
+
+A level in progress only loads if it is a position the level can be in (`wsFits` in `water-sort-logic.ts`,
+`simFromSave` in `ant-sort-logic.ts`): a save edited by hand can't make a level that can't be won, or crash it.
 
 ## Tests
 

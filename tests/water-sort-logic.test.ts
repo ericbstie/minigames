@@ -1,5 +1,5 @@
 // Water Sort's rules and solver (public/js/water-sort-logic.ts): pouring, finished tubes, the moves the solver tries,
-// and that the solver clears every built-in level with moves the rules allow.
+// that the solver clears every built-in level with moves the rules allow, and which saved positions fit a level.
 import { describe, expect, test } from 'bun:test';
 import {
   LEVELS,
@@ -8,6 +8,7 @@ import {
   wsApply,
   wsCanPour,
   wsDone,
+  wsFits,
   wsKey,
   wsMoves,
   wsPourCount,
@@ -143,5 +144,36 @@ describe('the levels', () => {
 
   test('the hint search (80000 nodes) finds a first move from the start of every level', () => {
     for (const L of LEVELS) expect(wsSolve(L.tubes, 80000)?.length).toBeGreaterThan(0);
+  });
+});
+
+describe('a saved position', () => {
+  const L = LEVELS[0]!; // [[2, 1, 1, 0], [2, 1, 0, 0], [2, 1, 2, 0], [], []]
+
+  test('the start of every level fits it, with the spare tube out or not, and so does every step to the end', () => {
+    for (const level of LEVELS) {
+      expect(wsFits(level, level.tubes, false)).toBe(true);
+      expect(wsFits(level, [...level.tubes, []], true)).toBe(true);
+      let s = level.tubes;
+      for (const [a, b] of wsSolve(level.tubes)!) {
+        s = wsApply(s, a, b);
+        expect(wsFits(level, s, false)).toBe(true);
+      }
+    }
+  });
+
+  test("a position that can't come from the level doesn't fit it", () => {
+    const bad: [string, State, boolean][] = [
+      ['a tube missing', L.tubes.slice(1), false],
+      ['a tube too many', [...L.tubes, []], false],
+      ['the spare tube said to be out but not there', L.tubes, true],
+      ['a tube holding more than four', [[2, 1, 1, 0, 0], [2, 1, 0], [2, 1, 2, 0], [], []], false],
+      ['a colour the level does not have', [[2, 1, 1, 3], [2, 1, 0, 0], [2, 1, 2, 0], [], []], false],
+      ['one colour too many and another too few', [[2, 1, 1, 1], [2, 1, 0, 0], [2, 1, 2, 0], [], []], false],
+      ['a colour missing', [[2, 1, 1], [2, 1, 0, 0], [2, 1, 2, 0], [], []], false],
+      ['a colour that is no whole number', [[2, 1, 1, 0.5], [2, 1, 0, 0], [2, 1, 2, 0], [], []], false],
+      ['a negative colour', [[2, 1, 1, -1], [2, 1, 0, 0], [2, 1, 2, 0], [], []], false],
+    ];
+    for (const [why, s, spare] of bad) expect(wsFits(L, s, spare), why).toBe(false);
   });
 });

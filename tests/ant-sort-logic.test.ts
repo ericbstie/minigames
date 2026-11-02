@@ -1,7 +1,18 @@
 // Ant Sort's rules (public/js/ant-sort-logic.ts) and its levels (public/js/ant-sort-levels.json): every level loads
-// into a Sim with sane counts and can be won, and the moves, the ants' order, being stuck and winning work.
+// into a Sim with sane counts and can be won, and the moves, the ants' order, being stuck and winning work, and a
+// position saved part way through a level comes back as it was.
 import { describe, expect, test } from 'bun:test';
-import { type Chunk, EMPTY, SLOTS, Sim, type SimLevel, simLevel } from '../public/js/ant-sort-logic';
+import {
+  type Chunk,
+  EMPTY,
+  SLOTS,
+  Sim,
+  type SimLevel,
+  type SimSave,
+  simFromSave,
+  simLevel,
+  simSave,
+} from '../public/js/ant-sort-logic';
 import { LEVELS, loseFast, solve, startOf } from './ant-sort-solve';
 
 /** A small level: a picture given as rows of colour digits ('.' for no block), and its three columns */
@@ -204,5 +215,88 @@ describe('the Sim', () => {
     expect(Array.from(level.grid)).toEqual(L.grid);
     expect(level.ncolors).toBe(L.palette.length);
     expect(level.columns[0]![0]).toEqual({ c: L.columns[0]![0]![0], n: L.columns[0]![0]![1] });
+  });
+});
+
+describe('a saved position', () => {
+  // what decides a Sim's next steps, to compare: the heaps hold the same blocks in an order that depends on how they
+  // got there, and whether a block already taken had been reachable no longer matters
+  const position = (sim: Sim) => ({
+    cell: [...sim.cell],
+    out: [...sim.out],
+    reach: [...sim.reach].map((r, i) => (sim.cell[i] === EMPTY ? 0 : r)),
+    heaps: sim.heaps.map((h) => h.slice().sort((a, b) => a - b)),
+    remaining: sim.remaining,
+    slots: sim.slots,
+    colPtr: sim.colPtr,
+  });
+
+  test('a level just started saves every block, no column moved on and empty slots', () => {
+    const L = LEVELS[0]!;
+    const saved = simSave(startOf(0));
+    expect(saved.board).toBe(L.grid.map((v) => (v === EMPTY ? '0' : '1')).join(''));
+    expect(saved.columns).toEqual([0, 0, 0]);
+    expect(saved.slots).toEqual(new Array(SLOTS).fill(null));
+    expect(position(simFromSave(simLevel(L), saved)!)).toEqual(position(startOf(0)));
+  });
+
+  test('every level comes back from a save after any tap as it was, and plays on to the same end', () => {
+    for (const [i, L] of LEVELS.entries()) {
+      const taps = solve(startOf(i))!;
+      const sim = startOf(i);
+      for (const [k, col] of taps.entries()) {
+        sim.pop(col);
+        // the ants part way through fetching what they can reach, as a reload might find them
+        for (let n = 0; n < k % 4; n++) sim.tick();
+        const back = simFromSave(simLevel(L), JSON.parse(JSON.stringify(simSave(sim))) as SimSave);
+        expect(back, `${L.name}, tap ${k + 1}`).not.toBeNull();
+        expect(position(back!)).toEqual(position(sim));
+        // from there both take the same steps
+        sim.settle();
+        back!.settle();
+        expect(position(back!)).toEqual(position(sim));
+      }
+      expect(sim.won()).toBe(true);
+    }
+  });
+
+  test('a lost level comes back stuck', () => {
+    const sim = startOf(0);
+    for (const col of loseFast(startOf(0))!) {
+      sim.pop(col);
+      sim.settle();
+    }
+    const back = simFromSave(simLevel(LEVELS[0]!), simSave(sim))!;
+    expect(back.stuck()).toBe(true);
+  });
+
+  test("a save that can't be a position of the level is refused", () => {
+    // the ring again, with the second block of colour 1 left out of the columns, so they send ants for every block once
+    const level = () => tiny(['000', '010', '000'], [[[1, 1]], [[0, 8]], []]);
+    const fresh = simSave(new Sim(level()));
+    const sent = new Sim(level());
+    sent.pop(1); // the ring's colour goes to a slot, and the ants take three blocks of it
+    for (let n = 0; n < 3; n++) sent.tick();
+    const part = simSave(sent);
+    expect(part).toEqual({ board: '111111000', columns: [0, 1, 0], slots: [{ c: 0, n: 5 }, null, null, null, null] });
+    expect(simFromSave(level(), part)).not.toBeNull();
+    const bad: [string, SimSave][] = [
+      ['a board of the wrong size', { ...fresh, board: '11111111' }],
+      ['a board with other characters', { ...fresh, board: '1111x1111' }],
+      ['a column run past its end', { ...fresh, columns: [2, 0, 0] }],
+      ['a column at a place that is no whole number', { ...fresh, columns: [0.5, 0, 0] }],
+      ['too few columns', { ...fresh, columns: [0, 0] }],
+      ['too few slots', { ...fresh, slots: [null, null, null, null] }],
+      ['a colour the level does not have on a slot', { ...part, slots: [{ c: 2, n: 5 }, null, null, null, null] }],
+      ['a slot with nothing left to fetch', { ...part, slots: [{ c: 0, n: 0 }, null, null, null, null] }],
+      ['more ants owed than blocks left', { ...part, slots: [{ c: 0, n: 6 }, null, null, null, null] }],
+      ['blocks gone that no slot fetched', { ...fresh, board: '111111000' }],
+      ['a column moved on with nothing on the slots', { ...fresh, columns: [0, 1, 0] }],
+    ];
+    for (const [why, save] of bad) expect(simFromSave(level(), save), why).toBeNull();
+    // a block where the picture has none
+    const gap = () => tiny(['0.0'], [[[0, 2]], [], []]);
+    expect(simFromSave(gap(), simSave(new Sim(gap())))).not.toBeNull();
+    expect(simFromSave(gap(), { ...simSave(new Sim(gap())), board: '111' })).toBeNull();
   });
 });
