@@ -1,13 +1,29 @@
+// Ant Sort: tap a block in the front row to put it in a free slot, and ants come out for every block of that colour
+// they can reach and carry it into the hole.
+//
+// The scene, the ants and the rules are plain code, set up when the page loads. The hub opens the game (`game`, at
+// the bottom) in a scope while its screen is shown: the listeners, the frame loop, the confetti and the link to the
+// per-user store run in it and stop when the player leaves. A level left unfinished waits for them to come back.
+import { Cause, Effect, Fiber, FiberHandle, Option, Predicate, Queue, Schema, SchemaGetter, Stream } from 'effect';
 import * as THREE from 'three';
 import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
 
 import levels from './ant-sort-levels.json';
 import { type LevelData, Sim, type SimLevel, type TickEvent, simLevel } from './ant-sort-logic';
-import { GameHub } from './hub';
+import { type Game, GameHub } from './hub';
+import { animate, listen, load, nextFrame, run, save } from './page';
 
 const DATA = levels as { levels: LevelData[] };
-// number labels are drawn on canvas, so wait for the display face before building a level
-const fontReady = document.fonts ? document.fonts.load('132px "Lilita One"').catch(() => {}) : Promise.resolve();
+// number labels are drawn on canvas, so a level waits for the display face (one that fails to load leaves the
+// fallback face)
+class FontError extends Schema.TaggedError<FontError>()('FontError', {}) {}
+const loadFont = Effect.tryPromise({
+  try: () => document.fonts.load('132px "Lilita One"'),
+  catch: () => new FontError(),
+}).pipe(
+  Effect.asVoid,
+  Effect.catchTag('FontError', () => Effect.void),
+);
 // each level carries its own palette; these point at the current level's colours
 let HEX: string[] = [],
   COLORS: THREE.Color[] = [];
@@ -517,7 +533,7 @@ interface Play {
   queue: Block[][];
   outlines: THREE.Mesh[];
 }
-let game: Play | null = null;
+let play: Play | null = null;
 const voxMat = new THREE.MeshLambertMaterial({ color: 0xffffff });
 
 function cellToWorld(sim: Sim, c: number): Pt {
@@ -583,7 +599,7 @@ function startLevel(idx: number) {
     o.renderOrder = 0;
     return o;
   });
-  game = {
+  play = {
     idx,
     L,
     level,
@@ -608,12 +624,12 @@ function startLevel(idx: number) {
   showScreen(null);
 }
 function stopLevel() {
-  if (!game) return;
-  scene.remove(game.root);
-  game.vox.dispose();
-  game.shTex.dispose();
+  if (!play) return;
+  scene.remove(play.root);
+  play.vox.dispose();
+  play.shTex.dispose();
   ants.length = 0;
-  game = null;
+  play = null;
 }
 function makeBlock(c: number, n: number) {
   const g = new Block();
@@ -659,7 +675,7 @@ function shade(hex: string, k: number) {
 }
 
 function refreshFront() {
-  const g = game!;
+  const g = play!;
   g.queue.forEach((col, ci) => {
     const o = g.outlines[ci];
     const p = g.sim.colPtr[ci];
@@ -675,8 +691,9 @@ function refreshFront() {
 // ---------- input ----------
 const ray = new THREE.Raycaster(),
   ndc = new THREE.Vector2();
-canvas.addEventListener('pointerdown', (e) => {
-  const g = game;
+// a tap on the board: the front block under it, if any
+function tapBoard(e: PointerEvent) {
+  const g = play;
   if (!g || g.over) return;
   const r = canvas.getBoundingClientRect();
   ndc.set(((e.clientX - r.left) / r.width) * 2 - 1, -((e.clientY - r.top) / r.height) * 2 + 1);
@@ -689,9 +706,9 @@ canvas.addEventListener('pointerdown', (e) => {
   if (!hit) return;
   const col = g.queue.findIndex((q, ci) => q[g.sim.colPtr[ci]] && q[g.sim.colPtr[ci]].userData.body === hit.object);
   tapColumn(col);
-});
+}
 function tapColumn(col: number) {
-  const g = game!;
+  const g = play!;
   const item = g.queue[col][g.sim.colPtr[col]];
   if (!item) return;
   if (!g.sim.canPop(col)) {
@@ -746,7 +763,7 @@ function shake(item: THREE.Object3D) {
   });
 }
 function vanish(obj: THREE.Object3D) {
-  game!.dying.push(obj);
+  play!.dying.push(obj);
   tween(
     0.22,
     (t) => obj.scale.setScalar(Math.max(0.001, 1 - t)),
@@ -756,11 +773,11 @@ function vanish(obj: THREE.Object3D) {
   );
 }
 function tween(dur: number, fn: (k: number) => void, done?: () => void) {
-  game!.tweens.push({ t: 0, dur, fn, done });
+  play!.tweens.push({ t: 0, dur, fn, done });
 }
 
 function updateJars() {
-  const g = game!;
+  const g = play!;
   for (let i = 0; i < 5; i++) {
     const s = g.sim.slots[i],
       j = g.jars[i];
@@ -779,7 +796,7 @@ function updateJars() {
 
 // ---------- ants ----------
 function spawnAnt(ev: TickEvent) {
-  const g = game!,
+  const g = play!,
     sim = g.sim;
   const PW = sim.PW,
     H = sim.H;
@@ -848,7 +865,7 @@ function at(path: Path, s: number, out: Pt) {
 const P0 = { x: 0, z: 0 },
   P1 = { x: 0, z: 0 };
 function updateAnts(dt: number, speed: number) {
-  const g = game!;
+  const g = play!;
   for (let i = ants.length - 1; i >= 0; i--) {
     const a = ants[i];
     a.phase += dt * 18 * speed;
@@ -970,22 +987,14 @@ function put(mesh: THREE.InstancedMesh, i: number, m: THREE.Matrix4, col: THREE.
 }
 
 // ---------- main loop ----------
-let speed = 1,
-  last = performance.now();
-function frame(now: number) {
-  requestAnimationFrame(frame);
-  // inside the game hub this page can be hidden; skip the work then
-  if (app.offsetParent === null) {
-    last = now;
-    return;
-  }
-  const dt = Math.min(0.05, (now - last) / 1000);
-  last = now;
-  if (game && !game.paused) step(dt);
+// Frames come only while the game is open (see `game`), so its screen is always shown when one does
+let speed = 1;
+function frame(dt: number) {
+  if (play && !play.paused) step(dt);
   renderer.render(scene, camera);
 }
 function step(dt: number) {
-  const g = game!;
+  const g = play!;
   for (let i = g.tweens.length - 1; i >= 0; i--) {
     const tw = g.tweens[i];
     tw.t += dt;
@@ -1025,7 +1034,6 @@ function step(dt: number) {
     g.shDirty = false;
   }
 }
-requestAnimationFrame(frame);
 
 // ---------- layout ----------
 const speedBtn = document.getElementById('speed')!,
@@ -1067,13 +1075,10 @@ function resize() {
     padding: (isz - 40 * S) / 2 + 'px',
   });
 }
-window.addEventListener('resize', resize);
-resize();
-
-speedBtn.addEventListener('click', () => {
+function toggleSpeed() {
   speed = speed === 1 ? 2 : 1;
   speedBtn.setAttribute('aria-pressed', speed === 2 ? 'true' : 'false');
-});
+}
 
 // ---------- stars ----------
 // One star per completed level, keyed by level name. Kept in this browser,
@@ -1081,39 +1086,20 @@ speedBtn.addEventListener('click', () => {
 // stars follow them to other devices. Stars only ever get added, so the
 // two copies merge by union.
 const STAR_KEY = 'antsort.stars.v1';
+// The names of the levels with a star, as a JSON array in the order they were earned. Only a name can match a
+// level, so anything else in there is dropped on the way in, and the rest kept.
+const StarNames = Schema.Array(Schema.Unknown).pipe(
+  Schema.decodeTo(Schema.Array(Schema.String), {
+    decode: SchemaGetter.transform((saved) => saved.filter(Predicate.isString)),
+    encode: SchemaGetter.passthroughSubtype(),
+  }),
+);
 const stars = new Set<string>();
-try {
-  ((JSON.parse(localStorage.getItem(STAR_KEY) || '[]') as string[] | null) || []).forEach((n) => stars.add(n));
-} catch {}
-// the per-user store, where the page runs with one (window.claude)
-interface Progress {
-  stars?: string[];
-}
-interface ProgressSnapshot {
-  exists: boolean;
-  data(): Progress;
-  metadata: { fromCache: boolean };
-}
-interface ProgressRef {
-  set(doc: Progress): Promise<unknown>;
-  onSnapshot(next: (snap: ProgressSnapshot) => void, error: () => void): unknown;
-}
-interface Store {
-  use(name: 'db'): Promise<{ doc(path: string): ProgressRef } | null>;
-  use(name: 'user'): Promise<{ id(): Promise<string | null> } | null>;
-}
-let progressRef: ProgressRef | null = null,
-  writing = false,
-  dirty = false;
-function saveLocal() {
-  try {
-    localStorage.setItem(STAR_KEY, JSON.stringify([...stars]));
-  } catch {}
-}
+const saveStars = Effect.suspend(() => save(STAR_KEY, StarNames, [...stars]));
 function earnStar(name: string) {
   if (stars.has(name)) return false;
   stars.add(name);
-  saveLocal();
+  run(saveStars);
   renderStars();
   pushProgress();
   return true;
@@ -1130,63 +1116,120 @@ function renderStars() {
   const n = DATA.levels.filter((L) => stars.has(L.name)).length;
   document.getElementById('tallyN')!.textContent = `${n} / ${DATA.levels.length}`;
 }
-async function pushProgress() {
-  if (!progressRef) return;
-  if (writing) {
-    dirty = true;
-    return;
-  }
-  writing = true;
-  try {
-    await progressRef.set({ stars: [...stars].sort() });
-  } catch (e) {
-    if ((e as { code?: unknown } | null)?.code === 'invalid_argument') progressRef = null;
-  }
-  writing = false;
-  if (dirty) {
-    dirty = false;
-    pushProgress();
-  }
+
+// The per-user store, where the page runs with one (window.claude). It keeps a document of the viewer's progress
+// that it sends again whenever it changes, from this device or another.
+interface ProgressDoc {
+  stars?: string[];
 }
-async function connectProgress() {
-  try {
-    const claude = (window as Window & { claude?: Store }).claude;
-    if (!claude || !claude.use) return;
-    const [db, user] = await Promise.all([claude.use('db'), claude.use('user')]);
+interface ProgressSnapshot {
+  exists: boolean;
+  data(): unknown;
+  metadata: { fromCache: boolean };
+}
+interface ProgressRef {
+  set(doc: ProgressDoc): Promise<unknown>;
+  onSnapshot(next: (snap: ProgressSnapshot) => void, error: () => void): unknown; // gives a function that stops it
+}
+interface Store {
+  use(name: 'db'): Promise<{ doc(path: string): ProgressRef } | null>;
+  use(name: 'user'): Promise<{ id(): Promise<string | null> } | null>;
+}
+const isStore = (u: unknown): u is Store => Predicate.hasProperty(u, 'use') && Predicate.isFunction(u.use);
+/** The store failed. refused: it won't take the document as written, so no more writes until it sends the next one */
+class ProgressError extends Schema.TaggedError<ProgressError>()('ProgressError', { refused: Schema.Boolean }) {}
+const progressError = (e: unknown) =>
+  new ProgressError({ refused: Predicate.hasProperty(e, 'code') && e.code === 'invalid_argument' });
+// The progress document, as forgiving as the save: no stars, or stars that aren't a list, are none
+const Progress = Schema.Struct({ stars: Schema.optionalKey(StarNames) });
+const decodeProgress = Schema.decodeUnknownOption(Progress);
+
+/** Every version of the progress document the store sends, until it reports an error */
+const snapshots = (ref: ProgressRef) =>
+  Stream.callback<ProgressSnapshot, ProgressError>((queue) =>
+    Effect.acquireRelease(
+      Effect.try({
+        try: () =>
+          ref.onSnapshot(
+            (snap) => Queue.offerUnsafe(queue, snap),
+            () => Queue.failCauseUnsafe(queue, Cause.fail(new ProgressError({ refused: false }))),
+          ),
+        catch: progressError,
+      }),
+      (stop) => Effect.sync(() => Predicate.isFunction(stop) && stop()),
+    ),
+  );
+
+/**
+ * Keeps the stars and the per-user store in step while the game is open, when the page has a store and the viewer
+ * is signed in: what the store has joins the stars here, and stars earned here go up to it. Gives the function that
+ * sends the stars up.
+ */
+const syncProgress = Effect.gen(function* () {
+  // the document to write to, once the store has sent it (and until it reports an error)
+  let ref: ProgressRef | null = null;
+  const write = Effect.suspend(() => {
+    const to = ref;
+    if (!to) return Effect.void;
+    return Effect.tryPromise({ try: () => to.set({ stars: [...stars].sort() }), catch: progressError }).pipe(
+      Effect.catchTag('ProgressError', (e) =>
+        Effect.sync(() => {
+          if (e.refused) ref = null;
+        }),
+      ),
+    );
+  });
+  // one write at a time: stars earned while one is on its way go up together in the next
+  const pushes = yield* Queue.sliding<void>(1);
+  yield* Effect.forkScoped(Effect.forever(Effect.andThen(Queue.take(pushes), write)));
+  const push = () => void Queue.offerUnsafe(pushes, undefined);
+
+  const connect = Effect.gen(function* () {
+    const claude = window.claude;
+    if (!isStore(claude)) return;
+    const [db, user] = yield* Effect.tryPromise({
+      try: () => Promise.all([claude.use('db'), claude.use('user')]),
+      catch: progressError,
+    });
     if (!db || !user) return;
-    const id = await user.id();
+    const id = yield* Effect.tryPromise({ try: () => user.id(), catch: progressError });
     if (!id) return;
-    const ref = db.doc('data/users/' + id + '/progress');
+    const doc = yield* Effect.try({ try: () => db.doc('data/users/' + id + '/progress'), catch: progressError });
     let synced = false;
-    ref.onSnapshot(
-      (snap) => {
-        const remote = (snap.exists && snap.data().stars) || [];
+    yield* Stream.runForEach(snapshots(doc), (snap) =>
+      Effect.gen(function* () {
+        const remote = snap.exists ? Option.getOrUndefined(decodeProgress(snap.data()))?.stars : undefined;
         const before = stars.size;
-        remote.forEach((n) => stars.add(n));
+        for (const n of remote ?? []) stars.add(n);
         if (stars.size !== before) {
-          saveLocal();
+          yield* saveStars;
           renderStars();
         }
-        progressRef = ref;
+        ref = doc;
         // first confirmed read: upload stars this browser has that the store lacks
         if (!synced && !snap.metadata.fromCache) {
           synced = true;
-          if (remote.length < stars.size) pushProgress();
+          if ((remote?.length ?? 0) < stars.size) push();
         }
-      },
-      () => {
-        progressRef = null;
-      },
+      }),
     );
-  } catch {
-    progressRef = null;
-  }
-}
+  }).pipe(
+    Effect.catchTag('ProgressError', () =>
+      Effect.sync(() => {
+        ref = null;
+      }),
+    ),
+  );
+  yield* Effect.forkScoped(connect);
+  return push;
+});
+// Sends the stars to the per-user store, while the game is open (open sets it up)
+let pushProgress = () => {};
 
 // ---------- win and loss effects ----------
 // stuck: the full slots pulse red and shudder before the result appears
 function alarmJars(t: number) {
-  const g = game!;
+  const g = play!;
   for (const j of g.jars) {
     if (!(j instanceof Jar)) continue;
     if (!j.userData.alarm) {
@@ -1220,8 +1263,10 @@ interface Confetto {
   c: string;
   t: number;
 }
-let confetti: Confetto[] = [],
-  fxOn = false;
+let confetti: Confetto[] = [];
+// Starts the confetti's fall from plain code (a frame) in the game's scope, so it stops when the player leaves. open
+// sets this up, and after the game closes it starts nothing.
+let startFall: (fall: Effect.Effect<void>, options: { readonly onlyIfMissing: boolean }) => unknown = () => {};
 function burstConfetti(colors: string[]) {
   if (matchMedia('(prefers-reduced-motion: reduce)').matches) return;
   const dpr = Math.min(window.devicePixelRatio || 1, 2),
@@ -1248,39 +1293,48 @@ function burstConfetti(colors: string[]) {
       t: 0,
     });
   }
-  if (!fxOn) {
-    fxOn = true;
+  // a fall already under way carries on with the new confetti
+  startFall(fall(w, h), { onlyIfMissing: true });
+}
+// The confetti falling, a frame at a time, until the last piece is gone; the canvas is cleared at the end, or when
+// the game closes first
+const fall = (w: number, h: number) =>
+  Effect.suspend(() => {
     let prev = performance.now();
-    requestAnimationFrame(function tick(now) {
-      const dt = Math.max(0, Math.min(0.05, (now - prev) / 1000));
-      prev = Math.max(prev, now);
-      fxc.clearRect(0, 0, w, h);
-      let alive = 0;
-      for (const p of confetti) {
-        p.t += dt;
-        p.vy += h * 1.1 * dt;
-        p.vx *= 1 - 1.4 * dt;
-        p.vy *= 1 - 0.6 * dt;
-        p.x += p.vx * dt;
-        p.y += p.vy * dt;
-        p.r += p.vr * dt;
-        if (p.y > h + 20 || p.t > 4) continue;
-        alive++;
-        fxc.save();
-        fxc.translate(p.x, p.y);
-        fxc.rotate(p.r);
-        fxc.scale(1, Math.abs(Math.cos(p.r * 1.7)) * 0.8 + 0.2);
-        fxc.fillStyle = p.c;
-        fxc.fillRect(-p.s / 2, -p.s / 3, p.s, p.s * 0.66);
-        fxc.restore();
-      }
-      if (alive) requestAnimationFrame(tick);
-      else {
-        fxOn = false;
-        fxc.clearRect(0, 0, w, h);
-      }
-    });
+    return nextFrame.pipe(
+      Effect.map((now) => {
+        const dt = Math.max(0, Math.min(0.05, (now - prev) / 1000));
+        prev = Math.max(prev, now);
+        return drawConfetti(dt, w, h) > 0;
+      }),
+      Effect.repeat({ while: (alive) => alive }),
+      Effect.ensuring(Effect.sync(() => fxc.clearRect(0, 0, w, h))),
+      Effect.asVoid,
+    );
+  });
+// one frame of confetti; answers how many pieces are still falling
+function drawConfetti(dt: number, w: number, h: number) {
+  fxc.clearRect(0, 0, w, h);
+  let alive = 0;
+  for (const p of confetti) {
+    p.t += dt;
+    p.vy += h * 1.1 * dt;
+    p.vx *= 1 - 1.4 * dt;
+    p.vy *= 1 - 0.6 * dt;
+    p.x += p.vx * dt;
+    p.y += p.vy * dt;
+    p.r += p.vr * dt;
+    if (p.y > h + 20 || p.t > 4) continue;
+    alive++;
+    fxc.save();
+    fxc.translate(p.x, p.y);
+    fxc.rotate(p.r);
+    fxc.scale(1, Math.abs(Math.cos(p.r * 1.7)) * 0.8 + 0.2);
+    fxc.fillStyle = p.c;
+    fxc.fillRect(-p.s / 2, -p.s / 3, p.s, p.s * 0.66);
+    fxc.restore();
   }
+  return alive;
 }
 
 // ---------- screens ----------
@@ -1295,8 +1349,11 @@ function showScreen(which: 'levels' | 'menu' | 'result' | null) {
   speedBtn.hidden = !inGame;
   infoBtn.hidden = !inGame;
 }
+// the result sheet's main button, and the level it starts
+const resultMain = document.getElementById('rMain')!;
+let resultNext = 0;
 function finish(win: boolean) {
-  const g = game!;
+  const g = play!;
   g.over = true;
   const last = g.idx === DATA.levels.length - 1;
   let isNew = false;
@@ -1322,31 +1379,26 @@ function finish(win: boolean) {
       : `You already have this star. ${n} of ${total} collected.`
     : 'All five slots hold blocks the ants can’t reach yet. Try a different order.';
   if (win) burstConfetti(HEX);
-  const main = document.getElementById('rMain')!;
-  main.textContent = win ? (last ? 'Play again' : 'Next level') : 'Retry';
-  main.className = 'b outlined ' + (win ? 'go' : 'sky');
-  main.onclick = () => fontReady.then(() => startLevel(win ? (last ? 0 : g.idx + 1) : g.idx));
+  resultMain.textContent = win ? (last ? 'Play again' : 'Next level') : 'Retry';
+  resultMain.className = 'b outlined ' + (win ? 'go' : 'sky');
+  resultNext = win ? (last ? 0 : g.idx + 1) : g.idx;
   showScreen('result');
 }
-document.getElementById('rLevels')!.onclick = () => {
+// the buttons on the result sheet and the in-game menu (listened to while the game is open, see `game`)
+function toLevels() {
   stopLevel();
   showScreen('levels');
-};
-infoBtn.onclick = () => {
-  if (game && !game.over) {
-    game.paused = true;
+}
+function openMenu() {
+  if (play && !play.over) {
+    play.paused = true;
     showScreen('menu');
   }
-};
-document.getElementById('mClose')!.onclick = () => {
-  if (game) game.paused = false;
+}
+function closeMenu() {
+  if (play) play.paused = false;
   showScreen(null);
-};
-document.getElementById('mRestart')!.onclick = () => startLevel(game!.idx);
-document.getElementById('mLevels')!.onclick = () => {
-  stopLevel();
-  showScreen('levels');
-};
+}
 
 // level cards with a small picture of each board
 const cards = document.getElementById('cards')!;
@@ -1378,28 +1430,52 @@ DATA.levels.forEach((L, i) => {
   st.innerHTML =
     '<path d="M12.0 2.3 L14.9 8.8 L22.0 9.6 L16.8 14.3 L18.2 21.3 L12.0 17.8 L5.8 21.3 L7.2 14.3 L2.0 9.6 L9.1 8.8 Z"/>';
   b.append(st);
-  b.onclick = () => fontReady.then(() => startLevel(i));
   cards.append(b);
 });
-renderStars();
-connectProgress();
 showScreen('levels');
 const toMenu = document.getElementById('toMenu')!;
 toMenu.hidden = false;
-toMenu.onclick = () => GameHub.menu();
 
-// The hub shows and hides the game. It draws only while its screen is shown (see frame), so hiding needs nothing.
-export function show(): void {
-  resize();
-}
-export function hide(): void {}
+/** Ant Sort for the hub: the level picker, or the level left unfinished last time */
+export const game: Game = {
+  open: Effect.gen(function* () {
+    // stars saved in this browser (in another tab, say); stars only ever get added, so they join what is here
+    for (const name of yield* load(STAR_KEY, StarNames, () => [])) stars.add(name);
+    renderStars();
+    resize();
+
+    // a level starts once the number labels' face has loaded
+    const font = yield* Effect.forkScoped(loadFont);
+    const startWithFont = (level: number) =>
+      Effect.andThen(
+        Fiber.join(font),
+        Effect.sync(() => startLevel(level)),
+      );
+
+    yield* listen(window, 'resize', resize);
+    yield* listen(canvas, 'pointerdown', tapBoard);
+    yield* listen(speedBtn, 'click', toggleSpeed);
+    yield* listen(infoBtn, 'click', openMenu);
+    yield* listen(document.getElementById('mClose')!, 'click', closeMenu);
+    yield* listen(document.getElementById('mRestart')!, 'click', () => startLevel(play!.idx));
+    yield* listen(document.getElementById('mLevels')!, 'click', toLevels);
+    yield* listen(document.getElementById('rLevels')!, 'click', toLevels);
+    yield* listen(resultMain, 'click', () => startWithFont(resultNext));
+    for (const [i, card] of [...cards.children].entries()) yield* listen(card, 'click', () => startWithFont(i));
+    yield* listen(toMenu, 'click', () => GameHub.menu());
+
+    startFall = yield* FiberHandle.makeRuntime<never>();
+    pushProgress = yield* syncProgress;
+    yield* animate(frame);
+  }),
+};
 
 // What the browser tests read, and a speed for them: a software-rendered browser draws a level at a few frames a
 // second, far too slowly to win one at the speeds a player can pick.
 const frontAt = new THREE.Vector3();
 window.AntSort = {
   _debug() {
-    const g = game,
+    const g = play,
       r = canvas.getBoundingClientRect();
     return {
       level: g ? g.idx : -1,

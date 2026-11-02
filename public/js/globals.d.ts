@@ -25,6 +25,8 @@ declare global {
       };
       _speed(k: number): void;
     };
+    // The per-user store, on a page that runs with one: Ant Sort keeps the viewer's stars there. Unknown until checked.
+    claude?: unknown;
 
     // Water Sort: its state for the browser tests
     WaterSort?: {

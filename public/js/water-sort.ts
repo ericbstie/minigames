@@ -1,6 +1,12 @@
 // Water Sort: tap a tube, tap another, and the top colour pours across if it fits.
 // Everything is laid out in the reference screenshot's pixels (640 wide) and scaled.
-import { GameHub } from './hub';
+//
+// The hub opens the game (`game`, at the bottom) in a scope while its screen is shown: the listeners, the frame loop
+// and the timers for the note and the win sheet are set up in it and stop when the player leaves. The level being
+// played stays as it was, for when they come back. The rules, layout and drawing are plain functions.
+import { Effect, FiberHandle, FiberSet, Predicate, Schema, SchemaGetter } from 'effect';
+import { type Game, GameHub } from './hub';
+import { animate, listen, load, run, save } from './page';
 import {
   LEVELS,
   type State,
@@ -198,15 +204,16 @@ interface UI {
   winPill: HTMLElement;
   next: HTMLElement;
   note: HTMLElement;
+  back: HTMLElement; // from a level to the picker
+  pickBack: HTMLElement; // from the picker to the main menu
+  restart: HTMLElement;
+  levels: HTMLElement; // the win sheet's way to the picker
 }
 let app!: HTMLElement,
   cv!: HTMLCanvasElement,
   g!: CanvasRenderingContext2D,
   ui!: UI,
-  started = false,
-  running = false,
-  raf = 0,
-  last = 0;
+  started = false;
 let U = 1,
   SWd = 640,
   SHd = 1380,
@@ -229,15 +236,20 @@ const S: GameState = {
   won: false,
   shakes: [],
 };
-let done = new Set<number>();
-try {
-  done = new Set(JSON.parse(localStorage.getItem('watersort.done.v1') || '[]') as number[]);
-} catch {}
-const saveDone = () => {
-  try {
-    localStorage.setItem('watersort.done.v1', JSON.stringify([...done]));
-  } catch {}
-};
+// The levels finished, numbered from 1, saved as a JSON array. Only a number can match a level, so anything else in
+// there is dropped on the way in, and the rest kept.
+const DONE_KEY = 'watersort.done.v1';
+const Done = Schema.Array(Schema.Unknown).pipe(
+  Schema.decodeTo(Schema.Array(Schema.Number), {
+    decode: SchemaGetter.transform((saved) => saved.filter(Predicate.isNumber)),
+    encode: SchemaGetter.passthroughSubtype(),
+  }),
+);
+const done = new Set<number>();
+const saveDone = () => run(save(DONE_KEY, Done, [...done]));
+// Starts a timer from plain code (a frame) while the game is open. The hub's scope for the visit holds it, so it stops
+// when the player leaves; open sets this up, and after the game closes it starts nothing.
+let later: (timer: Effect.Effect<void>) => unknown = () => {};
 
 // ---- layout ----
 function resize() {
@@ -321,17 +333,25 @@ function buildGrid() {
     b.className = 'ws-cell' + (done.has(i + 1) ? ' done' : '');
     b.setAttribute('aria-label', `Level ${i + 1}, ${DIFF(i + 1)}${done.has(i + 1) ? ', complete' : ''}`);
     b.innerHTML = `<span class="n">${i + 1}</span><span class="d">${DIFF(i + 1)}</span><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m12 2.6 2.8 5.9 6.4.8-4.7 4.4 1.2 6.4L12 17l-5.7 3.1 1.2-6.4-4.7-4.4 6.4-.8Z"/></svg>`;
-    b.onclick = () => startLevel(i);
+    // a click on a cell starts its level (one listener on the grid, see open, as the cells are made anew here)
     ui.grid.appendChild(b);
   });
 }
-let noteT = 0;
-function note(msg: string) {
-  ui.note.textContent = msg;
-  ui.note.classList.add('show');
-  clearTimeout(noteT);
-  noteT = setTimeout(() => ui.note.classList.remove('show'), 2200);
+// The level of the cell a click on the grid landed in, or -1
+function cellAt(target: EventTarget | null): number {
+  const cell = target instanceof Element ? target.closest('.ws-cell') : null;
+  return cell ? [...ui.grid.children].indexOf(cell) : -1;
 }
+// A note under the board for a couple of seconds; a new note takes over the timer of the one before
+const note = (timer: FiberHandle.FiberHandle, msg: string) =>
+  Effect.suspend(() => {
+    ui.note.textContent = msg;
+    ui.note.classList.add('show');
+    return FiberHandle.run(
+      timer,
+      Effect.sleep(2200).pipe(Effect.andThen(Effect.sync(() => ui.note.classList.remove('show')))),
+    );
+  }).pipe(Effect.asVoid);
 
 // ---- moves ----
 const busy = (i: number) => S.anims.some((a) => a.src === i || a.dst === i);
@@ -410,19 +430,19 @@ function undo() {
   S.tubes = S.undo.pop()!;
   syncButtons();
 }
-function hint() {
-  if (S.hints <= 0 || S.won) return;
+// Picks up the tube of the solver's next move and points at where it goes. Answers true when there is no way
+// forward, for the caller to say so.
+function hint(): boolean {
+  if (S.hints <= 0 || S.won) return false;
   S.anims.length = 0;
   const sol = wsSolve(S.tubes, 80000);
-  if (!sol || !sol.length) {
-    note('No way forward from here. Try Undo.');
-    return;
-  }
+  if (!sol || !sol.length) return true;
   S.hints--;
   syncButtons();
   const [a, b] = sol[0];
   S.sel = a;
   S.hint = { a, b, t: 0 };
+  return false;
 }
 
 // ---- drawing ----
@@ -781,12 +801,15 @@ function checkWin() {
   saveDone();
   const cols = COLORS.slice(0, LEVELS[S.level].colors);
   for (let k = 0; k < 4; k++) burst(SWd / 2 + (k - 1.5) * 150, SHd * 0.55, cols, 30, 1.4);
-  setTimeout(() => {
-    if (!S.won) return;
-    ui.winPill.textContent = `Level ${S.level + 1}`;
-    ui.next.hidden = S.level >= LEVELS.length - 1;
-    ui.win.hidden = false;
-  }, 700);
+  // the win sheet once the confetti has had a moment; at once if the player leaves first, so it is up when they
+  // come back
+  later(Effect.sleep(700).pipe(Effect.ensuring(Effect.sync(showWin))));
+}
+function showWin() {
+  if (!S.won) return;
+  ui.winPill.textContent = `Level ${S.level + 1}`;
+  ui.next.hidden = S.level >= LEVELS.length - 1;
+  ui.win.hidden = false;
 }
 // taps: the tube under the finger, or the + button
 function hit(ev: PointerEvent): number | 'add' | null {
@@ -804,14 +827,13 @@ function hit(ev: PointerEvent): number | 'add' | null {
   return null;
 }
 
-function frame(now: number) {
-  raf = requestAnimationFrame(frame);
-  const dt = Math.max(0, Math.min(0.05, (now - last) / 1000 || 0));
-  last = Math.max(last, now);
+// a frame of the level being played (the picker needs none)
+function frame(dt: number) {
   if (ui.play.hidden) return;
   update(dt * SPEED);
   render(dt * SPEED);
 }
+// the page's elements, found the first time the game opens
 function setup() {
   app = document.getElementById('ws-app')!;
   cv = document.getElementById('ws-canvas') as HTMLCanvasElement;
@@ -830,44 +852,56 @@ function setup() {
     winPill: $('ws-win-pill'),
     next: $('ws-next'),
     note: $('ws-note'),
+    back: $('ws-back'),
+    pickBack: $('ws-pick-back'),
+    restart: $('ws-restart'),
+    levels: $('ws-levels'),
   };
-  cv.addEventListener('pointerdown', (e) => {
-    const i = hit(e);
-    if (i !== null) tap(i);
-    else if (S.sel >= 0 && !S.anims.some((a) => a.src === S.sel)) S.sel = -1;
-  });
-  $('ws-back').onclick = () => {
-    S.anims = [];
-    showPlay(false);
-  };
-  $('ws-pick-back').onclick = () => GameHub.menu();
-  $('ws-restart').onclick = () => restart();
-  ui.undo.onclick = () => undo();
-  ui.hint.onclick = () => hint();
-  ui.next.onclick = () => startLevel(Math.min(LEVELS.length - 1, S.level + 1));
-  $('ws-levels').onclick = () => {
-    ui.win.hidden = true;
-    showPlay(false);
-  };
-  window.addEventListener('resize', () => {
-    if (running) resize();
-  });
   started = true;
 }
-export function show(): void {
-  if (!started) setup();
-  resize();
-  if (!S.tubes.length) showPlay(false);
-  if (!running) {
-    running = true;
-    last = performance.now();
-    raf = requestAnimationFrame(frame);
-  }
-}
-export function hide(): void {
-  running = false;
-  cancelAnimationFrame(raf);
-}
+
+/** Water Sort for the hub: the picker, or the level left unfinished last time */
+export const game: Game = {
+  open: Effect.gen(function* () {
+    if (!started) setup();
+    // levels finished before (in another tab, say); levels only ever get finished, so they join what is here
+    for (const n of yield* load(DONE_KEY, Done, () => [])) done.add(n);
+    resize();
+    if (!S.tubes.length) showPlay(false);
+
+    // the note's timer (a note cut short by leaving goes with it), and the timers plain code starts (the win sheet)
+    const noteTimer = yield* FiberHandle.make();
+    yield* Effect.addFinalizer(() => Effect.sync(() => ui.note.classList.remove('show')));
+    later = yield* FiberSet.makeRuntime();
+
+    yield* listen(window, 'resize', resize);
+    yield* listen(cv, 'pointerdown', (e) => {
+      const i = hit(e);
+      if (i !== null) tap(i);
+      else if (S.sel >= 0 && !S.anims.some((a) => a.src === S.sel)) S.sel = -1;
+    });
+    yield* listen(ui.grid, 'click', (e) => {
+      const i = cellAt(e.target);
+      if (i >= 0) startLevel(i);
+    });
+    yield* listen(ui.back, 'click', () => {
+      S.anims = [];
+      showPlay(false);
+    });
+    yield* listen(ui.pickBack, 'click', () => GameHub.menu());
+    yield* listen(ui.restart, 'click', restart);
+    yield* listen(ui.undo, 'click', undo);
+    yield* listen(ui.hint, 'click', () =>
+      hint() ? note(noteTimer, 'No way forward from here. Try Undo.') : Effect.void,
+    );
+    yield* listen(ui.next, 'click', () => startLevel(Math.min(LEVELS.length - 1, S.level + 1)));
+    yield* listen(ui.levels, 'click', () => {
+      ui.win.hidden = true;
+      showPlay(false);
+    });
+    yield* animate(frame);
+  }),
+};
 
 // What the browser tests read
 window.WaterSort = {
