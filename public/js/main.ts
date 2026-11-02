@@ -7,9 +7,9 @@ import { GameHub, registerGame, route, showHideGame } from './hub';
 import { listen, run } from './page';
 import * as WaterSort from './water-sort';
 
-registerGame('ant', showHideGame(AntSort));
+registerGame('ant', AntSort.game);
 registerGame('castle', CastleDefender.game);
-registerGame('ws', showHideGame(WaterSort));
+registerGame('ws', WaterSort.game);
 registerGame('br', showHideGame(BikeRace));
 
 // The menu's cards and the address bar, for as long as the page is open

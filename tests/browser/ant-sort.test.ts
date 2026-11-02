@@ -1,6 +1,7 @@
 // Browser checks for Ant Sort: the level picker, a level played to a win through the blocks on screen (the order
-// comes from the solver in tests/ant-sort-solve.ts), the result sheets for a win and a loss, the in-game menu, and
-// the way back to the main menu. It plays the real page in Bun's headless browser, on a phone-sized screen.
+// comes from the solver in tests/ant-sort-solve.ts), the result sheets for a win and a loss, the in-game menu, the
+// way back to the main menu, stars saved by earlier versions of the game, and the per-user store. It plays the real
+// page in Bun's headless browser, on a phone-sized screen.
 //
 // That browser draws WebGL in software, at a few frames a second once a level is up, so after the first block the
 // test runs the game faster through window.AntSort._speed. Each click waits until the ants have fetched all they can
@@ -19,9 +20,9 @@ const PHONE = { width: 390, height: 844, mobile: true };
 
 const debug = (page: Page) => page.eval(() => window.AntSort!._debug());
 
-/** Ant Sort on a phone, on its level picker */
-async function open(): Promise<Page> {
-  const page = await openPage(site, { ...PHONE, path: '/#ant-sort' });
+/** Ant Sort on a phone, on its level picker, with whatever is saved in localStorage */
+async function open(storage?: Record<string, string>): Promise<Page> {
+  const page = await openPage(site, { ...PHONE, path: '/#ant-sort', storage });
   await page.waitFor(() => !!window.AntSort && document.querySelectorAll('#cards .card').length === 20);
   return page;
 }
@@ -196,6 +197,89 @@ test('Ant Sort: the in-game menu, a level lost by filling the slots, and Retry',
   expect(await page.until(() => !document.getElementById('levels')!.hidden)).toBe(true);
   expect(await page.text('#tallyN')).toBe('0 / 20');
   expect(await page.eval(() => localStorage.getItem('antsort.stars.v1'))).toBeNull();
+  expect(page.errors).toEqual([]);
+  page.close();
+});
+
+/** A stand-in for the per-user store a page can run with (window.claude), signed in as u1 */
+interface FakeStore {
+  use(name: string): Promise<unknown>;
+  writes: { path: string; doc: unknown }[]; // what the game wrote, in order
+  listening: ((snap: unknown) => void) | null; // the game's listener for the progress document, while it has one
+  stopped: number; // listeners the game stopped
+  send(stars: unknown, fromCache: boolean): void; // a version of the document, as the store sends it
+}
+
+test('Ant Sort: stars saved before, saves with odd entries, and the per-user store', async () => {
+  const [a, b, c] = LEVELS.map((L) => L.name) as [string, string, string];
+  const stars = (page: Page) =>
+    page.eval(() => [...document.querySelectorAll('#cards .cstar')].map((s) => s.getAttribute('class')!.slice(6)));
+  for (const [saved, tally] of [
+    [JSON.stringify([a]), '1 / 20'], // as the game has always saved it
+    [JSON.stringify({ stars: [a] }), '0 / 20'], // not a list
+    [`["${a}"`, '0 / 20'], // not JSON
+  ]) {
+    const page = await open({ 'antsort.stars.v1': saved! });
+    expect(await page.text('#tallyN')).toBe(tally!);
+    expect((await stars(page))[0]).toBe(tally === '1 / 20' ? 'star-on' : 'star-off');
+    expect(await page.eval(() => localStorage.getItem('antsort.stars.v1'))).toBe(saved!); // loading leaves it alone
+    expect(page.errors).toEqual([]);
+    page.close();
+  }
+
+  // what isn't a name is dropped, and the rest kept
+  const page = await open({ 'antsort.stars.v1': JSON.stringify([a, 7, null, c]) });
+  expect(await page.text('#tallyN')).toBe('2 / 20');
+  expect((await stars(page)).slice(0, 3)).toEqual(['star-on', 'star-off', 'star-on']);
+
+  // the page gets a store, and the game links to it when it next opens
+  await page.eval(() => {
+    const store: FakeStore = {
+      writes: [],
+      listening: null,
+      stopped: 0,
+      send(stars, fromCache) {
+        store.listening?.({ exists: true, data: () => ({ stars }), metadata: { fromCache } });
+      },
+      async use(name) {
+        if (name === 'user') return { id: async () => 'u1' };
+        return {
+          doc: (path: string) => ({
+            set: async (doc: unknown) => void store.writes.push({ path, doc }),
+            onSnapshot(next: (snap: unknown) => void) {
+              store.listening = next;
+              return () => {
+                store.listening = null;
+                store.stopped++;
+              };
+            },
+          }),
+        };
+      },
+    };
+    window.claude = store;
+  });
+  await page.eval(() => window.GameHub.menu());
+  await page.eval(() => window.GameHub.open('ant-sort'));
+  expect(await page.until(() => !!(window.claude as FakeStore).listening)).toBe(true);
+
+  // a version from the store's cache: its stars join these and are saved here, but nothing goes up yet
+  await page.eval((b) => (window.claude as FakeStore).send([b, 42], true), b);
+  expect(await page.until(() => document.getElementById('tallyN')!.textContent === '3 / 20')).toBe(true);
+  expect(await page.eval(() => localStorage.getItem('antsort.stars.v1'))).toBe(JSON.stringify([a, c, b]));
+  expect(await page.eval(() => (window.claude as FakeStore).writes.length)).toBe(0);
+
+  // the first version from the store itself lacks stars this browser has, so they all go up
+  await page.eval((b) => (window.claude as FakeStore).send([b], false), b);
+  expect(await page.until(() => (window.claude as FakeStore).writes.length > 0)).toBe(true);
+  expect(await page.eval(() => (window.claude as FakeStore).writes)).toEqual([
+    { path: 'data/users/u1/progress', doc: { stars: [a, b, c].sort() } },
+  ]);
+
+  // leaving the game stops listening to the store
+  await page.eval(() => window.GameHub.menu());
+  expect(await page.until(() => !(window.claude as FakeStore).listening)).toBe(true);
+  expect(await page.eval(() => (window.claude as FakeStore).stopped)).toBe(1);
   expect(page.errors).toEqual([]);
   page.close();
 });
