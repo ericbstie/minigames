@@ -378,7 +378,6 @@ describe('The border moves out', () => {
       }
       d.G.enemies.length = 0;
       d.G.spawnQueue.length = 0;
-      d.advance(10);
       const hp = (sx: number, sz: number) =>
         Math.max(
           0,
@@ -388,6 +387,8 @@ describe('The border moves out', () => {
         );
       const last = out[out.length - 1]!,
         ne = d.fronts().find((o) => o.id === 'NE')!;
+      // waves are random: give both camps time to send a knight (10 s nearly always does)
+      for (let t = 0; t < 40 && !(t >= 10 && hp(last.x, last.z) && hp(ne.x, ne.z)); t += 5) d.advance(5);
       return { out, eastHp: hp(last.x, last.z), neHp: hp(ne.x, ne.z) };
     });
     for (let i = 1; i < push.out.length; i++)
@@ -397,6 +398,7 @@ describe('The border moves out', () => {
     expect(push.out.map((c) => c.theme)).toEqual(push.out.map(() => 3));
   });
   test('enemies from the far camp are much stronger than from a camp near home', () => {
+    expect(push.neHp).toBeGreaterThan(0);
     expect(push.eastHp).toBeGreaterThan(push.neHp * 2);
   });
 

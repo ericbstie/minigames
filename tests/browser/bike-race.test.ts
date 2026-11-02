@@ -46,36 +46,6 @@ async function phone({ w = 844, h = 390, save = null as object | null, query = '
   return page;
 }
 
-/**
- * Click the n-th element matching the selector the way a person (and Playwright) would: wait until it is shown,
- * switched on, not moving (the sheets slide and shake in) and not covered by something else, then click its centre.
- */
-async function tap(page: Page, selector: string, nth = 0): Promise<void> {
-  const end = performance.now() + 30_000;
-  let last = '';
-  for (;;) {
-    const at = (await page.waitFor(
-      (sel, i) => {
-        const el = document.querySelectorAll(sel)[i] as HTMLButtonElement | undefined;
-        if (!el || el.disabled || !el.checkVisibility()) return null;
-        el.scrollIntoView({ block: 'nearest', inline: 'nearest' });
-        const r = el.getBoundingClientRect();
-        const x = r.x + r.width / 2;
-        const y = r.y + r.height / 2;
-        const hit = document.elementFromPoint(x, y);
-        if (!r.width || !r.height || !hit || !el.contains(hit)) return null;
-        return { x, y, box: [r.x, r.y, r.width, r.height].join() };
-      },
-      [selector, nth],
-      { timeout: Math.max(0, end - performance.now()) },
-    ))!; // waitFor only returns something truthy
-    if (at.box === last) return page.view.click(at.x, at.y);
-    if (performance.now() > end) throw new Error(`${selector} kept moving`);
-    last = at.box;
-    await wait(40);
-  }
-}
-
 /** Focus an element and press a key in it */
 async function pressIn(page: Page, selector: string, key: string): Promise<void> {
   await page.eval((sel) => (document.querySelector(sel) as HTMLElement).focus(), selector);
@@ -110,7 +80,7 @@ describe('Garage basics (no stars yet)', () => {
   });
 
   test('the garage opens', async () => {
-    await tap(page, '#br-go-garage');
+    await page.click('#br-go-garage');
     expect(await page.visible('br-garage')).toBe(true);
   });
 
@@ -131,7 +101,7 @@ describe('Garage basics (no stars yet)', () => {
   });
 
   test('tapping a locked bike does not pick it', async () => {
-    await tap(page, '.br-gbike', 4);
+    await page.click('.br-gbike', 4);
     expect((await saved(page)).bike).not.toBe('comet');
   });
 
@@ -144,7 +114,7 @@ describe('Garage basics (no stars yet)', () => {
   });
 
   test('Back goes to the home menu', async () => {
-    await tap(page, '#br-garage-back');
+    await page.click('#br-garage-back');
     expect(await page.visible('br-home')).toBe(true);
   });
 
@@ -165,12 +135,12 @@ describe('Unlocking, picking and saving', () => {
   });
 
   test("Hopper's tile says New", async () => {
-    await tap(page, '#br-go-garage');
+    await page.click('#br-go-garage');
     expect(await newTags(page, 1)).toBe(1);
   });
 
   test('tapping Hopper rides it and clears New', async () => {
-    await tap(page, '.br-gbike', 1);
+    await page.click('.br-gbike', 1);
     const sv = await saved(page);
     expect(sv.bike).toBe('hopper');
     expect(sv.seen).toContain('hopper');
@@ -185,7 +155,7 @@ describe('Unlocking, picking and saving', () => {
   });
 
   test('picking the fourth paint saves it', async () => {
-    await tap(page, '.br-paint', 3);
+    await page.click('.br-paint', 3);
     expect((await saved(page)).paint).toBe(3);
   });
 
@@ -202,14 +172,14 @@ describe('Unlocking, picking and saving', () => {
   });
 
   test('the home badge is gone after looking at the new bike', async () => {
-    await tap(page, '#br-garage-back');
+    await page.click('#br-garage-back');
     expect(await hasNew(page)).toBe(false);
   });
 
   test('after a reload Hopper is still ridden', async () => {
     await page.reload();
     await page.waitFor(() => !!window.BikeRace && !document.getElementById('br-home')!.hidden, [], { timeout: 30_000 });
-    await tap(page, '#br-go-garage');
+    await page.click('#br-go-garage');
     expect(await page.text('.br-gbike.riding .nm')).toBe('Hopper');
   });
 
@@ -253,20 +223,20 @@ describe('Garage from the pause menu', () => {
     await page.keyDown('ArrowUp');
     await wait(1200);
     await page.keyUp('ArrowUp');
-    await tap(page, '#br-pause');
+    await page.click('#br-pause');
     before = await dbg(page, (d) => ({ x: d.S.me.c.x, t: d.S.me.time, sess: (((window as any).__s = d.S), 1) }));
     expect(await page.visible('br-p-garage')).toBe(true);
   });
 
   test('it opens the garage', async () => {
-    await tap(page, '#br-p-garage');
+    await page.click('#br-p-garage');
     expect(await page.visible('br-garage')).toBe(true);
   });
 
   let after: { same: boolean; x: number; t: number; paint: string; pause: boolean };
   test('with only a new paint, Back returns to the same paused run', async () => {
-    await tap(page, '.br-paint', 5);
-    await tap(page, '#br-garage-back');
+    await page.click('.br-paint', 5);
+    await page.click('#br-garage-back');
     after = await dbg(page, (d) => ({
       same: d.S === (window as any).__s,
       x: d.S.me.c.x,
@@ -284,9 +254,9 @@ describe('Garage from the pause menu', () => {
   });
 
   test('with a new bike, Back restarts the level on it', async () => {
-    await tap(page, '#br-p-garage');
-    await tap(page, '.br-gbike', 1); // Hopper
-    await tap(page, '#br-garage-back');
+    await page.click('#br-p-garage');
+    await page.click('.br-gbike', 1); // Hopper
+    await page.click('#br-garage-back');
     const now = await dbg(page, (d) => ({
       same: d.S === (window as any).__s,
       bike: d.S.me.type.id,
@@ -305,7 +275,7 @@ describe('Garage from the pause menu', () => {
   });
 
   test('Esc leaves the garage, back to the pause menu', async () => {
-    await tap(page, '#br-p-garage');
+    await page.click('#br-p-garage');
     await page.press('Escape');
     expect(await page.visible('br-pausemenu')).toBe(true);
     expect(await page.visible('br-garage')).toBe(false);
@@ -336,8 +306,8 @@ describe('Garage from the crash sheet', () => {
   });
 
   test('Back returns to the crash sheet', async () => {
-    await tap(page, '#br-crash-garage');
-    await tap(page, '#br-garage-back');
+    await page.click('#br-crash-garage');
+    await page.click('#br-garage-back');
     expect(await page.visible('br-crash')).toBe(true);
   });
 });
@@ -384,23 +354,23 @@ describe('Result sheet: next bike, then a new bike', () => {
     });
 
     test('the card opens the garage on Hopper with a Ride button', async () => {
-      await tap(page, '#br-res-unlock');
+      await page.click('#br-res-unlock');
       expect(await page.text('#br-g-name')).toBe('Hopper');
       expect(await page.text('#br-g-status')).toMatch(/Ride Hopper/);
     });
 
     test('Ride picks it', async () => {
-      await tap(page, '.br-ride');
+      await page.click('.br-ride');
       expect((await saved(page)).bike).toBe('hopper');
     });
 
     test('Back returns to the result sheet', async () => {
-      await tap(page, '#br-garage-back');
+      await page.click('#br-garage-back');
       expect(await page.visible('br-result')).toBe(true);
     });
 
     test('the next level starts on the new bike', async () => {
-      await tap(page, '#br-res-next');
+      await page.click('#br-res-next');
       expect(await dbg(page, (d) => d.S.levelId + ' ' + d.S.me.type.id)).toBe('clover-2 hopper');
     });
 
@@ -456,8 +426,8 @@ describe('Fits on phones held sideways', () => {
       afterAll(() => page?.close());
 
       test(`garage fits at ${w}x${h}`, async () => {
-        await tap(page, '#br-go-garage');
-        await tap(page, '.br-gbike', 3);
+        await page.click('#br-go-garage');
+        await page.click('.br-gbike', 3);
         await wait(200);
         const fit = await page.eval(() => {
           const scr = document.getElementById('br-garage')!;
@@ -485,9 +455,9 @@ describe('Fits on phones held sideways', () => {
       });
 
       test(`pause sheet fits at ${w}x${h}`, async () => {
-        await tap(page, '#br-garage-back');
+        await page.click('#br-garage-back');
         await dbg(page, (d) => void d.startSolo('clover-1'));
-        await tap(page, '#br-pause');
+        await page.click('#br-pause');
         const sheet = await page.eval(() => {
           const s = document.querySelector('#br-pausemenu .sheet')!;
           const r = s.getBoundingClientRect();

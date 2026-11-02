@@ -54,36 +54,6 @@ async function phone(
   return page;
 }
 
-/**
- * Click the n-th element matching the selector the way a person (and Playwright) would: wait until it is shown,
- * switched on, not moving (the sheets slide and shake in) and not covered by something else, then click its centre.
- */
-async function tap(page: Page, selector: string, nth = 0): Promise<void> {
-  const end = performance.now() + 30_000;
-  let last = '';
-  for (;;) {
-    const at = (await page.waitFor(
-      (sel, i) => {
-        const el = document.querySelectorAll(sel)[i] as HTMLButtonElement | undefined;
-        if (!el || el.disabled || !el.checkVisibility()) return null;
-        el.scrollIntoView({ block: 'nearest', inline: 'nearest' });
-        const r = el.getBoundingClientRect();
-        const x = r.x + r.width / 2;
-        const y = r.y + r.height / 2;
-        const hit = document.elementFromPoint(x, y);
-        if (!r.width || !r.height || !hit || !el.contains(hit)) return null;
-        return { x, y, box: [r.x, r.y, r.width, r.height].join() };
-      },
-      [selector, nth],
-      { timeout: Math.max(0, end - performance.now()) },
-    ))!; // waitFor only returns something truthy
-    if (at.box === last) return page.view.click(at.x, at.y);
-    if (performance.now() > end) throw new Error(`${selector} kept moving`);
-    last = at.box;
-    await wait(40);
-  }
-}
-
 /** Pick an option in a <select>, with the input and change events a person picking it would cause */
 async function select(page: Page, selector: string, value: string): Promise<void> {
   await page.eval(
@@ -155,7 +125,7 @@ describe('Two phones meet in a room', () => {
   });
 
   test('the first phone finds the race server', async () => {
-    await tap(a, '#br-go-mp');
+    await a.click('#br-go-mp');
     expect(await online(a)).toBe(true);
   });
 
@@ -170,7 +140,7 @@ describe('Two phones meet in a room', () => {
 
   test('Create room opens a room', async () => {
     await select(a, '#br-mp-level', 'clover-2');
-    await tap(a, '#br-mp-create');
+    await a.click('#br-mp-create');
     expect(await inRoom(a, 1)).toBe(true);
   });
 
@@ -222,7 +192,7 @@ describe('Two phones meet in a room', () => {
 
 describe('A live race', () => {
   test('Start race counts down and starts the race on both phones', async () => {
-    await tap(a, '#br-room-start');
+    await a.click('#br-room-start');
     expect(await racing(a)).toBe(true);
     expect(await racing(b)).toBe(true);
   });
@@ -283,7 +253,7 @@ describe('A live race', () => {
 
 describe('Leaving a race, the last race, and racing again', () => {
   test('Back to room shows the room with the last race', async () => {
-    await tap(b, '#br-rr-room');
+    await b.click('#br-rr-room');
     expect(await inRoom(b, 2)).toBe(true);
     expect(await b.visible('br-room-last')).toBe(true);
   });
@@ -294,15 +264,15 @@ describe('Leaving a race, the last race, and racing again', () => {
   });
 
   test('Race again starts a race for the host on the results sheet and the guest in the room', async () => {
-    await tap(a, '#br-rr-again');
+    await a.click('#br-rr-again');
     expect(await racing(a)).toBe(true);
     expect(await racing(b)).toBe(true);
   });
 
   test('Leave race in the pause menu goes back to the room while the race goes on', async () => {
     await wait(800);
-    await tap(a, '#br-pause');
-    await tap(a, '#br-p-levels');
+    await a.click('#br-pause');
+    await a.click('#br-p-levels');
     expect(await inRoom(a, 2)).toBe(true);
     expect(await a.text('#br-room-note')).toMatch(/race is on/i);
   });
@@ -338,7 +308,7 @@ describe('A dropped connection comes back', () => {
 
   let idB = '';
   test('the phone reconnects by itself', async () => {
-    await tap(b, '#br-rr-room');
+    await b.click('#br-rr-room');
     idB = await dbg(b, (d) => d.Net.id);
     await dbg(b, (d) => void d.Net._t.kill());
     expect(await online(b)).toBe(true);
@@ -350,7 +320,7 @@ describe('A dropped connection comes back', () => {
   });
 
   test('a third race starts', async () => {
-    await tap(a, '#br-room-start');
+    await a.click('#br-room-start');
     expect(await racing(a)).toBe(true);
     expect(await racing(b)).toBe(true);
   });
@@ -385,9 +355,9 @@ describe('A dropped connection comes back', () => {
   });
 
   test('Leave room goes back to the lobby', async () => {
-    await tap(b, '#br-rr-room');
-    await tap(a, '#br-rr-room');
-    await tap(b, '#br-room-leave');
+    await b.click('#br-rr-room');
+    await a.click('#br-rr-room');
+    await b.click('#br-room-leave');
     expect(await until(b, () => !document.getElementById('br-mp-lobby')!.hidden)).toBe(true);
   });
 
@@ -398,7 +368,7 @@ describe('A dropped connection comes back', () => {
   test('the open room is listed in the lobby', async () => {
     await b.reload();
     await b.waitFor(() => !!window.BikeRace && !document.getElementById('br-home')!.hidden, [], { timeout: 30_000 });
-    await tap(b, '#br-go-mp');
+    await b.click('#br-go-mp');
     await online(b);
     expect(
       await until(
@@ -410,12 +380,12 @@ describe('A dropped connection comes back', () => {
   });
 
   test('and Join from the list works', async () => {
-    await tap(b, `#br-mp-rooms button[data-code="${code}"]`);
+    await b.click(`#br-mp-rooms button[data-code="${code}"]`);
     expect(await inRoom(b, 2)).toBe(true);
   });
 
   test('when the host leaves, the other rider becomes host', async () => {
-    await tap(a, '#br-room-leave');
+    await a.click('#br-room-leave');
     expect(await until(b, () => !document.getElementById('br-room-start')!.hidden)).toBe(true);
   });
 
@@ -454,7 +424,7 @@ describe('Over https, with one phone on the event stream', () => {
 
   test('a phone finds the race server over https', async () => {
     expect(await c.eval(() => location.protocol)).toBe('https:');
-    await tap(c, '#br-go-mp');
+    await c.click('#br-go-mp');
     expect(await online(c)).toBe(true);
   });
 
@@ -463,7 +433,7 @@ describe('Over https, with one phone on the event stream', () => {
   });
 
   test('a phone on the event stream joins through the link', async () => {
-    await tap(c, '#br-mp-create');
+    await c.click('#br-mp-create');
     await inRoom(c, 1);
     const code2 = await c.text('#br-room-code');
     e = await phone(secure, { save: BEA, query: '?autopilot&net=sse', hash: '#bike-race/' + code2 });
@@ -475,7 +445,7 @@ describe('Over https, with one phone on the event stream', () => {
   });
 
   test('they race', async () => {
-    await tap(c, '#br-room-start');
+    await c.click('#br-room-start');
     expect(await racing(c)).toBe(true);
     expect(await racing(e)).toBe(true);
   });
@@ -553,8 +523,8 @@ describe('No race server: race the computer', () => {
   });
 
   test('Race computer riders starts a race against three', async () => {
-    await tap(f, '#br-cpu-count button[data-n="3"]');
-    await tap(f, '#br-cpu-start');
+    await f.click('#br-cpu-count button[data-n="3"]');
+    await f.click('#br-cpu-start');
     expect(
       await until(f, () => {
         const d = window.BikeRace!._debug();
@@ -590,9 +560,9 @@ describe('The multiplayer screens fit on phones', () => {
           deviceScaleFactor: 1,
           mobile: true,
         });
-        await tap(g, '#br-go-mp');
+        await g.click('#br-go-mp');
         await online(g);
-        await tap(g, '#br-mp-create');
+        await g.click('#br-mp-create');
         await inRoom(g, 1);
         const fit = await g.eval(() => {
           const scr = document.getElementById('br-mp')!;

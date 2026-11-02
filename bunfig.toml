@@ -10,5 +10,6 @@ ignorePatterns = [
   "public/index.html",
   "public/css/styles.css",
   "docs/bike-race.md",
+  "docs/bike-race-editor.md",
   "public/js/ant-sort-levels.json",
 ]

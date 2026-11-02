@@ -178,19 +178,69 @@ export class Page {
     );
   }
 
-  /** Click the n-th element matching the selector (the first by default), at its centre, as a mouse would */
-  async click(selector: string, nth = 0): Promise<void> {
-    const box = await this.waitFor(
-      (sel, i) => {
-        const el = document.querySelectorAll(sel)[i];
-        if (!el) return null;
-        el.scrollIntoView({ block: 'nearest', inline: 'nearest' });
-        const r = el.getBoundingClientRect();
-        return r.width && r.height ? { x: r.x + r.width / 2, y: r.y + r.height / 2 } : null;
-      },
-      [selector, nth],
-    );
-    await this.view.click(box!.x, box!.y);
+  /**
+   * Click the n-th element matching the selector (the first by default) at its centre, as a mouse would, once a
+   * person could: when it is shown, switched on, standing still and not covered by anything else. Standing still
+   * means no animation or transition is moving it or what it is in (screens and sheets slide, pop and shake in) and
+   * it is in the same place on two frames running: on a page that draws a few frames a second, the place it has
+   * before the next frame can be well off where it is a frame later. Throws after the timeout, saying which of those
+   * it was still waiting for.
+   */
+  async click(selector: string, nth = 0, { timeout = 10_000 } = {}): Promise<void> {
+    const end = performance.now() + timeout;
+    for (;;) {
+      const at = await this.eval(
+        async (sel, i): Promise<{ why: string } | { x: number; y: number }> => {
+          const el = document.querySelectorAll(sel)[i] as HTMLButtonElement | undefined;
+          if (!el) return { why: 'not in the page' };
+          if (!el.checkVisibility()) return { why: 'hidden' };
+          if (el.disabled) return { why: 'switched off' };
+          // an animation or transition that ends, on it or on what it is in (one that never ends, like a glow or a
+          // bounce, is left to the check on its place below)
+          const moving = document.getAnimations().find((a) => {
+            const fx = a.effect as KeyframeEffect | null;
+            const on = fx?.target;
+            if (!on || fx.pseudoElement || !on.contains(el)) return false;
+            return (a.pending || a.playState === 'running') && fx.getComputedTiming().endTime !== Infinity;
+          });
+          if (moving) {
+            const name = (moving as CSSAnimation).animationName ?? (moving as CSSTransition).transitionProperty;
+            return { why: `moving (${name ? `animating ${name}` : 'an animation'})` };
+          }
+          el.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+          const place = () => {
+            const r = el.getBoundingClientRect();
+            return [r.x, r.y, r.width, r.height];
+          };
+          const before = place().join();
+          await new Promise((next) => {
+            requestAnimationFrame(next);
+            setTimeout(next, 1000);
+          });
+          const [x0, y0, w, h] = place() as [number, number, number, number];
+          if ([x0, y0, w, h].join() !== before) return { why: 'moving' };
+          if (!w || !h) return { why: 'of no size' };
+          const x = x0 + w / 2;
+          const y = y0 + h / 2;
+          const hit = document.elementFromPoint(x, y);
+          if (!hit || !el.contains(hit)) {
+            const cls = hit?.getAttribute('class');
+            const name = hit
+              ? hit.tagName.toLowerCase() + (hit.id ? '#' + hit.id : '') + (cls ? ` (${cls})` : '')
+              : 'nothing';
+            return { why: `covered by ${name} at its centre` };
+          }
+          return { x, y };
+        },
+        selector,
+        nth,
+      ).catch((e: Error) => ({ why: e.message }));
+      if ('x' in at) return this.view.click(at.x, at.y);
+      if (performance.now() > end) {
+        throw new Error(`can't click ${selector} (number ${nth}, counting from 0): ${at.why}`);
+      }
+      await Bun.sleep(40);
+    }
   }
 
   /** A finger touching the screen at x, y and lifting again */

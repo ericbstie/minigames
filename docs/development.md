@@ -48,7 +48,7 @@ TypeScript compiler (`bun check`), formatter (`bun fmt`), test runner (`bun test
 ## Tests
 
 ```sh
-mise run test                                      # everything, about N minutes
+mise run test                                      # everything, about six minutes
 bun test tests/race-server.test.ts                 # one file
 bun test --test-name-pattern garage                # tests whose name matches
 KEEP_SHOTS=1 bun test tests/browser                # and keep screenshots in .shots/
