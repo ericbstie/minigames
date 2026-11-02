@@ -71,7 +71,7 @@ const rankTier = (r: number) => {
 };
 
 // Weapons, in the order the forge unlocks them. dmg per hit, cd seconds.
-type ShotKind = 'arrow' | 'arrow2' | 'bolt' | 'spear' | 'bullet';
+type ShotKind = 'arrow' | 'arrow2' | 'bolt' | 'spear' | 'bullet' | 'rocket';
 type ProjKind = ShotKind | 'ball';
 interface WeaponBase {
   name: string;
@@ -88,6 +88,7 @@ interface RangedWeapon extends WeaponBase {
   kind: ShotKind;
   speed: number;
   pierce?: number;
+  splash?: number; // blows up where it lands, hitting everyone this close
 }
 type Weapon = MeleeWeapon | RangedWeapon;
 const WEAPONS: Weapon[] = [
@@ -98,8 +99,12 @@ const WEAPONS: Weapon[] = [
   { name: 'Iron swords', dmg: 125, cd: 0.325, range: 1.7, kind: 'melee', leash: 6.5 },
   { name: 'Guns', dmg: 210, cd: 0.375, range: 14, kind: 'bullet', speed: 75 },
   { name: 'Machine guns', dmg: 95, cd: 0.07, range: 15, kind: 'bullet', speed: 85 },
+  { name: 'Bazookas', dmg: 1500, cd: 0.85, range: 16, kind: 'rocket', speed: 30, splash: 2.6 },
 ];
-const FORGE_COSTS = [135, 360, 840, 1800, 3600, 7200];
+// what the forge asks for each weapon after bows; bazookas are four times what the next step up would be
+const FORGE_COSTS = [270, 720, 1680, 3600, 7200, 14400, 4 * 28800];
+// after the last weapon the forge sells +25% damage, each 1.6 times the one before
+const forgeExtraCost = (n: number) => Math.round(28800 * Math.pow(1.6, n));
 // walls come with the archer towers: each tower builds and upgrades the stretch of wall nearest to it
 const WALL_TIERS = [
   { name: 'Palisade', hp: 700 },
@@ -641,11 +646,21 @@ function weaponGeo(tier: number): Geo {
         vc(Cy(0.04, 0.04, 0.75, 6), '#2f3238', T(0.3, 0.75, 0.42, Math.PI / 2, 0, 0)),
         vc(B(0.09, 0.14, 0.32), '#7a4a26', T(0.3, 0.7, 0.06)),
       ]);
-    default:
+    case 6:
       return merge([
         vc(B(0.16, 0.18, 0.62), '#26292f', T(0.3, 0.72, 0.28)),
         vc(Cy(0.045, 0.045, 0.5, 6), '#3c4048', T(0.3, 0.76, 0.75, Math.PI / 2, 0, 0)),
         vc(Cy(0.13, 0.13, 0.08, 10), '#c2a23a', T(0.3, 0.6, 0.26, 0, 0, Math.PI / 2)),
+      ]);
+    default:
+      // a bazooka on the shoulder, a rocket's red nose in its mouth
+      return merge([
+        vc(Cy(0.12, 0.12, 1.25, 10), '#56703c', T(0.32, 1.02, 0.18, Math.PI / 2, 0, 0)),
+        vc(Cy(0.15, 0.12, 0.2, 10), '#3c4e2a', T(0.32, 1.02, -0.5, Math.PI / 2, 0, 0)),
+        vc(Cy(0.135, 0.135, 0.08, 10), '#3c4e2a', T(0.32, 1.02, 0.76, Math.PI / 2, 0, 0)),
+        vc(Co(0.1, 0.2, 8), '#e0402c', T(0.32, 1.02, 0.9, Math.PI / 2, 0, 0)),
+        vc(B(0.06, 0.2, 0.08), '#2f3238', T(0.32, 0.84, 0.3)),
+        vc(B(0.08, 0.1, 0.18), '#2f3238', T(0.2, 1.12, 0.36)),
       ]);
   }
 }
@@ -1100,7 +1115,7 @@ function barracksGeo(lv: number): Geo {
   }
   return merge(parts);
 }
-// Forge, one level per weapon tier: an open-air anvil that grows into a gun factory
+// Forge, one level per weapon tier: an open-air anvil that grows into a gun factory, then a rocket works
 function forgeGeo(lv: number): Geo {
   const wallC = lv >= 5 ? '#a4553a' : '#a39e95',
     roofC = lv >= 5 ? '#6d7480' : '#7c503b',
@@ -1201,6 +1216,33 @@ function forgeGeo(lv: number): Geo {
       p.push(vc(B(0.14, 0.18, 0.18), '#c9a43a', T(-1.6, 1.3 + Math.sin(a) * 0.7, -1.6 + Math.cos(a) * 0.7, a, 0, 0)));
     }
     p.push(vc(Cy(0.18, 0.18, 0.18, 10), '#8a6a20', T(-1.62, 1.3, -1.6, 0, 0, Math.PI / 2)));
+  }
+  if (lv >= 7) {
+    // rocket works: a big rocket stands in its gantry behind the shed, and finished ones wait on a rack
+    const rx = 2.2,
+      rz = -3.4;
+    p.push(
+      vc(Cy(0.95, 1.05, 0.3, 12), '#5b5d63', T(rx, 0.15, rz)),
+      vc(Cy(0.36, 0.36, 2.7, 12), '#56703c', T(rx, 1.65, rz)),
+      vc(Cy(0.37, 0.37, 0.16, 12), '#f2efe6', T(rx, 2.75, rz)),
+      vc(Co(0.36, 1.0, 12), '#e0402c', T(rx, 3.5, rz)),
+    );
+    for (let i = 0; i < 4; i++) {
+      const a = (i / 4) * Math.PI * 2 + Math.PI / 4;
+      p.push(vc(B(0.08, 0.7, 0.5), '#3c4e2a', T(rx + Math.sin(a) * 0.42, 0.65, rz + Math.cos(a) * 0.42, 0, a, 0)));
+    }
+    for (const dx of [-0.62, 0.62]) p.push(vc(B(0.12, 3.6, 0.12), '#4a4d55', T(rx + dx, 1.8, rz - 0.5)));
+    for (const y of [1.2, 2.4, 3.55]) p.push(vc(B(1.36, 0.1, 0.12), '#c9a43a', T(rx, y, rz - 0.5)));
+    // the rack
+    for (const dz of [-0.5, 0.5]) p.push(vc(B(0.9, 0.5, 0.1), '#7a5234', T(-2.4, 0.25, 1.1 + dz)));
+    for (let i = 0; i < 3; i++) {
+      const y = 0.58,
+        x = -2.7 + i * 0.3;
+      p.push(
+        vc(Cy(0.12, 0.12, 1.1, 8), '#56703c', T(x, y, 1.05, Math.PI / 2, 0, 0)),
+        vc(Co(0.12, 0.28, 8), '#e0402c', T(x, y, 1.74, Math.PI / 2, 0, 0)),
+      );
+    }
   }
   return merge(p);
 }
@@ -1764,25 +1806,57 @@ const ICONS = {
       g.stroke();
       return;
     }
+    if (tier === 6) {
+      g.beginPath();
+      g.roundRect(-46, -16, 70, 26, 6);
+      g.fill();
+      g.stroke();
+      g.beginPath();
+      g.roundRect(24, -8, 30, 10, 3);
+      g.fill();
+      g.stroke();
+      g.beginPath();
+      g.arc(-8, 22, 14, 0, 7);
+      g.fill();
+      g.stroke();
+      g.beginPath();
+      g.moveTo(-40, 10);
+      g.lineTo(-48, 36);
+      g.lineTo(-32, 36);
+      g.lineTo(-28, 10);
+      g.fill();
+      g.stroke();
+      return;
+    }
+    // a bazooka: a fat tube with a flared back, a grip, and a rocket's red nose sticking out of the front
+    g.save();
+    g.rotate(-0.35);
     g.beginPath();
-    g.roundRect(-46, -16, 70, 26, 6);
+    g.moveTo(26, -14);
+    g.lineTo(26, 14);
+    g.quadraticCurveTo(50, 12, 58, 0);
+    g.quadraticCurveTo(50, -12, 26, -14);
+    g.fillStyle = '#ff5a3c';
+    g.fill();
+    g.stroke();
+    g.fillStyle = '#fff';
+    g.beginPath();
+    g.moveTo(-60, -22);
+    g.lineTo(-44, -15);
+    g.lineTo(-44, 15);
+    g.lineTo(-60, 22);
+    g.closePath();
     g.fill();
     g.stroke();
     g.beginPath();
-    g.roundRect(24, -8, 30, 10, 3);
+    g.roundRect(-46, -16, 76, 32, 8);
     g.fill();
     g.stroke();
     g.beginPath();
-    g.arc(-8, 22, 14, 0, 7);
+    g.roundRect(-14, 16, 14, 26, 4);
     g.fill();
     g.stroke();
-    g.beginPath();
-    g.moveTo(-40, 10);
-    g.lineTo(-48, 36);
-    g.lineTo(-32, 36);
-    g.lineTo(-28, 10);
-    g.fill();
-    g.stroke();
+    g.restore();
   },
 } satisfies Record<string, (g: Ctx, tier: number) => void>;
 
@@ -1955,7 +2029,7 @@ interface Coin {
 type Flying = { x: number; y: number; z: number; t: number; v: number } & (
   { to: 'king' } | { to: 'pt' | 'pad'; tx: number; tz: number; ty?: number }
 );
-// an arrow, bolt, spear or bullet after its target
+// an arrow, bolt, spear, bullet or rocket after its target
 interface Shot {
   kind: ShotKind;
   x: number;
@@ -1968,9 +2042,11 @@ interface Shot {
   speed: number;
   dmg: number;
   pierce: number;
+  splash: number; // 0 for a shot that hits only its target
   hit: Set<Enemy> | null;
   life: number;
   dir: number[] | null;
+  trail?: number; // a rocket's time to its next puff of smoke
 }
 // a cannon ball on its arc to where the target was
 interface Ball {
@@ -3167,7 +3243,7 @@ function buildWorld() {
     vmat,
     follower: inst(followerGeo(), vmat, 180),
     followerR: RANKS.slice(1).map((r) => inst(followerGeo(C.hair, r.top), vmat, SQUAD_MAX)),
-    weapons: [0, 1, 2, 3, 4, 5, 6].map((t) => inst(weaponGeo(t), vmat, 160)),
+    weapons: WEAPONS.map((_, t) => inst(weaponGeo(t), vmat, 160)),
     ghost: inst(followerGeo(), ghostMat, 8, false),
     coin: inst(new THREE.CylinderGeometry(0.36, 0.36, 0.1, 18), coinMats, 1900),
     boy: inst(goldBoyGeo(), vmat, 4),
@@ -3215,6 +3291,20 @@ function buildWorld() {
       false,
     ),
     bullet: inst(new THREE.BoxGeometry(0.06, 0.06, 1.4).translate(0, 0, -0.7), glow('#ffe36a'), 900, false),
+    // nose forward (+z), fins and a flame at the back
+    rocket: inst(
+      merge([
+        vc(Cy(0.09, 0.09, 0.62, 8), '#56703c', T(0, 0, -0.18, Math.PI / 2, 0, 0)),
+        vc(Co(0.09, 0.24, 8), '#e0402c', T(0, 0, 0.25, Math.PI / 2, 0, 0)),
+        vc(Cy(0.095, 0.095, 0.06, 8), '#f2efe6', T(0, 0, 0.1, Math.PI / 2, 0, 0)),
+        vc(B(0.36, 0.03, 0.14), '#3c4e2a', T(0, 0, -0.44)),
+        vc(B(0.03, 0.36, 0.14), '#3c4e2a', T(0, 0, -0.44)),
+        vc(Co(0.08, 0.34, 7), '#ffb52e', T(0, 0, -0.66, -Math.PI / 2, 0, 0)),
+      ]).scale(1.5, 1.5, 1.5),
+      vmat,
+      240,
+      false,
+    ),
     ball: inst(new THREE.SphereGeometry(0.32, 10, 8), new THREE.MeshLambertMaterial({ color: '#25262b' }), 60),
   };
   // health bars (billboards)
@@ -3558,19 +3648,40 @@ function drawPad(p: Pad): void {
   const icon = p.iconFn ? p.iconFn() : p.icon;
   if (icon) iconPath(g, (c) => icon(c), 128, p.showCost ? 92 : 128, p.showCost ? 0.8 : 1.05);
   if (p.showCost) {
-    const remaining = Math.max(0, Math.ceil(p.cost - p.paid));
-    iconPath(g, ICONS.coin, 78, 186, 0.48);
+    // the coin and the price, centred under the icon; a price too wide for the pad is drawn smaller
+    const label = priceLabel(p.cost - p.paid),
+      coin = 42,
+      gap = 8,
+      room = 190;
     g.font = '64px "Lilita One", sans-serif';
+    const w = g.measureText(label).width + 12,
+      fit = Math.min(1, (room - coin - gap) / w),
+      left = 128 - (coin + gap + w * fit) / 2;
+    iconPath(g, ICONS.coin, left + coin / 2, 186, 0.48);
+    g.font = `${Math.floor(64 * fit)}px "Lilita One", sans-serif`;
     g.textAlign = 'left';
     g.textBaseline = 'middle';
     g.lineJoin = 'round';
-    g.lineWidth = 12;
+    g.lineWidth = 12 * fit;
     g.strokeStyle = INK;
-    g.strokeText(String(remaining), 106, 190);
+    g.strokeText(label, left + coin + gap + 6 * fit, 190);
     g.fillStyle = '#fff';
-    g.fillText(String(remaining), 106, 190);
+    g.fillText(label, left + coin + gap + 6 * fit, 190);
   }
   p.tex.needsUpdate = true;
+}
+// a price as a pad shows it: whole up to 99999, then three figures and k, M or B (115k, 1.15M, 34.9B)
+function priceLabel(n: number): string {
+  n = Math.max(0, Math.ceil(n));
+  if (n < 100_000) return String(n);
+  const units = ['k', 'M', 'B', 'T'];
+  let v = n / 1000,
+    i = 0;
+  while (v >= 999.5 && i < units.length - 1) {
+    v /= 1000;
+    i++;
+  }
+  return String(+v.toFixed(v >= 100 ? 0 : v >= 10 ? 1 : 2)) + units[i];
 }
 function createPad(def: PadDef): Pad {
   const tex = makePadTexture();
@@ -3966,10 +4077,9 @@ function makePads(): Pad[] {
       z: FORGE_PAD[1],
       icon: null,
       visible: () => !!G.forge,
-      cost: () =>
-        G.tier < FORGE_COSTS.length ? FORGE_COSTS[G.tier] : Math.round(9000 * Math.pow(1.6, G.extraDmg + 1)),
+      cost: () => (G.tier < FORGE_COSTS.length ? FORGE_COSTS[G.tier] : forgeExtraCost(G.extraDmg)),
       iconFn: () => (c) => {
-        ICONS.weapon(c, Math.min(G.tier + 1, 6));
+        ICONS.weapon(c, Math.min(G.tier + 1, WEAPONS.length - 1));
         if (G.tier >= FORGE_COSTS.length) iconPath(c, ICONS.up, 42, 32, 0.6);
       },
       lv: () => G.tier * 100 + G.extraDmg,
@@ -4659,8 +4769,9 @@ function refreshObstacles() {
   if (G.barracksLv >= 4) o.push([...rot(BARRACKS[0], BARRACKS[1], Math.PI / 4, 2.5, -0.6), 1.2]);
   if (G.forge) {
     o.push([FORGE[0], FORGE[1], 1.3]);
-    const r = [0, 0.9, 1.4, 1.6, 1.8, 1.9, 2.0][G.tier];
+    const r = [0, 0.9, 1.4, 1.6, 1.8, 1.9, 2.0, 2.0][G.tier];
     if (r) o.push([...rot(FORGE[0], FORGE[1], Math.PI / 4, 0.3, -2.0), r]);
+    if (G.tier >= 7) o.push([...rot(FORGE[0], FORGE[1], Math.PI / 4, 2.2, -3.4), 1.1]);
   }
   for (const c of G.cannons) if (c.built) o.push([c.x, c.z, [1.5, 1.8, 2.0, 2.0, 2.1][c.level - 1]]);
   for (const t of G.towers) if (t.built && t.outer) o.push([t.x, t.z, t.level >= 5 ? 2.0 : 1.5]);
@@ -5373,6 +5484,7 @@ function fire(sx: number, sy: number, sz: number, w: Weapon, target: Enemy): voi
     speed: w.speed,
     dmg: w.dmg,
     pierce: w.pierce || 1,
+    splash: w.splash || 0,
     hit: null,
     life: 2,
     dir: null,
@@ -5523,7 +5635,9 @@ function updateProjectiles(dt: number): void {
     const st = p.speed * dt;
     p.dir = [dx / (d || 1), dy / (d || 1), dz / (d || 1)];
     if (d <= st + 0.2) {
-      if (tgt && tgt.hp > 0) {
+      // a rocket blows up where it gets to, even if its target has fallen on the way
+      if (p.splash) blast(p.tx, p.tz, p.splash, p.dmg);
+      else if (tgt && tgt.hp > 0) {
         damageEnemy(tgt, p.dmg);
         spark(p.tx, p.ty, p.tz);
       }
@@ -5533,6 +5647,10 @@ function updateProjectiles(dt: number): void {
     p.x += p.dir[0] * st;
     p.y += p.dir[1] * st;
     p.z += p.dir[2] * st;
+    if (p.kind === 'rocket' && (p.trail = (p.trail ?? 0) - dt) <= 0) {
+      p.trail = 0.06;
+      trail(p.x - p.dir[0] * 0.7, p.y - p.dir[1] * 0.7, p.z - p.dir[2] * 0.7);
+    }
     if (p.life <= 0) G.projectiles.splice(i, 1);
   }
 }
@@ -5873,6 +5991,37 @@ function boom(x: number, z: number): void {
   world.fx.push({ o: s, t: 0, dur: 0.35, kind: 'boom', s0: 5 });
   puff(x, 0.6, z, '#8a7f74', 6);
 }
+// a rocket going off: everyone within r takes the hit; a flash, a ring of fire and a little smoke, lighter than a
+// cannon ball's since a troop with bazookas fires a lot of them
+function blast(x: number, z: number, r: number, dmg: number): void {
+  enemiesNear(x, z, r, hitList);
+  for (const e of hitList.slice()) damageEnemy(e, dmg);
+  if (world.fx.length > 170) return;
+  const s = new THREE.Sprite(
+    new THREE.SpriteMaterial({
+      map: world.puffTex,
+      color: '#ff8a1e',
+      blending: THREE.AdditiveBlending,
+      transparent: true,
+      depthWrite: false,
+    }),
+  );
+  s.position.set(x, 0.7, z);
+  scene.add(s);
+  world.fx.push({ o: s, t: 0, dur: 0.32, kind: 'boom', s0: r * 2.1 });
+  shockwave(x, z, r, '#ffc24a');
+  puff(x, 0.5, z, '#6e655d', 2);
+}
+// the smoke a rocket leaves behind it
+function trail(x: number, y: number, z: number): void {
+  if (world.fx.length > 140) return;
+  const s = new THREE.Sprite(
+    new THREE.SpriteMaterial({ map: world.puffTex, color: '#e4ddd2', transparent: true, depthWrite: false }),
+  );
+  s.position.set(x, y, z);
+  scene.add(s);
+  world.fx.push({ o: s, t: 0, dur: 0.4, kind: 'puff', vx: 0, vy: 1.2, vz: 0, s0: 0.45 });
+}
 function floatText(txt: string, x: number, y: number, z: number, color: string, big = false): void {
   if (G.texts.length > 40) return;
   const key = txt + color + big;
@@ -5985,7 +6134,7 @@ function syncScene(dt: number): void {
     wn = 0,
     sh = 0;
   const wt = G.tier,
-    wMesh = W.weapons[Math.min(wt, 6)],
+    wMesh = W.weapons[wt],
     rn = [0, 0, 0];
   for (const m of W.weapons) m.count = 0;
   const putTroop = (
@@ -6149,7 +6298,7 @@ function syncScene(dt: number): void {
   W.coin.count = c;
   W.coin.instanceMatrix.needsUpdate = true;
   // projectiles
-  const cnt: Record<ProjKind, number> = { arrow: 0, arrow2: 0, bolt: 0, spear: 0, bullet: 0, ball: 0 };
+  const cnt: Record<ProjKind, number> = { arrow: 0, arrow2: 0, bolt: 0, spear: 0, bullet: 0, rocket: 0, ball: 0 };
   for (const p of G.projectiles) {
     const m = W.proj[p.kind];
     if (!m || cnt[p.kind] >= (m.userData.cap as number)) continue;

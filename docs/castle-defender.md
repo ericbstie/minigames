@@ -76,6 +76,22 @@ that stretch plus the old road, so its march gets longer, through the king's lan
 keep the road they started on. `tests/castle-defender-world.test.ts` checks that nearly every outpost built on a
 front's road clears that front's camp.
 
+## The forge
+
+The forge sells the weapons in turn (`WEAPONS`): upgraded bows, crossbows, spears, iron swords, guns, machine guns
+and bazookas, for 270, 720, 1,680, 3,600, 7,200, 14,400 and 115,200 coins (`FORGE_COSTS`). Bazookas are four times
+the 28,800 the next step up after machine guns would be. After bazookas the forge sells +25% damage, 28,800 coins
+for the first and 1.6 times the one before after that (`forgeExtraCost`). The king, the troop and the archers on
+the towers all carry the forge's weapon (the archers keep spears while the troop has swords), and the forge grows
+with each one: for bazookas it becomes a rocket works, with a rocket standing in a gantry behind the shed.
+
+Bazookas fire rockets (olive, with a red nose and a puff of smoke behind them) that fly after their target and
+blow up where they get to, even if the target fell on the way: everyone within 2.6 paces takes the hit (`blast`).
+The blast's flash, ring and smoke are kept small, as a troop with bazookas fires a lot of them.
+
+A pad draws its price centred under its icon, smaller when it is too wide for the pad, and from 100,000 as three
+figures and k, M, B or T (`priceLabel`: 115k, 1.15M, 34.9B).
+
 ## Opening and leaving
 
 The game is a `Game` for the hub (`game`, at the end of `castle-defender.ts`; [development.md](development.md) has
@@ -112,7 +128,9 @@ dust, no celebration) through the same helpers the purchases use (`makeForge`, `
 `outpostPad`). The `SavedWorld` Schema checks every field and that the save fits this game (six wall towers,
 every stretch of wall, the five fronts in order, enemies on roads that are there, looks their kind has); a save that
 doesn't fit starts a new game, and `castle.bestTime` is a key of its own, so it is kept either way. A save that
-fits but still can't be set up (a mistake in this code) is reported, removed, and a new game starts.
+fits but still can't be set up (a mistake in this code) is reported, removed, and a new game starts. A save from
+before there were bazookas (the forge at machine guns, maybe with +1s on them) fits: the forge offers bazookas next,
+and the +1s are kept.
 
 ## Balance
 
@@ -123,6 +141,12 @@ open world held about 11:00 to 11:45 with the same player. Building outposts las
 and rushing them before weapons (`expand`) falls before 5 minutes, just as rushing the old outer towers did. So
 pushing out costs no survival time and is the way the world opens up. Enemies from a camp 2 tiers out have about
 2.6 times the hit points and 2.1 times the coins of ones from home.
+
+Doubling the weapon prices (with bazookas) took that to about 10:50 to 11:10, with 9 or 10 outposts and the border
+about 115 paces out, once the player counts the forge half as much as before so the weapons still come in the same
+order; left at the old weighting the player puts weapons off and falls before 5 minutes. The bot doesn't get to
+bazookas (it has about 70,000 coins at 10 minutes, and spends them on cheaper pads), but handed them at 9 minutes
+it still stands at 15, so they are a big step up for a player who saves for them.
 
 ## Checks
 
