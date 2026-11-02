@@ -18,9 +18,10 @@ export const landsReached = (reach: number) => LANDS.filter((l) => reach >= l.at
 // ----- the enemy's threat
 // The enemy's strength follows a threat level (hit points grow 1.1 times and blows 1.06 times per level, groups get
 // bigger and come faster). Up to EASE_FROM it is the clock's, a level every 13 seconds, which makes the enemy about
-// 55% tougher every minute; the game as it was before the lands could not keep up with that much past 12 minutes,
-// whatever it had built. From there it keeps growing, ever more slowly, so what the lands bring can hold it off.
-export const EASE_FROM = 12 * 60,
+// 55% tougher every minute; the game as it was before the lands could not keep up with that much past 19 minutes
+// (the boss that comes at 18 brings the castle down), whatever it had built. From there it keeps growing, ever more
+// slowly, so what the lands bring can hold it off.
+export const EASE_FROM = 19 * 60,
   EASE_K = 25;
 export function threatLevel(t: number): number {
   if (t <= EASE_FROM) return t / 13;

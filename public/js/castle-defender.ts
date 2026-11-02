@@ -5456,7 +5456,7 @@ function updateBorder(dt: number): void {
 // Difficulty rises smoothly with time; there are no waves. Groups are bought
 // from a budget that grows over time, and the mix shifts from many small
 // knights toward fewer, bigger brutes and giants. The level is the clock's (one
-// every 13 seconds) for the first 12 minutes and grows ever more slowly after
+// every 13 seconds) for the first 19 minutes and grows ever more slowly after
 // (`threatLevel`, castle-defender-lands.ts).
 const level = () => threatLevel(G.t);
 function spawnEnemy(kind: UnitKind, f: Front): Enemy {

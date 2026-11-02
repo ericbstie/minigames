@@ -22,7 +22,7 @@ describe('Lands', () => {
 
 describe('The threat level', () => {
   const minute = (m: number) => m * 60;
-  test('is the clock (a level every 13 seconds) up to 12 minutes, as before the lands', () => {
+  test('is the clock (a level every 13 seconds) up to 19 minutes, as before the lands', () => {
     for (const t of [0, 13, 60, 300, 600, L.EASE_FROM]) expect(L.threatLevel(t)).toBeCloseTo(t / 13, 9);
   });
   test('goes on smoothly from there, at the same pace at first', () => {
