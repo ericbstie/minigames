@@ -179,3 +179,4 @@ class Sim {
 }
 
 
+export { EMPTY, SLOTS, Sim };

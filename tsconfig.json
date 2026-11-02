@@ -1,0 +1,25 @@
+// Type checking for the server, the tests and the dev tools (`mise run check`). The browser code has its own
+// public/tsconfig.json, which leaves out Bun's types so a game can't use Bun by mistake.
+{
+  "compilerOptions": {
+    "target": "es2023",
+    "lib": ["es2023", "dom", "dom.iterable"],
+    "module": "preserve",
+    "moduleResolution": "bundler",
+    "types": ["bun"],
+    "noEmit": true,
+    "strict": true,
+    "verbatimModuleSyntax": true,
+    "resolveJsonModule": true,
+    "skipLibCheck": true,
+    // The lint rules the compiler knows
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "noImplicitReturns": true,
+    "noImplicitOverride": true,
+    "noFallthroughCasesInSwitch": true,
+    "allowUnreachableCode": false,
+    "allowUnusedLabels": false
+  },
+  "include": ["server", "tests", "tools", "public/js/globals.d.ts"]
+}

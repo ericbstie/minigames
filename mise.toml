@@ -1,10 +1,40 @@
 [tools]
-python = "3.12"
+bun = "1.4.4"
+
+[tasks.install]
+description = "Install the packages the site and its tests use"
+run = "bun install --frozen-lockfile"
 
 [tasks.app]
 description = "Serve the Pick a Game site and the Bike Race race server locally (PORT defaults to 8000)"
-run = "python tools/serve.py"
+depends = ["install"]
+run = "bun server/serve.ts"
 
 [tasks.phone]
 description = "Serve the site over https on your Wi-Fi, so Bike Race can use tilt and race other phones (PORT defaults to 8443)"
-run = "python tools/serve.py --https"
+depends = ["install"]
+run = "bun server/serve.ts --https"
+
+[tasks.build]
+description = "Build the site into dist/ for a static host (no live races there: Bike Race offers computer riders)"
+depends = ["install"]
+run = "bun build public/index.html --outdir dist --minify"
+
+[tasks.test]
+description = "Run every test, including the ones that play the games in a headless browser (needs Chrome or Chromium)"
+depends = ["install"]
+run = "bun test"
+
+[tasks.check]
+description = "Type check and lint the TypeScript"
+depends = ["install"]
+run = ["bun check", "bun check -p public"]
+
+[tasks.fmt]
+description = "Format the code"
+run = "bun fmt"
+
+[tasks.ci]
+description = "Everything a pull request needs to pass: formatting, types and lint, tests"
+depends = ["install"]
+run = ["bun fmt --check", "bun check", "bun check -p public", "bun test"]

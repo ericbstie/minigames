@@ -1,0 +1,6 @@
+[fmt]
+printWidth = 120
+singleQuote = true
+# Bike Race is converted to TypeScript after the level editor lands; until then its files keep their own layout.
+# The Ant Sort pictures are one long line of data.
+ignorePatterns = ["public/js/bike-race*.js", "tools/*bike*.js", "public/js/ant-sort-levels.json"]

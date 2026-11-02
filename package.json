@@ -1,0 +1,12 @@
+{
+  "name": "pick-a-game",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "three": "0.170.0"
+  },
+  "devDependencies": {
+    "@types/bun": "1.4.4",
+    "@types/three": "0.170.0"
+  }
+}

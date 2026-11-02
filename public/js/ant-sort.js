@@ -1,7 +1,8 @@
 import * as THREE from 'three';
 import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
 
-const DATA = window.LEVEL_DATA;
+import DATA from './ant-sort-levels.json';
+import { EMPTY, SLOTS, Sim } from './ant-sort-logic.js';
 // number labels are drawn on canvas, so wait for the display face before building a level
 const fontReady = document.fonts ? document.fonts.load('132px "Lilita One"').catch(() => {}) : Promise.resolve();
 // each level carries its own palette; these point at the current level's colours

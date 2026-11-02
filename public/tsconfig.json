@@ -1,0 +1,11 @@
+// Type checking for the browser code: the DOM, no Bun.
+{
+  "extends": "../tsconfig.json",
+  "compilerOptions": {
+    "types": [],
+    // Bike Race is still JavaScript until it is converted; it is bundled but not type checked.
+    "allowJs": true,
+    "checkJs": false
+  },
+  "include": ["."]
+}
