@@ -12,6 +12,12 @@ const T = +arg('t', '5');
 const OUT = arg('out', join(import.meta.dir, '..', 'public', 'assets', 'img', 'bike-race.jpg'));
 const JS = join(import.meta.dir, '..', 'public', 'js');
 
+// The core and the track pieces, bundled into one plain script that puts them on window (as bike-race-globals.ts
+// does in the page), for the drawing code to find
+const globals = await Bun.build({ entrypoints: [join(JS, 'bike-race-globals.ts')], format: 'iife', target: 'browser' });
+if (!globals.success) throw new AggregateError(globals.logs, 'Could not bundle the Bike Race core');
+const coreJs = await globals.outputs[0]!.text();
+
 // The drawing code as plain scripts on a blank page with a canvas
 const server = Bun.serve({
   port: 0,
@@ -22,7 +28,7 @@ const server = Bun.serve({
         '<script src="core.js"></script><script src="art.js"></script></body>',
       { headers: { 'Content-Type': 'text/html' } },
     ),
-    '/core.js': new Response(Bun.file(join(JS, 'bike-race-core.ts')), { headers: { 'Content-Type': 'text/javascript' } }),
+    '/core.js': new Response(coreJs, { headers: { 'Content-Type': 'text/javascript' } }),
     '/art.js': Bun.file(join(JS, 'bike-race-art.js')),
   },
 });

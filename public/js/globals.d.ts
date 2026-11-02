@@ -40,12 +40,13 @@ declare global {
       };
     };
 
-    // Bike Race (still plain JavaScript)
+    // Bike Race: the core and the track pieces (TypeScript, put on window by bike-race-globals.ts for the scripts
+    // still in plain JavaScript), and those scripts
+    BikeRaceCore: typeof import('./bike-race-core');
+    BikeRacePieces: typeof import('./bike-race-pieces');
     BikeRace?: Game & { _debug(): any };
-    BikeRaceCore?: any;
     BikeRaceArt?: any;
     BikeRaceNet?: any;
-    BikeRacePieces?: any;
     BikeRaceEditor?: any;
   }
 }

@@ -5,15 +5,17 @@ ride it, and save it on the phone.
 
 ## Track pieces
 
-`public/js/bike-race-pieces.js` (`window.BikeRacePieces` in the page, `require` in Node) has the pieces, the
-edits the editor makes to them, and `buildCustomLevel`, which turns a saved level into a level the simulation in
-`bike-race-core.js` can ride. It has no DOM code.
+`public/js/bike-race-pieces.ts` (an ES module, and `window.BikeRacePieces` in the page through
+`bike-race-globals.ts`) has the pieces, the edits the editor makes to them, and `buildCustomLevel`, which turns a
+saved level into a level the simulation in `bike-race-core.ts` can ride. It has no DOM code. Its types describe the
+saved format (`LevelData`, `Piece`, `Finish`, `SavedLevels`) and what the editor works with (`Geom`, `PieceEnd`,
+`Cursor`, `CustomLevel`, ...).
 
-| Piece | Shape |
-|---|---|
-| Short, medium, long line | straight, 4, 8 and 16 m |
-| Small, medium, big ramp | arcs turning up 20°, 30° and 40° (radius 9, 10 and 11 m; 0.5, 1.3 and 2.6 m high) |
-| Quarter, half, 3/4 loop | arcs of 90°, 180° and 270°, all radius `LOOP_R` (3.4 m) |
+| Piece                    | Shape                                                                             |
+| ------------------------ | --------------------------------------------------------------------------------- |
+| Short, medium, long line | straight, 4, 8 and 16 m                                                           |
+| Small, medium, big ramp  | arcs turning up 20°, 30° and 40° (radius 9, 10 and 11 m; 0.5, 1.3 and 2.6 m high) |
+| Quarter, half, 3/4 loop  | arcs of 90°, 180° and 270°, all radius `LOOP_R` (3.4 m)                           |
 
 Every piece starts at its own origin heading right and curves up (anticlockwise), so a bike rides on the inside
 of the curve. The loop pieces share one radius so they close into full loops: a 3/4 loop then a quarter loop, or
@@ -90,7 +92,7 @@ In the core this is small:
 - `level.finishY` and `level.finishDir`: the bike finishes by crossing the flag's line going the flag's way,
   within a few metres of its height (`Sim.crossedFinish`). Built-in levels don't set them and finish as before.
 
-Built-in levels set none of these, and `bun tools/check-bike-levels.js` gives exactly the same times as before.
+Built-in levels set none of these, and `bun tools/check-bike-levels.ts` gives exactly the same times as before.
 
 ## The editor screen
 
@@ -124,18 +126,17 @@ each level goes through `sanitize`. Names are only ever put in the page as text.
 ## Checking
 
 ```sh
-bun tools/check-bike-pieces.js                                # about a second
-bun tools/check-bike-pieces.js --verbose                      # lists every check
+bun test tests/bike-race-pieces.test.ts                       # about a second, one test per check
 bun test tests/browser/bike-race-editor.test.ts               # the editor in a browser, about 40 s
 KEEP_SHOTS=1 bun test tests/browser/bike-race-editor.test.ts  # also saves screenshots to .shots/
 ```
 
-It checks each piece's shape, the edits (adding at the finish, rotating about the joint, flips, snapping, the
-grid, removing, cleaning up a stored level), and rides tracks made of pieces with every bike, both with the
-computer rider and with gas held and no lean: full loops (3/4 + quarter, two halves, two loops in a row, a loop
-straight off the start pad) must be finished going over the top with the rider's head at least 0.8 m from solid
-track (it stays about 1.2 m clear), and each ramp must clear a gap (5, 9 and 12 m) and land. It also checks that
-the loop can't be ridden without the pass-through, and that a finish turned round is crossed going left.
+The pieces test checks each piece's shape, the edits (adding at the finish, rotating about the joint, flips,
+snapping, the grid, removing, cleaning up a stored level), and rides tracks made of pieces with every bike, both
+with the computer rider and with gas held and no lean: full loops (3/4 + quarter, two halves, two loops in a row,
+a loop straight off the start pad) must be finished going over the top with the rider's head at least 0.8 m from
+solid track (it stays about 1.2 m clear), and each ramp must clear a gap (5, 9 and 12 m) and land. It also checks
+that the loop can't be ridden without the pass-through, and that a finish turned round is crossed going left.
 
 `bike-race-editor.test.ts` runs the server in-process on a free port and plays the page in Bun's headless browser
 as a touch phone held sideways, with real touch events for taps, drags and pinches: My levels, building, turning,

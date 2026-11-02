@@ -1,8 +1,9 @@
 [fmt]
 printWidth = 120
 singleQuote = true
-# Bike Race is converted to TypeScript once its level editor lands. Until then its files, and the page, styles and
-# doc it shares with the editor work, keep their own layout so the two don't clash.
+# Bike Race's core and track pieces are TypeScript and formatted like everything else. Its scripts still in
+# JavaScript, and the page, styles and doc it shares with the editor work, keep their own layout until they are
+# converted, so the two don't clash.
 # The Ant Sort pictures are one long line of data.
 ignorePatterns = [
   "public/js/bike-race*.js",

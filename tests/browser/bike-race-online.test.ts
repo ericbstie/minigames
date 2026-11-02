@@ -184,7 +184,7 @@ describe('Two phones meet in a room', () => {
   });
 
   test('the guest sees the track', async () => {
-    const name = await a.eval(() => window.BikeRaceCore.levelById('clover-2').name);
+    const name = await a.eval(() => window.BikeRaceCore.levelById('clover-2')!.name);
     expect(await b.text('#br-room-level-text')).toBe('Clover Hills 2 · ' + name);
     await shot(b, 'bike-race-online-room-guest.jpg');
   });

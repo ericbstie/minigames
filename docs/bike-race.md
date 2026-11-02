@@ -81,8 +81,8 @@ the lean buttons.
 ## Files
 
 ```
-public/js/bike-race-core.js   physics, track builder, worlds and levels, bikes, computer rider, ghost encoding
-public/js/bike-race-pieces.js the level editor's track pieces and its level builder (docs/bike-race-editor.md)
+public/js/bike-race-core.ts   physics, track builder, worlds and levels, bikes, computer rider, ghost encoding
+public/js/bike-race-pieces.ts the level editor's track pieces and its level builder (docs/bike-race-editor.md)
 public/js/bike-race-art.js    canvas drawing: world backdrops, the track line, lava, loops, flags, bikes, riders, particles
 public/js/bike-race-net.js    the connection to the race server: WebSocket or event stream, reconnecting
 public/js/bike-race.js        the game: saves, sound, tilt and touch input, camera and loop, sessions, HUD, menus
@@ -90,12 +90,14 @@ public/js/bike-race-editor.js the level editor: My levels and the build screen (
 public/index.html             #br-app markup (canvas, HUD, touch areas, screens, modals)
 public/css/styles.css         the "Bike Race" section, all classes start with br-
 public/js/hub.ts              routes #bike-race and #bike-race/<code> to the game
-public/js/main.ts             loads the Bike Race scripts in order (bike-race-globals.ts puts the core on window)
+public/js/main.ts             loads the Bike Race scripts in order (bike-race-globals.ts puts the core and pieces on window)
 public/assets/img/bike-race.jpg   menu card picture, made by tools/render-bike-race-card.ts
 server/serve.ts               the site server and race server behind `mise run app` and `mise run phone`
 server/race.ts                the rooms and races
-tools/check-bike-levels.js    proves every bike can finish every level and suggests par times
-tools/check-bike-pieces.js    checks the editor's pieces and that tracks made of them can be ridden
+tools/check-bike-levels.ts    prints every level's times on every bike and suggests par times
+tools/bike-levels.ts          the computer rider's riding styles, shared by the level checker and its test
+tests/bike-race-levels.test.ts   every bike finishes every level in all seven riding styles
+tests/bike-race-pieces.test.ts   the editor's pieces and edits, and that tracks made of them can be ridden
 tests/browser/bike-race.test.ts          phone-sized browser tests for the garage and the sheets around it
 tests/browser/bike-race-editor.test.ts   phone-sized browser tests for the level editor
 tests/browser/bike-race-online.test.ts   live races between phones in the browser, and the no-server fallback
@@ -105,7 +107,9 @@ tools/render-bike-race-card.ts    redraws the menu card picture with the game's 
 
 ## How the code fits together
 
-- `bike-race-core.js` has no DOM code. It loads in the page as `window.BikeRaceCore` and in Bun with `require`.
+- `bike-race-core.ts` has no DOM code. It is an ES module with typed exports (`Level`, `Sim`, `Bike`, `BikeType`,
+  `LevelDef`, `BotConfig`, ...): the tests and tools import it, and `bike-race-globals.ts` puts it on `window` as
+  `window.BikeRaceCore` for the scripts still in plain JavaScript.
   - `buildLevel(world, def)` walks a list of track pieces (`flat`, `hill`, `bumps`, `kicker`, `gap`, `table`,
     `ledge`, `step`, `loop`, `ice`, ...) and returns the terrain, finish line, checkpoints and drawing data.
   - `Sim` steps every bike at a fixed 1/120 s with 5 substeps. `Bike` is a chassis plus two sprung wheels, and
@@ -151,7 +155,7 @@ The garage opens from the home menu, and from the pause, crash and result sheets
 on a turntable with its perk, a short blurb, four stat bars and whether you ride it. Below are the five bikes;
 on the right are your rider name and ten paints. Picks save as soon as they are made.
 
-| Bike | Stars | Perk | Tuning (changes from `BASE` in `bike-race-core.js`) |
+| Bike | Stars | Perk | Tuning (changes from `BASE` in `bike-race-core.ts`) |
 |---|---|---|---|
 | Scout | 0 | All-rounder | none |
 | Hopper | 10 | Big air | light, softer long-travel springs, 86% gravity, a bit less grip |
@@ -174,7 +178,7 @@ ramp with no drop after it, taken at 11 m/s):
 Bulldog climbs an icy hill in 5.3 s where Scout takes 6.9 s. Hopper is the slowest on the moon, because it
 floats too long there.
 
-- Bikes live in `BIKES` in `bike-race-core.js`. Each has `id`, `name`, `stars` (total needed to unlock), `perk`,
+- Bikes live in `BIKES` in `bike-race-core.ts`. Each has `id`, `name`, `stars` (total needed to unlock), `perk`,
   `blurb` and `tune`, which is merged over `BASE`. Two tuning values were added for the garage: `iceMu` (grip on
   ice) and `grav` (multiplies the level's gravity, read through `bike.gravity`).
 - `bikeStats(bike)` turns the tuning into the four 0 to 1 bars (Speed, Grip, Flips, Air). `flipTime(tune)` is
@@ -194,9 +198,10 @@ floats too long there.
 ## Checking levels
 
 ```sh
-bun tools/check-bike-levels.js                  # every level with every bike, as a table of times
-bun tools/check-bike-levels.js --robust         # and seven riding styles each (about 20 s)
-bun tools/check-bike-levels.js moon-3 --bike=comet --verbose
+bun tools/check-bike-levels.ts                  # every level with every bike, as a table of times
+bun tools/check-bike-levels.ts --robust         # and seven riding styles each (about 20 s)
+bun tools/check-bike-levels.ts moon-3 --bike=comet --verbose
+bun test tests/bike-race-levels.test.ts         # the same seven styles as a test: every run has to finish
 ```
 
 It prints each bike's finish time, or where it crashed and on which track piece, and exits with an error if any
@@ -206,7 +211,8 @@ suggested par that differs from the level list: the starter bike's time plus 0.5
 Hopper misses most of the moon pars). Run it again, with `--robust`, after changing a track or any bike's tuning.
 
 `--robust` also rides steadier, twitchier, slower and faster lines, so a level that only works for one exact
-line shows up. Every bike finishes every level in all seven styles.
+line shows up. Every bike finishes every level in all seven styles, and `tests/bike-race-levels.test.ts` (part of
+`bun test`) keeps it that way. The styles live in `tools/bike-levels.ts`, which both use.
 
 ## Browser tests
 
@@ -339,7 +345,7 @@ All are JSON objects with a type in `t`.
   lands on the kicker's face, which stops it dead or throws it on its head. Leave at least 8 m of flat before the
   next kicker, and 14 m after a 5 m step down. That is why Slag Slide, Core Meltdown, Ember Gauntlet and Eruption
   have the extra flats they do.
-- Changing a bike's tuning changes every level for it. Run `bun tools/check-bike-levels.js --robust` after.
+- Changing a bike's tuning changes every level for it. Run `bun tools/check-bike-levels.ts --robust` after.
 - A phone stops a page in the background, so its bike stops too: a locked screen during a live race pauses that
   rider's clock and bike, and the others see them fade until they come back.
 - Invite links use the page's own address. A page opened as localhost would hand out a link nobody else can open,
