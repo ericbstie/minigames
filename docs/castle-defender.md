@@ -162,9 +162,10 @@ With bosses the bot held 11:21, 11:48 and 11:11 (12:19 and 11:01 without them, t
 came, three a game, without the castle losing hit points to one: the 3:00 boss falls at the walls within about a
 minute of coming, most of it the walk in, and its 900 or so coins buy the next weapon early.
 
-Doubling the weapon prices (with bazookas) took that to about 10:50 to 11:10, with 9 or 10 outposts and the border
-about 115 paces out, once the player counts the forge half as much as before so the weapons still come in the same
-order; left at the old weighting the player puts weapons off and falls before 5 minutes. The bot doesn't get to
+Doubling the weapon prices (with bazookas) took that to 10:34 and 11:04 with bosses (10:50 and 10:54 before them),
+with 9 or 10 outposts and the border about 115 paces out, once the player counts the forge half as much as before so
+the weapons still come in the same order; left at the old weighting the player puts weapons off and falls before 5
+minutes. The bot doesn't get to
 bazookas (it has about 70,000 coins at 10 minutes, and spends them on cheaper pads), but handed them at 9 minutes
 it still stands at 15, so they are a big step up for a player who saves for them.
 
