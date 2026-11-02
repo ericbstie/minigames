@@ -681,3 +681,73 @@ button:focus-visible { outline: 3px solid #fff; outline-offset: 3px; }
 }
 @media (max-height: 360px) { .br-center { font-size: 28px; } #br-app.touch .br-center.ready { top: calc(96px + env(safe-area-inset-top, 0px)); } }
 @media (prefers-reduced-motion: reduce) { .br-screen:not([hidden]) > *, .br-rotate > *, .br-center.pop, .br-toast.show, .br-rstar.on, .br-crash .sheet, .br-new, .br-menu .b.has-new::after, .br-unlock.fresh, .br-touch.tilt.ready .cap { animation: none; } .br-toast.show { opacity: 1; } }
+
+/* Bike Race level editor (bike-race-editor.js): My levels, and the build screen over the game canvas */
+.br-menu-pair { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 12px; }
+.br-menu .br-menu-pair .b { font-size: 22px; padding-inline: 8px; }
+.br-result.custom .br-rstars { display: none; }
+.br-ml-new { font-size: 24px; padding: 12px 26px 14px; margin: 0 0 18px; }
+.br-ml-list { width: 100%; display: grid; gap: 14px; }
+.br-ml-empty { margin: 8px 0; font: 600 15px/1.4 system-ui, sans-serif; color: #8a5a45; text-align: center; }
+.br-ml-empty b { color: var(--ink); }
+.br-ml-card { display: grid; grid-template-columns: 136px minmax(0, 1fr) auto; align-items: center; gap: 12px 14px; padding: 10px 12px; border-radius: 20px;
+  background: var(--tile); box-shadow: 0 6px 0 var(--tile-edge), 0 10px 18px rgba(120, 60, 40, 0.16); }
+.br-ml-card canvas { width: 136px; aspect-ratio: 16 / 9; height: auto; border-radius: 12px; display: block; background: var(--tray-floor); }
+.br-ml-info { min-width: 0; display: grid; gap: 6px; }
+.br-ml-name { box-sizing: border-box; width: 100%; font: 400 21px/1 var(--display); color: var(--ink); background: #f4eef3; border: 2px solid #e2d8e0; border-radius: 12px; padding: 7px 10px 8px; min-width: 0; }
+.br-ml-name:focus { outline: 3px solid var(--sky); outline-offset: 1px; }
+.br-ml-meta { font: 700 13px/1.2 system-ui, sans-serif; color: #8d7f86; font-variant-numeric: tabular-nums; }
+.br-ml-btns { display: flex; gap: 8px; }
+.br-ml-btns .b { font-size: 18px; padding: 9px 12px 11px; border-radius: 14px; box-shadow: 0 4px 0 var(--tile-edge); }
+.br-ml-btns .b.go { box-shadow: 0 4px 0 var(--go-edge); }
+.br-ml-btns .b.sky { box-shadow: 0 4px 0 var(--sky-edge); }
+.br-ml-btns .b.plain { box-shadow: 0 4px 0 #b9b0c6; }
+.br-ml-btns .b.warn { background: linear-gradient(180deg, #ff7a6e, #e8463c); box-shadow: 0 4px 0 #a52a24; }
+@media (max-width: 600px) { .br-ml-card { grid-template-columns: 104px minmax(0, 1fr) auto; } .br-ml-card canvas { width: 104px; } .br-ml-btns .b { font-size: 16px; padding: 8px 9px 10px; } }
+
+.br-ed { position: absolute; inset: 0; pointer-events: none; }
+.br-ed-top { position: absolute; top: calc(10px + env(safe-area-inset-top, 0px)); left: max(10px, env(safe-area-inset-left, 0px)); right: max(10px, env(safe-area-inset-right, 0px));
+  display: flex; align-items: flex-start; gap: 10px; }
+.br-ed-tl { display: flex; gap: 8px; pointer-events: auto; flex: none; }
+.br-ed .br-round { width: 44px; height: 44px; }
+.br-ed .br-round svg { width: 24px; height: 24px; }
+.br-ed .br-round:disabled { opacity: 0.4; cursor: default; }
+.br-ed-title { flex: 1; min-width: 0; text-align: center; padding-top: 2px; }
+#br-ed-name { font-size: 24px; line-height: 1.1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; padding: 0 4px; }
+.br-ed-count { margin-top: 2px; font: 700 12px/1.2 system-ui, sans-serif; color: #fff; text-shadow: 0 1px 2px rgba(40, 20, 20, 0.75); }
+.br-ed-test { pointer-events: auto; flex: none; display: inline-flex; align-items: center; gap: 6px; font-size: 22px; padding: 9px 16px 11px 12px; border-radius: 16px; box-shadow: 0 5px 0 var(--go-edge); }
+.br-ed-test svg { width: 22px; height: 22px; fill: #fff; stroke: var(--ink); stroke-width: 2.6; stroke-linejoin: round; paint-order: stroke; overflow: visible; }
+.br-ed-hint { position: absolute; left: 0; right: 0; bottom: calc(104px + env(safe-area-inset-bottom, 0px)); padding-inline: 16px; text-align: center; pointer-events: none;
+  font: 700 14px/1.35 system-ui, sans-serif; color: #fff; text-shadow: 0 1px 3px rgba(40, 20, 20, 0.85); opacity: 0; transition: opacity 0.4s ease; text-wrap: balance; }
+.br-ed-hint.show { opacity: 1; }
+.br-ed-bar { position: absolute; left: max(8px, env(safe-area-inset-left, 0px)); right: max(8px, env(safe-area-inset-right, 0px)); bottom: calc(8px + env(safe-area-inset-bottom, 0px));
+  display: flex; gap: 8px; align-items: stretch; height: 78px; padding: 6px; border-radius: 20px; pointer-events: auto;
+  background: var(--tile); box-shadow: 0 5px 0 var(--tile-edge), 0 10px 18px rgba(60, 30, 20, 0.25); }
+.br-ed-modes { flex: none; width: 82px; display: grid; grid-template-rows: repeat(3, minmax(0, 1fr)); gap: 4px; }
+#br-app .br-ed-modes button { border: 0; border-radius: 10px; padding: 0 6px; cursor: pointer; font-size: 16px; line-height: 1; background: #e9e1ea; color: #fff; }
+.br-ed-modes button[aria-pressed="true"].build { background: var(--go); box-shadow: inset 0 -3px 0 var(--go-edge); }
+.br-ed-modes button[aria-pressed="true"].edit { background: #45b4e8; box-shadow: inset 0 -3px 0 var(--sky-edge); }
+.br-ed-modes button[aria-pressed="true"].delete { background: #e8463c; box-shadow: inset 0 -3px 0 #a52a24; }
+.br-ed-row { flex: 1 1 auto; min-width: 0; display: flex; gap: 6px; align-items: center; overflow-x: auto; scrollbar-width: none; touch-action: pan-x; padding: 0 2px; }
+.br-ed-row::-webkit-scrollbar { display: none; }
+.br-ed-tile { flex: 1 0 46px; max-width: 74px; height: 100%; max-height: 74px; border: 0; padding: 0; border-radius: 14px; cursor: pointer;
+  background: #f4eef3; box-shadow: inset 0 0 0 2px #e2d8e0, 0 3px 0 var(--tile-edge); transition: transform 0.08s ease; }
+.br-ed-tile:active { transform: translateY(2px) scale(0.96); box-shadow: inset 0 0 0 2px #e2d8e0, 0 1px 0 var(--tile-edge); }
+#br-editor[data-mode="build"] .br-ed-tile { background: #fbf6e2; box-shadow: inset 0 0 0 2px #efd98c, 0 3px 0 #d8c27a; }
+.br-ed-tile canvas { width: 100%; height: 100%; display: block; pointer-events: none; }
+.br-ed-acts { flex: none; display: grid; grid-template-columns: repeat(2, 38px); grid-template-rows: repeat(2, minmax(0, 1fr)); gap: 4px; }
+.br-ed-acts button { border: 0; border-radius: 10px; padding: 0; cursor: pointer; display: grid; place-items: center; background: rgba(48, 34, 38, 0.78); }
+.br-ed-acts button:disabled { opacity: 0.3; cursor: default; }
+.br-ed-acts svg { width: 22px; height: 22px; fill: #fff; overflow: visible; }
+.br-ed-acts .ln { fill: none; stroke: #fff; stroke-width: 2.4; stroke-linecap: round; stroke-linejoin: round; }
+.br-ed-acts .dash { stroke-width: 1.6; stroke-dasharray: 2 2.5; opacity: 0.8; }
+.br-ed-acts .hollow { fill: none; stroke: #fff; stroke-width: 1.8; stroke-linejoin: round; }
+@media (max-height: 360px) {
+  .br-ed-bar { height: 66px; padding: 5px; }
+  #br-app .br-ed-modes button { font-size: 14px; }
+  .br-ed-modes { width: 74px; }
+  .br-ed-acts { grid-template-columns: repeat(2, 34px); }
+  .br-ed-hint { bottom: calc(88px + env(safe-area-inset-bottom, 0px)); font-size: 13px; }
+  .br-ed .br-round { width: 40px; height: 40px; }
+  .br-ed-test { font-size: 20px; padding: 8px 14px 10px 10px; }
+}

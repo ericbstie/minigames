@@ -126,16 +126,33 @@ function joinsOf(all, geoms, i) {
   }
   return out;
 }
-function freeEnds(data, skip) {
-  const all = allPieces(data), geoms = all.map(geom), out = [];
-  for (let i = 0; i < all.length; i++) {
-    if (i === skip) continue;
-    for (let e = 0; e < 2; e++) {
-      const E = geoms[i].ends[e];
-      const taken = all.some((_, j) => j !== i && j !== skip && geoms[j].ends.some(F => Math.abs(F.x - E.x) < EPS && Math.abs(F.y - E.y) < EPS));
-      if (!taken) out.push({ i, e, x: E.x, y: E.y, ox: E.ox, oy: E.oy });
-    }
+// Ends a new piece can go on. At each spot, ends facing opposite ways pair up (a piece and the one carrying on from
+// it), the most nearly opposite first, then the oldest pieces; whatever is left over is open. So a free end is open,
+// two joined pieces aren't, and where a loop closes (three ends) the end of the closing piece is. The finish pad
+// doesn't count: the end it stands on stays open.
+function openEnds(data) {
+  const all = allPieces(data), geoms = all.map(geom), f = all.length - 1, spots = [], out = [];
+  for (let i = 0; i < f; i++) for (let e = 0; e < 2; e++) {
+    const E = geoms[i].ends[e];
+    let spot = spots.find(S => Math.abs(S.x - E.x) < EPS && Math.abs(S.y - E.y) < EPS);
+    if (!spot) spots.push(spot = { x: E.x, y: E.y, ends: [] });
+    spot.ends.push({ i, e, x: E.x, y: E.y, ox: E.ox, oy: E.oy });
   }
+  for (const { ends: L } of spots) {
+    const pairs = [], used = new Set();
+    for (let a = 0; a < L.length; a++) for (let b = a + 1; b < L.length; b++) {
+      pairs.push({ a, b, dot: Math.round((L[a].ox * L[b].ox + L[a].oy * L[b].oy) * 20), lo: Math.min(L[a].i, L[b].i), hi: Math.max(L[a].i, L[b].i) });
+    }
+    pairs.sort((p, q) => (p.dot - q.dot) || (p.lo - q.lo) || (p.hi - q.hi));
+    for (const p of pairs) if (!used.has(p.a) && !used.has(p.b)) { used.add(p.a); used.add(p.b); }
+    L.forEach((E, k) => { if (!used.has(k)) out.push(E); });
+  }
+  return out;
+}
+// every end of every piece but one (snapping targets for a dragged piece)
+function endsBut(data, skip) {
+  const out = [];
+  allPieces(data).forEach((p, i) => { if (i !== skip) geom(p).ends.forEach((E, e) => out.push({ i, e, x: E.x, y: E.y, ox: E.ox, oy: E.oy })); });
   return out;
 }
 // The end a piece hangs from: the joined end whose neighbour came first (start pad first). Rotating turns the piece
@@ -215,12 +232,12 @@ function flip(data, i, axis) {
   if (fin >= 0) putFinish(data, i, fin === 0 && A && A.e === 0 ? 1 : fin);
   return true;
 }
-// Where piece i would go if dragged by (dx, dy) from `from` (its place when the drag began): onto a free end of
-// another piece when one of its ends comes within `snap` metres, otherwise with its origin on the grid.
+// Where piece i would go if dragged by (dx, dy) from `from` (its place when the drag began): onto an end of another
+// piece when one of its ends comes within `snap` metres, otherwise with its origin on the grid.
 function moveTo(data, i, from, dx, dy, snap) {
   if (!isPiece(data, i) && i !== finishIndex(data)) return null;
   const p = { ...from, x: from.x + dx, y: from.y + dy };
-  const g = geom(p), free = freeEnds(data, i);
+  const g = geom(p), free = endsBut(data, i);
   let best = null;
   for (let e = 0; e < 2; e++) {
     if (i === finishIndex(data) && e === 1) continue;         // the finish joins the track by its near end
@@ -407,7 +424,7 @@ function trackKey(data) {
 
 return {
   TYPES, TYPE, PAD, LOOP_R, MAX_PIECES, NAME_MAX, GRID, ROTATE_STEP, EPS, GHOST_NEAR, GHOST_APART,
-  localPoints, geom, allPieces, newLevel, sanitize, cleanName, getPiece, finishIndex, isPiece, freeEnds, anchorOf, finishOn,
+  localPoints, geom, allPieces, newLevel, sanitize, cleanName, getPiece, finishIndex, isPiece, openEnds, anchorOf, finishOn,
   append, rotate, flip, moveTo, commitMove, remove, buildCustomLevel, ridingOrder, trackKey,
 };
 });

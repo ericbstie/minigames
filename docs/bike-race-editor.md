@@ -55,12 +55,16 @@ the finish pad. Two ends closer than 2 cm are joined.
 - `flip(level, i, 'h' | 'v')` mirrors a piece left to right or upside down. A piece that hangs from an end stays on
   it, joined by whichever of its ends carries on most smoothly from the neighbour: a ramp flipped left to right
   becomes a slope down that levels out, flipped upside down a rounded drop. The finish pad only turns round.
-- `moveTo(level, i, from, dx, dy, snap)` is where a dragged piece lands: on a free end of another piece when one
-  of its ends is within `snap` metres of it, otherwise with its origin on the half metre grid. `commitMove` puts
-  it there.
+- `moveTo(level, i, from, dx, dy, snap)` is where a dragged piece lands: on an end of another piece when one of
+  its ends is within `snap` metres of it, otherwise with its origin on the half metre grid. `commitMove` puts it
+  there.
 - `remove(level, i)` deletes a piece. The start and finish pads can't be removed.
 - The finish pad keeps to the end of the piece it stands on when that piece is turned, flipped or moved, and goes
   back to where a removed piece hung from.
+- `openEnds(level)` lists the ends the track can be carried on from (the dots in the editor). Where ends meet,
+  they are paired off, the way in with the way out, oldest pieces first, and whatever is left over is open. So
+  where a closed loop comes back down onto the track, the loop's way out is open even though it touches two other
+  ends. The finish pad is left out: the end it stands on counts as open.
 
 ### Tracks that cross themselves
 
@@ -88,11 +92,42 @@ In the core this is small:
 
 Built-in levels set none of these, and `node tools/check-bike-levels.js` gives exactly the same times as before.
 
+## The editor screen
+
+`public/js/bike-race-editor.js` (`window.BikeRaceEditor`) is the editor's screens. It loads after `bike-race.js`,
+which gives it `BikeRace.editor` (start a ride on a level, switch screens, toasts) and draws the editor on the
+game's canvas while the `editor` view is up (`BikeRaceEditor.frame`).
+
+- **Level editor** on the home menu opens **My levels**: a card per level with a picture of the track, the name (tap
+  to rename), the piece count and best time, and Play, Edit and Delete (tap twice). **New level** starts one.
+- The build screen has Back, Undo and Redo, the level's name and Test along the top, and the bar along the bottom:
+  the Build, Edit and Delete modes, the row of nine pieces (it scrolls sideways on small phones), and turn left,
+  turn right, flip left to right and flip upside down for the picked piece.
+- Build: tapping a piece in the row adds it at the arrow, picks it, and moves the arrow to its far end. Tapping a
+  dot (an open end) moves the arrow there; tapping a piece picks it; tapping open space puts the arrow there, on
+  the grid, heading right, to start a separate bit of track.
+- Edit: tap a piece to pick it, drag it to move it (its ends snap onto other ends, a green ring shows where).
+  The finish can be dragged and flipped; the start can't be changed.
+- Delete: tap a piece to remove it.
+- Dragging off a piece pans, two fingers pinch to zoom, a mouse wheel zooms.
+- Undo and redo keep the last 100 changes while the level is open. Every change is saved at once.
+- Test rides the level as a solo run with the chosen bike, with no stars, ghost or next level. The crash, pause and
+  result sheets go back to the editor (Edit) or to My levels when it was played from there.
+
+### Saved levels
+
+`localStorage` key `bikerace.levels.v1` holds `{ v: 1, levels: [{ id, data, best, updated }] }`: at most 100
+levels, `data` as above, `best` as `{ t, key }`. `key` is the track's `trackKey` when the time was set, so a best
+time no longer shows once the track is changed. On load, entries with a bad id or a repeated one are dropped and
+each level goes through `sanitize`. Names are only ever put in the page as text.
+
 ## Checking
 
 ```sh
 node tools/check-bike-pieces.js            # about a second
 node tools/check-bike-pieces.js --verbose  # lists every check
+node tools/test-bike-race-editor.js        # the editor in a browser, about 40 s
+node tools/test-bike-race-editor.js --keep # also saves screenshots to tools/.shots/
 ```
 
 It checks each piece's shape, the edits (adding at the finish, rotating about the joint, flips, snapping, the
@@ -101,3 +136,10 @@ computer rider and with gas held and no lean: full loops (3/4 + quarter, two hal
 straight off the start pad) must be finished going over the top with the rider's head at least 0.8 m from solid
 track (it stays about 1.2 m clear), and each ramp must clear a gap (5, 9 and 12 m) and land. It also checks that
 the loop can't be ridden without the pass-through, and that a finish turned round is crossed going left.
+
+`test-bike-race-editor.js` serves `public/` on port 8124 (`BR_PORT` changes it) and plays the page in headless
+Chromium as a touch phone held sideways, with real touch events for taps, drags and pinches: My levels, building,
+turning, flipping, undo and redo, carrying on out of a closed loop, building from a tapped end or open space,
+dragging a piece until it snaps, panning and zooming, deleting, a test ride to the finish and back (and from the
+crash and pause sheets), best times, renaming, reloading, deleting a level, damaged storage, and that the editor
+and My levels fit at six phone sizes from 568x320 to 932x430. It needs Playwright (`require('playwright')`).

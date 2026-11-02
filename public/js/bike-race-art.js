@@ -349,6 +349,7 @@ function hiddenSegments(level) {
 }
 function lineWidth(cam) { return Math.max(2.4, 0.08 * cam.ppm); }
 function drawTerrain(g, cam, level, theme) {
+  if (level.paths) { drawTrackPaths(g, cam, level.paths, theme); return; }
   const P = level.ground, K = level.kinds, hide = hiddenSegments(level);
   const [x0, x1] = visibleRange(cam);
   // index range of visible segments (ground x is non-decreasing)
@@ -375,6 +376,28 @@ function drawTerrain(g, cam, level, theme) {
     g.strokeStyle = icy ? ICE.edge : theme.lineEdge; g.lineWidth = w + edge * 2; g.stroke();
     g.strokeStyle = icy ? ICE.line : theme.line; g.lineWidth = w; g.stroke();
   }
+}
+// Track from the level editor: one polyline per piece, going any way (ramps, loops, upside down). Same red line.
+const pathBoxes = new WeakMap();
+function drawTrackPaths(g, cam, paths, theme) {
+  const w = lineWidth(cam), edge = Math.max(1, w * 0.3), pad = 4 / cam.ppm + 1;
+  const x0 = cam.wx(-60), x1 = cam.wx(cam.W + 60), yTop = cam.y + (cam.H / 2) / cam.ppm + pad, yBot = cam.y - (cam.H / 2) / cam.ppm - pad;
+  g.beginPath();
+  for (const P of paths) {
+    let b = pathBoxes.get(P);
+    if (!b) {
+      b = [Infinity, Infinity, -Infinity, -Infinity];
+      for (let i = 0; i < P.length; i += 2) { b[0] = Math.min(b[0], P[i]); b[1] = Math.min(b[1], P[i + 1]); b[2] = Math.max(b[2], P[i]); b[3] = Math.max(b[3], P[i + 1]); }
+      pathBoxes.set(P, b);
+    }
+    if (b[2] < x0 || b[0] > x1 || b[3] < yBot || b[1] > yTop) continue;
+    g.moveTo(cam.sx(P[0]), cam.sy(P[1]));
+    for (let i = 2; i < P.length; i += 2) g.lineTo(cam.sx(P[i]), cam.sy(P[i + 1]));
+  }
+  g.lineCap = 'round'; g.lineJoin = 'round';
+  if (theme.halo) { g.strokeStyle = theme.halo; g.lineWidth = w + edge * 2 + 5; g.stroke(); }
+  g.strokeStyle = theme.lineEdge; g.lineWidth = w + edge * 2; g.stroke();
+  g.strokeStyle = theme.line; g.lineWidth = w; g.stroke();
 }
 // lava pools in the gaps, drawn over the bikes
 function drawHazards(g, cam, level, t) {
@@ -416,7 +439,8 @@ function drawLoops(g, cam, level, theme) {
 // start line, checkpoint flags and the chequered finish flag
 function drawMarkers(g, cam, level, t, showCheckpoints) {
   const ppm = cam.ppm, T = level.terrain;
-  const sy0 = cam.sy((T.surface(0.6) || { y: 0 }).y), sx0 = cam.sx(0.6);
+  // levels from the editor say how high the start and finish are (their track can pass above both)
+  const sy0 = cam.sy(level.startY != null ? level.startY : (T.surface(0.6) || { y: 0 }).y), sx0 = cam.sx(0.6);
   if (sx0 > -20 && sx0 < cam.W + 20) {   // a little start post
     g.fillStyle = INK; g.fillRect(sx0 - 0.05 * ppm - 1, sy0 - 0.9 * ppm - 1, 0.1 * ppm + 2, 0.9 * ppm + 1);
     g.fillStyle = '#ffffff'; g.fillRect(sx0 - 0.05 * ppm, sy0 - 0.9 * ppm, 0.1 * ppm, 0.9 * ppm);
@@ -430,7 +454,7 @@ function drawMarkers(g, cam, level, t, showCheckpoints) {
     g.fillStyle = '#7be8fc'; g.beginPath(); g.moveTo(x + 0.04 * ppm, y - 1.6 * ppm);
     g.lineTo(x + 0.7 * ppm, y - (1.42 + Math.sin(t * 5) * 0.04) * ppm); g.lineTo(x + 0.04 * ppm, y - 1.22 * ppm); g.fill();
   }
-  const fx = level.finishX, s = T.surface(fx) || { y: 0 };
+  const fx = level.finishX, s = level.finishY != null ? { y: level.finishY } : T.surface(fx) || { y: 0 };
   const x = cam.sx(fx), y = cam.sy(s.y);
   if (x < -4 * ppm || x > cam.W + 4 * ppm) return;
   // one tall pole with a chequered flag rippling in the wind
@@ -746,5 +770,5 @@ function drawThumb(canvas, world, level) {
   drawHazards(g, cam, level, 0);
 }
 
-window.BikeRaceArt = { THEMES, PAINTS, paintAt, Camera, drawSky, drawLayers, drawTerrain, drawHazards, drawLoops, drawMarkers, drawBike, drawWheel, drawRagdoll, drawTag, Particles, drawThumb, INK, hash };
+window.BikeRaceArt = { THEMES, PAINTS, paintAt, Camera, drawSky, drawLayers, drawTerrain, drawTrackPaths, lineWidth, drawHazards, drawLoops, drawMarkers, drawBike, drawWheel, drawRagdoll, drawTag, Particles, drawThumb, INK, hash };
 })();
