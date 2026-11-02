@@ -45,5 +45,7 @@ declare global {
     BikeRaceCore?: any;
     BikeRaceArt?: any;
     BikeRaceNet?: any;
+    BikeRacePieces?: any;
+    BikeRaceEditor?: any;
   }
 }
