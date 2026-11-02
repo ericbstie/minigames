@@ -82,6 +82,7 @@ the lean buttons.
 
 ```
 public/js/bike-race-core.js   physics, track builder, worlds and levels, bikes, computer rider, ghost encoding
+public/js/bike-race-pieces.js the level editor's track pieces and its level builder (docs/bike-race-editor.md)
 public/js/bike-race-art.js    canvas drawing: world backdrops, the track line, lava, loops, flags, bikes, riders, particles
 public/js/bike-race-net.js    the connection to the race server: WebSocket or event stream, reconnecting
 public/js/bike-race.js        the game: saves, sound, tilt and touch input, camera and loop, sessions, HUD, menus
@@ -91,6 +92,7 @@ public/js/hub.js              routes #bike-race and #bike-race/<code> to the gam
 public/assets/img/bike-race.jpg   menu card picture, made by tools/render-bike-race-card.js
 tools/serve.py                the site server and race server behind `mise run app` and `mise run phone`
 tools/check-bike-levels.js    proves every bike can finish every level and suggests par times
+tools/check-bike-pieces.js    checks the editor's pieces and that tracks made of them can be ridden
 tools/test-bike-race-browser.js   phone-sized browser tests for the garage and the sheets around it
 tools/test-bike-race-online.js    live races between phones in the browser, and the no-server fallback
 tools/test-race-server.js     the race server's messages, without a browser
