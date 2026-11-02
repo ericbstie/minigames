@@ -124,3 +124,9 @@ yet. When a release has it, add it to the `check` and `ci` tasks.
 
 `bun fmt` formats with the settings in `bunfig.toml` (120 columns, single quotes): the code, the page, the styles
 and the docs. Only the Ant Sort level data is left out, as it is one long line of numbers.
+
+## Security
+
+[security-audit.md](security-audit.md) is the security audit of November 2026: what could go wrong, what was fixed,
+and what is left as it is on purpose (such as each phone's finish time being its own word). The race server's
+limits and checks are in [bike-race.md](bike-race.md#connections).

@@ -7,6 +7,7 @@
 // they all stop when the lobby's scope closes. Time comes from Effect's Clock, so tests can run whole races on a
 // TestClock (tests/race-lobby.test.ts).
 import { Cause, Clock, Context, Effect, Fiber, FiberSet, Layer, Option, Schema, Semaphore } from 'effect';
+import { levelById } from '../public/js/bike-race-core';
 import {
   CODE_LETTERS,
   ClientMessage,
@@ -24,9 +25,12 @@ import {
 export { RACE_LIMIT };
 export const MAX_PLAYERS = 6; // riders in one room
 export const MAX_ROOMS = 200;
+export const MAX_RIDERS = 1000; // riders kept in all, connected or keeping their place
 
 /** A connection to one game: a WebSocket, or an event stream with POSTs */
 export interface Conn {
+  /** The device it comes from (its address; see deviceOf in server/serve.ts) */
+  readonly device: string;
   player: Player | null;
   send(msg: ServerMessage): Effect.Effect<void>;
   close(code?: number): Effect.Effect<void>;
@@ -38,11 +42,20 @@ export interface RaceTimes {
   readonly away: number; // seconds a dropped rider keeps their place (a phone drops the connection when its screen locks)
 }
 
-/** The race timings, and the address friends on the network can open (if the server has one) */
-export const RaceSettings = Context.Reference<RaceTimes & { readonly share: string }>(
+export interface RaceLimits {
+  /** Race connections, and riders kept, from one device. A phone needs one; it is there so one device can't take
+   * every connection, or fill the memory by connecting and dropping out over and over. */
+  readonly perDevice: number;
+}
+
+/** The race timings and limits, and the address friends on the network can open (if the server has one) */
+export const RaceSettings = Context.Reference<RaceTimes & RaceLimits & { readonly share: string }>(
   'pick-a-game/server/RaceSettings',
-  { defaultValue: () => ({ countdown: 3, ending: 30, away: 45, share: '' }) },
+  { defaultValue: () => ({ countdown: 3, ending: 30, away: 45, perDevice: 16, share: '' }) },
 );
+
+/** A track the games know (a level id the right shape for another version's track is no use to anyone) */
+const isTrack = (level: string | null): level is string => level !== null && levelById(level) !== null;
 
 const now = Effect.map(Clock.currentTimeMillis, (ms) => ms / 1000);
 
@@ -71,6 +84,7 @@ export class Player {
   constructor(
     readonly id: string,
     readonly key: string,
+    readonly device: string,
   ) {}
 
   send(msg: ServerMessage): Effect.Effect<void> {
@@ -230,7 +244,7 @@ export class RaceLobby extends Context.Service<
       });
 
       const create = Effect.fnUntraced(function* (p: Player, level: string | null) {
-        if (!level) return yield* p.send({ t: 'error', msg: 'Pick a track first.' });
+        if (!isTrack(level)) return yield* p.send({ t: 'error', msg: 'Pick a track first.' });
         if (rooms.size >= MAX_ROOMS)
           return yield* p.send({ t: 'error', msg: 'This race server is full. Try again in a minute.' });
         yield* leaveRoom(p);
@@ -334,6 +348,13 @@ export class RaceLobby extends Context.Service<
 
       // ---------- messages ----------
 
+      // Riders kept for one device: connected, or keeping their place after dropping out
+      const ridersFrom = (device: string) => {
+        let n = 0;
+        for (const p of players.values()) if (p.device === device) n++;
+        return n;
+      };
+
       // A connection says hello first, with the key it was given last time (if any). A rider who dropped out a moment
       // ago gets their place back; anyone else is a new rider with a new key.
       const hello = Effect.fnUntraced(function* (conn: Conn, msg: Extract<ClientMessage, { t: 'hello' }>) {
@@ -356,7 +377,17 @@ export class RaceLobby extends Context.Service<
               yield* old.close();
             }
           } else {
-            p = new Player(`p${nextId++}`, yield* randomKey);
+            const full =
+              players.size >= MAX_RIDERS
+                ? 'This race server is full. Try again in a minute.'
+                : ridersFrom(conn.device) >= settings.perDevice
+                  ? 'Too many riders from this device. Try again in a minute.'
+                  : null;
+            if (full) {
+              yield* conn.send({ t: 'error', msg: full });
+              return yield* conn.close(1008);
+            }
+            p = new Player(`p${nextId++}`, yield* randomKey, conn.device);
             players.set(p.key, p);
           }
           p.conn = conn;
@@ -386,7 +417,7 @@ export class RaceLobby extends Context.Service<
             yield* leaveRoom(p);
             return yield* p.send({ t: 'left' });
           case 'level':
-            if (room && room.host === p.id && room.state === 'lobby' && msg.level) {
+            if (room && room.host === p.id && room.state === 'lobby' && isTrack(msg.level)) {
               room.level = msg.level;
               yield* broadcastRoom(room);
             }

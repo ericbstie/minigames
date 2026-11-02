@@ -12,7 +12,7 @@
 import { mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { Layer, ManagedRuntime } from 'effect';
-import type { RaceTimes } from '../../server/race';
+import type { RaceLimits, RaceTimes } from '../../server/race';
 import { ArrayLog, type ServerOptions, serverLayer, SiteServer, settingsLayer } from '../../server/serve';
 
 export const SHOTS = join(import.meta.dir, '..', '..', '.shots');
@@ -29,15 +29,15 @@ export interface Site {
   stop(): void;
 }
 
-export type SiteOptions = ServerOptions & Partial<RaceTimes> & { share?: string };
+export type SiteOptions = ServerOptions & Partial<RaceTimes & RaceLimits> & { share?: string };
 
-/** The real server (page and race server) on a free port, with whatever race timings a test wants. */
+/** The real server (page and race server) on a free port, with whatever race timings and limits a test wants. */
 export function startSite(opts: SiteOptions = {}): Site {
-  const { countdown, ending, away, share, ...server } = opts;
+  const { countdown, ending, away, perDevice, share, ...server } = opts;
   const logs: string[] = [];
   const runtime = ManagedRuntime.make(
     serverLayer({ port: 0, development: false, ...server }).pipe(
-      Layer.provide(settingsLayer({ countdown, ending, away, share })),
+      Layer.provide(settingsLayer({ countdown, ending, away, perDevice, share })),
       Layer.provide(ArrayLog(logs)),
     ),
   );

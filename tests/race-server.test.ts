@@ -2,6 +2,7 @@
 // event stream fallback, dropping out and coming back, and the host handing over. It runs the server in-process on a
 // free port with short countdown, ending and away times. The tests run in order and share the riders.
 import { afterAll, describe, expect, setDefaultTimeout, test } from 'bun:test';
+import { deviceOf, localHost } from '../server/serve';
 import { startSite } from './support/browser';
 
 setDefaultTimeout(10_000);
@@ -60,8 +61,8 @@ function rider(
 }
 
 // A rider over a WebSocket.
-function wsRider(): Rider {
-  const ws = new WebSocket(`${BASE.replace('http', 'ws')}/ws`);
+function wsRider(base = BASE): Rider {
+  const ws = new WebSocket(`${base.replace('http', 'ws')}/ws`);
   return rider(
     (m) => ws.send(JSON.stringify(m)),
     (fn) => (ws.onmessage = (e) => fn(JSON.parse(e.data as string))),
@@ -184,6 +185,62 @@ describe('the page', () => {
       headers: { Upgrade: 'websocket', Connection: 'Upgrade', Origin: 'http://evil.example' },
     });
     expect(r.status).toBe(403);
+  });
+
+  // DNS rebinding: a public name pointed at this computer, asked by a page on that name (so Origin and Host agree)
+  const rebound = `evil.example:${site.port}`;
+  const fromRebound = { Host: rebound, Origin: `http://${rebound}` };
+  test('a WebSocket for a public host name is refused', async () => {
+    const r = await fetch(BASE + '/ws', { headers: { ...fromRebound, Upgrade: 'websocket', Connection: 'Upgrade' } });
+    expect(r.status).toBe(403);
+  });
+
+  test('so is an event stream, and a POST', async () => {
+    expect((await fetch(BASE + '/net/events', { headers: fromRebound })).status).toBe(403);
+    const r = await fetch(BASE + '/net/send?sid=x', { method: 'POST', body: '[]', headers: fromRebound });
+    expect(r.status).toBe(403);
+  });
+});
+
+describe('who may use the race server', () => {
+  const asked = (host: string | null, listening = '0.0.0.0') =>
+    localHost(new Request('http://127.0.0.1/ws', { headers: host === null ? {} : { Host: host } }), listening);
+
+  test('addresses, localhost and local network names', () => {
+    for (const host of [
+      '127.0.0.1:8000',
+      '192.168.1.20:8443',
+      '[::1]:8000',
+      '[fe80::1]',
+      'localhost:8000',
+      'p1.localhost:8000',
+      'erics-mac.local:8443',
+      'raspberrypi:8000',
+      'box.lan',
+      'nas.home.arpa',
+      'games.internal',
+    ])
+      expect([host, asked(host)]).toEqual([host, true]);
+  });
+
+  test('not public names, which a DNS rebinding attack would use', () => {
+    for (const host of ['evil.example:8000', 'localhost.evil.com', '127.0.0.1.nip.io', 'local.example.com', '', null])
+      expect([host, asked(host)]).toEqual([host, false]);
+  });
+
+  test('unless the server was started on that name', () => {
+    expect(asked('games.example.com:8000', 'games.example.com')).toBe(true);
+    expect(asked('other.example.com:8000', 'games.example.com')).toBe(false);
+  });
+
+  test('a device is its IPv4 address, or the first 64 bits of its IPv6 one', () => {
+    expect(deviceOf('192.168.1.20')).toBe('192.168.1.20');
+    expect(deviceOf('::ffff:192.168.1.20')).toBe('192.168.1.20');
+    expect(deviceOf('2001:db8:1:2:aaaa:bbbb:cccc:dddd')).toBe('2001:db8:1:2::/64');
+    expect(deviceOf('2001:0db8:0001:0002::5')).toBe('2001:db8:1:2::/64');
+    expect(deviceOf('2001:db8::1')).toBe('2001:db8:0:0::/64');
+    expect(deviceOf('::1')).toBe('0:0:0:0::/64');
+    expect(deviceOf('fe80::1%eth0')).toBe('fe80:0:0:0::/64');
   });
 });
 
@@ -397,5 +454,71 @@ describe('dropping out and coming back', () => {
     const out = site.logs.join('\n');
     expect(out).toMatch(/opened room/);
     expect(out).toMatch(/results:/);
+  });
+});
+
+describe('limits for one device', () => {
+  const tight = startSite({ perDevice: 2 });
+  const TIGHT = tight.url('').replace(/\/$/, '');
+  afterAll(() => tight.stop());
+  const upgrade = { Upgrade: 'websocket', Connection: 'Upgrade' };
+  let x: Rider, y: Rider;
+
+  test('two connections from this computer open', async () => {
+    x = wsRider(TIGHT);
+    y = wsRider(TIGHT);
+    await Promise.all([x.opened, y.opened]);
+  });
+
+  test('a third WebSocket or event stream is refused', async () => {
+    expect((await fetch(TIGHT + '/ws', { headers: upgrade })).status).toBe(429);
+    expect((await fetch(TIGHT + '/net/events')).status).toBe(429);
+  });
+
+  test('a connection that closes makes room for another', async () => {
+    y.close();
+    await Bun.sleep(200);
+    y = wsRider(TIGHT);
+    await y.opened;
+  });
+
+  test('anything but poses: 20 a second', async () => {
+    x.send({ t: 'hello', name: 'Xu' });
+    await x.next('welcome');
+    await Bun.sleep(1100); // the hello counted too, in a second gone by now
+    for (let i = 0; i < 50; i++) x.send({ t: 'list' });
+    await Bun.sleep(500);
+    let lists = 0;
+    while (await x.next('rooms', null, 50)) lists++;
+    // all 50 went within a second, or across the turn of one
+    expect(lists).toBeGreaterThanOrEqual(20);
+    expect(lists).toBeLessThanOrEqual(40);
+  });
+
+  test('frames that are not messages count too', async () => {
+    // a turn of the second between the junk and the list would let the list through, so it gets three goes
+    let answered = 0;
+    for (let go = 0; go < 3; go++) {
+      await Bun.sleep(1100);
+      x.drain();
+      for (let i = 0; i < 95; i++) x.send('not a message' as unknown as Msg);
+      x.send({ t: 'list' });
+      if (await x.next('rooms', null, 300)) answered++;
+      else break;
+    }
+    expect(answered).toBeLessThan(3);
+  });
+
+  test('a POST that is not JSON answers 400', async () => {
+    y.close();
+    await Bun.sleep(200);
+    const ctl = new AbortController();
+    const res = await fetch(TIGHT + '/net/events', { signal: ctl.signal });
+    const first = new TextDecoder().decode((await res.body!.getReader().read()).value);
+    const sid = JSON.parse(first.slice(first.indexOf('{'), first.lastIndexOf('}') + 1)).sid;
+    const r = await fetch(`${TIGHT}/net/send?sid=${sid}`, { method: 'POST', body: '{nope' });
+    expect(r.status).toBe(400);
+    ctl.abort();
+    x.close();
   });
 });
