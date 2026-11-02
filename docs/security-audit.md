@@ -7,7 +7,9 @@ repository unless it says it is accepted.
 ## Who could attack what
 
 - `mise run app` listens on 127.0.0.1 only, so only programs on the computer reach it, and websites open in a
-  browser on the computer (through DNS rebinding, below).
+  browser on the computer (through DNS rebinding, below). Since the site went live (finding 16), Caddy passes it
+  requests from anyone on the internet for https://minigames.ericbs.dev.
+- `mise run dev` is the same with Bun's development server (finding 5), for this computer only.
 - `mise run phone` listens on every network address over https with a self-signed certificate, so anyone on the
   same Wi-Fi can open the site and join races.
 - `mise run build` makes a static site with no race server.
@@ -36,6 +38,7 @@ player's page, and that nobody can reach files on the computer running the serve
 | 13  | Info     | No clickjacking or `nosniff` headers on the page                             | Accepted  |
 | 14  | Info     | Packages: no known vulnerabilities                                           | Checked   |
 | 15  | Info     | What was checked and found sound                                             | Checked   |
+| 16  | Medium   | Hosted behind Caddy, the site was refused and every player was one device    | Fixed     |
 
 ### 1. One device can take every race connection and room, and fill the memory (Medium)
 
@@ -67,7 +70,9 @@ The race server checks that a WebSocket or event stream comes from a page on the
 page loads) sends a `Host` of its own name, so the check passes. That website could then list the rooms, join them,
 see riders' names and race. Fix: the race server only answers when `Host` is an IP address, `localhost` or a name
 under it, a name that only means something on a local network (one word, or ending in `.local`, `.lan`,
-`.home.arpa` or `.internal`), or the `HOST` the server was started with. A public domain name can't be any of those.
+`.home.arpa` or `.internal`), or the `HOST` the server was started with. A public domain name can't be any of those,
+except the site's own (`ALLOWED_HOSTS`, minigames.ericbs.dev unless set; finding 16), which an attacker can't point
+anywhere.
 
 ### 4. No Content-Security-Policy behind the hand-escaped HTML (Low)
 
@@ -94,7 +99,8 @@ anything the policy blocks as a page error, so a change that needs more is caugh
 `mise run app` runs Bun's development server, which reloads the page as files change and serves Bun's own `/_bun/`
 routes (the reload socket, error reports, an open-in-editor route, source maps of the page). It was on whenever
 https was off, so `HOST=0.0.0.0 mise run app` put it on the network. Fix: it is only on when the server listens on
-this computer alone (127.0.0.1, ::1 or localhost); otherwise the page is bundled once, as for phones.
+this computer alone (127.0.0.1, ::1 or localhost); otherwise the page is bundled once, as for phones. Since finding
+16 it is `mise run dev` alone: `mise run app` always bundles the page once, as the site is served from it.
 
 ### 6. Rider names can carry C1 control characters and text-direction overrides (Low)
 
@@ -172,3 +178,32 @@ configuration to attack.
   level names are escaped wherever they go into HTML, and set as text everywhere else. The debug hooks on `window`
   are only reachable by scripts already on the page.
 - **The repository.** No keys, tokens or certificates in the history; `.cert/` is in `.gitignore`.
+
+### 16. Hosted behind Caddy, the site was refused and every player was one device (Medium)
+
+Added later on 2 November 2026, when the site went live at https://minigames.ericbs.dev: `mise run app` on
+127.0.0.1:8000 with Caddy in front of it for https ([hosting.md](hosting.md)). Three things got in the way, and one
+of them would have made the limits of finding 1 a way to shut everyone out:
+
+- `mise run app` was Bun's development server, which refuses any `Host` but its own, so the site showed "Blocked:
+  Host header does not match the dev server". And had it answered, its `/_bun/` routes (finding 5) would have been
+  on the internet.
+- The race server refused minigames.ericbs.dev, as a public name (finding 3).
+- Every request comes from Caddy, at 127.0.0.1, so all players were one device: 16 connections and 16 riders for the
+  whole internet, and one person opening 16 tabs would have shut everyone else out.
+
+Fix: `mise run app` always bundles the page once, and the development server is `mise run dev`. The site's public
+names (`ALLOWED_HOSTS`, minigames.ericbs.dev unless set) count as known hosts, and a page on one of them counts as
+the same origin even when a proxy puts its own address in `Host`. Over http (`mise run app` and `mise run dev`), a
+player's address is the last entry in `X-Forwarded-For`, the one the proxy adds, but only when the request comes
+from this computer or a private network: someone reaching the server directly from the internet can't choose the
+address they count as. `mise run phone` never believes `X-Forwarded-For`.
+
+Accepted: with `HOST=0.0.0.0`, a device on the same private network could write its own `X-Forwarded-For` and
+count as other devices. That needs a network you trust, as phone mode does (finding 12). Behind Cloudflare's proxy
+as well as Caddy, every player would arrive from a Cloudflare address, so Caddy has to be told to pass the player's
+own address on (hosting.md says how).
+
+Nothing in the server depends on the scheme, so `X-Forwarded-Proto` is not used: the page connects with `wss://`
+because it was loaded over `https://`. The Content-Security-Policy already allowed that (`connect-src 'self' ws:
+wss:`).

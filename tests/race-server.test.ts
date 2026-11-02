@@ -2,7 +2,7 @@
 // event stream fallback, dropping out and coming back, and the host handing over. It runs the server in-process on a
 // free port with short countdown, ending and away times. The tests run in order and share the riders.
 import { afterAll, describe, expect, setDefaultTimeout, test } from 'bun:test';
-import { deviceOf, localHost } from '../server/serve';
+import { clientAddress, deviceOf, knownHost, parseHosts, privateAddress, sameOrigin } from '../server/serve';
 import { startSite } from './support/browser';
 
 setDefaultTimeout(10_000);
@@ -60,9 +60,12 @@ function rider(
   };
 }
 
-// A rider over a WebSocket.
-function wsRider(base = BASE): Rider {
-  const ws = new WebSocket(`${base.replace('http', 'ws')}/ws`);
+// Bun's WebSocket takes headers too, which the DOM's WebSocket type (the tsconfig has the DOM's types) doesn't know
+const BunWebSocket = WebSocket as unknown as new (url: string, options: Bun.WebSocketOptions) => WebSocket;
+
+// A rider over a WebSocket, with whatever headers a browser or a proxy would send.
+function wsRider(base = BASE, headers?: Record<string, string>): Rider {
+  const ws = new BunWebSocket(`${base.replace('http', 'ws')}/ws`, { headers });
   return rider(
     (m) => ws.send(JSON.stringify(m)),
     (fn) => (ws.onmessage = (e) => fn(JSON.parse(e.data as string))),
@@ -216,8 +219,8 @@ describe('the page', () => {
 });
 
 describe('who may use the race server', () => {
-  const asked = (host: string | null, listening = '0.0.0.0') =>
-    localHost(new Request('http://127.0.0.1/ws', { headers: host === null ? {} : { Host: host } }), listening);
+  const asked = (host: string | null, listening = '0.0.0.0', allowed?: string[]) =>
+    knownHost(new Request('http://127.0.0.1/ws', { headers: host === null ? {} : { Host: host } }), listening, allowed);
 
   test('addresses, localhost and local network names', () => {
     for (const host of [
@@ -244,6 +247,112 @@ describe('who may use the race server', () => {
   test('unless the server was started on that name', () => {
     expect(asked('games.example.com:8000', 'games.example.com')).toBe(true);
     expect(asked('other.example.com:8000', 'games.example.com')).toBe(false);
+  });
+
+  test("the site's own public name, minigames.ericbs.dev", () => {
+    for (const host of [
+      'minigames.ericbs.dev',
+      'minigames.ericbs.dev:443',
+      'MiniGames.EricBS.dev',
+      'minigames.ericbs.dev.',
+    ])
+      expect([host, asked(host)]).toEqual([host, true]);
+    for (const host of [
+      'ericbs.dev',
+      'evil.minigames.ericbs.dev',
+      'minigames.ericbs.dev.evil.com',
+      'minigames-ericbs.dev',
+    ])
+      expect([host, asked(host)]).toEqual([host, false]);
+  });
+
+  test('ALLOWED_HOSTS takes the place of the public names', () => {
+    expect(asked('games.example.com', '127.0.0.1', ['games.example.com', 'play.example.org'])).toBe(true);
+    expect(asked('play.example.org:443', '127.0.0.1', ['games.example.com', 'play.example.org'])).toBe(true);
+    expect(asked('minigames.ericbs.dev', '127.0.0.1', ['games.example.com'])).toBe(false);
+    // local names are still fine
+    expect(asked('localhost:8000', '127.0.0.1', [])).toBe(true);
+  });
+
+  test('ALLOWED_HOSTS is read as names separated by commas', () => {
+    expect(parseHosts('minigames.ericbs.dev')).toEqual(['minigames.ericbs.dev']);
+    expect(parseHosts(' Games.Example.com , https://play.example.org:443/, ')).toEqual([
+      'games.example.com',
+      'play.example.org',
+    ]);
+    expect(parseHosts('')).toEqual([]);
+    for (const bad of ['*.example.com', 'two words', 'games_example.com', 'a..b', '[::1]'])
+      expect([bad, parseHosts(bad)]).toEqual([bad, null]);
+  });
+
+  const from = (origin: string | null, host: string, allowed?: string[]) =>
+    sameOrigin(
+      new Request('http://127.0.0.1/ws', { headers: { Host: host, ...(origin ? { Origin: origin } : {}) } }),
+      allowed,
+    );
+
+  test("a page on the same host, or on the site's public name", () => {
+    expect(from('http://localhost:8000', 'localhost:8000')).toBe(true);
+    expect(from('https://minigames.ericbs.dev', 'minigames.ericbs.dev')).toBe(true);
+    // a proxy that passes requests on with its own address as the Host (nginx, unless told otherwise)
+    expect(from('https://minigames.ericbs.dev', '127.0.0.1:8000')).toBe(true);
+    expect(from('https://play.example.org', '127.0.0.1:8000', ['play.example.org'])).toBe(true);
+    // not a browser
+    expect(from(null, '127.0.0.1:8000')).toBe(true);
+  });
+
+  test('not a page on another site', () => {
+    for (const origin of [
+      'https://evil.example',
+      'https://minigames.ericbs.dev.evil.com',
+      'null',
+      'chrome-extension://abc',
+    ])
+      expect([origin, from(origin, '127.0.0.1:8000')]).toEqual([origin, false]);
+    expect(from('https://minigames.ericbs.dev', '127.0.0.1:8000', ['play.example.org'])).toBe(false);
+  });
+
+  const forwarded = (xff: string | null, peer: string, behindProxy = true) =>
+    clientAddress(
+      new Request('http://127.0.0.1/ws', { headers: xff === null ? {} : { 'X-Forwarded-For': xff } }),
+      peer,
+      behindProxy,
+    );
+
+  test('behind a proxy, a player is the address the proxy forwards', () => {
+    expect(forwarded('203.0.113.5', '127.0.0.1')).toBe('203.0.113.5');
+    expect(forwarded('203.0.113.5', '::1')).toBe('203.0.113.5');
+    expect(forwarded('203.0.113.5', '::ffff:172.18.0.2')).toBe('203.0.113.5'); // a proxy in another container
+    // the proxy adds the address it was asked from at the end; whatever came before it is the player's own word
+    expect(forwarded('1.2.3.4, 203.0.113.5', '127.0.0.1')).toBe('203.0.113.5');
+    expect(forwarded('2001:db8:1:2::5', '127.0.0.1')).toBe('2001:db8:1:2::5');
+    expect(forwarded('203.0.113.5:41234', '10.0.0.2')).toBe('203.0.113.5');
+    expect(forwarded('[2001:db8::5]:41234', 'fd00::2')).toBe('2001:db8::5');
+  });
+
+  test('but only from a proxy on this computer or a private network, and only when there is one', () => {
+    expect(forwarded('203.0.113.5', '198.51.100.7')).toBe('198.51.100.7');
+    expect(forwarded('203.0.113.5', '2001:db8::7')).toBe('2001:db8::7');
+    expect(forwarded('203.0.113.5', '127.0.0.1', false)).toBe('127.0.0.1');
+    expect(forwarded(null, '127.0.0.1')).toBe('127.0.0.1');
+    expect(forwarded('unknown', '127.0.0.1')).toBe('127.0.0.1');
+  });
+
+  test('private addresses', () => {
+    for (const a of [
+      '127.0.0.1',
+      '10.1.2.3',
+      '172.16.0.1',
+      '172.31.255.255',
+      '192.168.1.20',
+      '::1',
+      '::ffff:10.0.0.1',
+      'fd12:3456::1',
+      'fe80::1',
+    ])
+      expect([a, privateAddress(a)]).toEqual([a, true]);
+    for (const a of ['8.8.8.8', '172.32.0.1', '192.169.1.1', '100.64.0.1', '2001:db8::1', 'fe00::1', ''])
+      expect([a, privateAddress(a)]).toEqual([a, false]);
   });
 
   test('a device is its IPv4 address, or the first 64 bits of its IPv6 one', () => {
@@ -488,6 +597,11 @@ describe('limits for one device', () => {
     expect((await fetch(TIGHT + '/net/events')).status).toBe(429);
   });
 
+  test('X-Forwarded-For counts for nothing without a proxy in front (mise run production has one)', async () => {
+    const headers = { ...upgrade, 'X-Forwarded-For': '203.0.113.9' };
+    expect((await fetch(TIGHT + '/ws', { headers })).status).toBe(429);
+  });
+
   test('a connection that closes makes room for another', async () => {
     y.close();
     await Bun.sleep(200);
@@ -533,5 +647,68 @@ describe('limits for one device', () => {
     expect(r.status).toBe(400);
     ctl.abort();
     x.close();
+  });
+});
+
+// mise run production: a reverse proxy serves the site at https://minigames.ericbs.dev and passes requests on. It may
+// pass the Host on as it came (Caddy, Cloudflare Tunnel) or put the server's own address there (nginx, unless told
+// not to), and it adds the address it was asked from to X-Forwarded-For. tests/browser/hosting.test.ts has a real
+// browser go through an https proxy.
+describe('behind a reverse proxy at minigames.ericbs.dev', () => {
+  const hosted = startSite({ behindProxy: true, perDevice: 2 });
+  const HOSTED = hosted.url('').replace(/\/$/, '');
+  afterAll(() => hosted.stop());
+  const page = { Origin: 'https://minigames.ericbs.dev' };
+  const kept = { ...page, Host: 'minigames.ericbs.dev' };
+  const rewritten = { ...page, Host: `127.0.0.1:${hosted.port}` };
+  const upgrade = { Upgrade: 'websocket', Connection: 'Upgrade' };
+  const player = (address: string, headers: Record<string, string> = kept) =>
+    wsRider(HOSTED, { ...headers, 'X-Forwarded-For': address });
+
+  test('a page on the site races, with the Host passed on as it came', async () => {
+    const r = player('203.0.113.1');
+    await r.opened;
+    r.send({ t: 'hello', name: 'Annie' });
+    expect(await r.next('welcome')).toMatchObject({ share: '' });
+    r.close();
+  });
+
+  test("or with the proxy's own address for the server as the Host", async () => {
+    const r = player('203.0.113.2', rewritten);
+    await r.opened;
+    r.send({ t: 'hello', name: 'Bea' });
+    expect(await r.next('welcome')).toBeTruthy();
+    r.close();
+  });
+
+  test('over the event stream and POSTs too', async () => {
+    for (const headers of [kept, rewritten]) {
+      const ctl = new AbortController();
+      const res = await fetch(HOSTED + '/net/events', { headers, signal: ctl.signal });
+      expect(res.status).toBe(200);
+      const first = new TextDecoder().decode((await res.body!.getReader().read()).value);
+      const sid = JSON.parse(first.slice(first.indexOf('{'), first.lastIndexOf('}') + 1)).sid;
+      const body = JSON.stringify([{ t: 'list' }]);
+      const sent = await fetch(`${HOSTED}/net/send?sid=${sid}`, { method: 'POST', body, headers });
+      expect(sent.status).toBe(204);
+      ctl.abort();
+    }
+  });
+
+  test('a page on another site is still refused', async () => {
+    const evil = { ...upgrade, Origin: 'https://evil.example' };
+    expect((await fetch(HOSTED + '/ws', { headers: { ...evil, Host: 'minigames.ericbs.dev' } })).status).toBe(403);
+    expect((await fetch(HOSTED + '/ws', { headers: { ...evil, Host: 'evil.example' } })).status).toBe(403);
+  });
+
+  test('each player behind the proxy is a device of their own', async () => {
+    const a = player('203.0.113.5');
+    const b = player('203.0.113.5', rewritten);
+    await Promise.all([a.opened, b.opened]);
+    const third = { ...kept, ...upgrade, 'X-Forwarded-For': '198.51.100.1, 203.0.113.5' };
+    expect((await fetch(HOSTED + '/ws', { headers: third })).status).toBe(429);
+    const c = player('203.0.113.6');
+    await c.opened;
+    for (const r of [a, b, c]) r.close();
   });
 });
