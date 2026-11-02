@@ -122,7 +122,7 @@ console.log('Edits');
   d3.finish = { x: 60, y: 0, d: 1 };
   const from = P.getPiece(d3, k);
   const snapped = P.moveTo(d3, k, from, 9.3 - 30, 0.4 - 4, 1);
-  check(snapped.snapped && near(snapped.piece.x, 9) && near(snapped.piece.y, 0), 'a dragged piece snaps onto the free end it is dropped near');
+  check(snapped.snapped && near(snapped.piece.x, 9) && near(snapped.piece.y, 0), "a dragged piece snaps onto the end it is dropped near");
   const loose = P.moveTo(d3, k, from, 3.27, 1.11, 1);
   check(!loose.snapped && near(loose.piece.x, 33.5) && near(loose.piece.y, 5), 'a piece dropped in the open lands on the half metre grid');
   // removing the last piece puts the finish back where it hung from
@@ -130,6 +130,11 @@ console.log('Edits');
   P.remove(d4, n);
   const F4 = P.geom(P.getPiece(d4, P.finishIndex(d4))).ends[0], L4 = endAt(d4, n - 1, 1);
   check(d4.pieces.length === n - 1 && near(F4.x, L4.x) && near(F4.y, L4.y), 'removing the last piece moves the finish back to the end before it');
+  // where the track can carry on: a new level ends on the start pad; a closed loop's way out stays open
+  const o0 = P.openEnds(P.newLevel('t'));
+  check(o0.length === 2 && o0.some(E => E.i === 0 && E.e === 0) && o0.some(E => E.i === 0 && E.e === 1), 'a new level can be built on from either end of the start pad');
+  const d5 = chain(['line2', 'loop3', 'loop1']), o5 = P.openEnds(d5), out = o5.find(E => E.i === 3);
+  check(o5.length === 2 && out && out.e === 1 && near(out.x, 17) && near(out.ox, 1), 'a closed loop leaves its way out open to build on');
   // loading cleans up whatever is in storage
   const s = P.sanitize({ name: 'x'.repeat(80) + '\u0007', pieces: [{ t: 'loop3', x: '3', y: 1e9, a: -15, m: 1 }, { t: 'start' }, { t: 'nope' }, null, 5], finish: { x: 'a' } });
   check(s.name.length === P.NAME_MAX && s.pieces.length === 1 && s.pieces[0].y === 5000 && s.pieces[0].a === 345 && s.pieces[0].m === true && near(s.finish.x, 9),

@@ -213,7 +213,10 @@
       <div class="br-menu">
         <button class="b go outlined" id="br-go-solo" type="button">Single player</button>
         <button class="b sky outlined" id="br-go-mp" type="button">Multiplayer</button>
-        <button class="b plain outlined" id="br-go-garage" type="button">Garage</button>
+        <div class="br-menu-pair">
+          <button class="b plain outlined" id="br-go-garage" type="button">Garage</button>
+          <button class="b plain outlined" id="br-go-editor" type="button">Level editor</button>
+        </div>
       </div>
       <p class="br-how" id="br-home-how"></p>
       </div>
@@ -266,6 +269,45 @@
       </div>
     </div>
   </section>
+
+  <!-- level editor: My levels (bike-race-editor.js) -->
+  <section class="br-screen" id="br-mylevels" hidden>
+    <button class="hub-back outlined" id="br-ml-back" type="button">Back</button>
+    <div class="br-col">
+      <div class="br-head"><h1 class="outlined">My levels</h1></div>
+      <p class="br-sub2">Build tracks from ready-made pieces, test them, then ride them here.</p>
+      <button class="b go outlined br-ml-new" id="br-ml-new" type="button">New level</button>
+      <div class="br-ml-list" id="br-ml-list"></div>
+    </div>
+  </section>
+
+  <!-- level editor: the build screen, drawn on the game canvas (bike-race-editor.js) -->
+  <div class="br-ed" id="br-editor" hidden>
+    <div class="br-ed-top">
+      <div class="br-ed-tl">
+        <button class="br-round" id="br-ed-back" type="button" aria-label="Back to My levels"><svg viewBox="0 0 24 24" aria-hidden="true"><path class="ln" d="M14.5 5.5 8 12l6.5 6.5"/></svg></button>
+        <button class="br-round" id="br-ed-undo" type="button" aria-label="Undo"><svg viewBox="0 0 24 24" aria-hidden="true"><path class="ln" d="M8.5 9.5h7a4.5 4.5 0 0 1 0 9H11"/><path d="M4 9.5 9.6 4.6v9.8Z"/></svg></button>
+        <button class="br-round" id="br-ed-redo" type="button" aria-label="Redo"><svg viewBox="0 0 24 24" aria-hidden="true"><path class="ln" d="M15.5 9.5h-7a4.5 4.5 0 0 0 0 9H13"/><path d="M20 9.5 14.4 4.6v9.8Z"/></svg></button>
+      </div>
+      <div class="br-ed-title"><div class="outlined" id="br-ed-name">My level</div><div class="br-ed-count" id="br-ed-count"></div></div>
+      <button class="b go outlined br-ed-test" id="br-ed-test" type="button"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 4.5v15l12.5-7.5Z"/></svg>Test</button>
+    </div>
+    <div class="br-ed-hint" id="br-ed-hint" aria-live="polite"></div>
+    <div class="br-ed-bar">
+      <div class="br-ed-modes" role="radiogroup" aria-label="Mode">
+        <button type="button" class="outlined build" data-mode="build" aria-pressed="true">Build</button>
+        <button type="button" class="outlined edit" data-mode="edit" aria-pressed="false">Edit</button>
+        <button type="button" class="outlined delete" data-mode="delete" aria-pressed="false">Delete</button>
+      </div>
+      <div class="br-ed-row" id="br-ed-row" aria-label="Track pieces"></div>
+      <div class="br-ed-acts">
+        <button type="button" id="br-ed-rotl" aria-label="Rotate left"><svg viewBox="0 0 24 24" aria-hidden="true"><path class="ln" d="M6.6 9.2A7 7 0 1 1 5 14"/><path d="M3.2 4.6l6.3 1.4-4.2 4.9Z"/></svg></button>
+        <button type="button" id="br-ed-rotr" aria-label="Rotate right"><svg viewBox="0 0 24 24" aria-hidden="true"><path class="ln" d="M17.4 9.2A7 7 0 1 0 19 14"/><path d="M20.8 4.6l-6.3 1.4 4.2 4.9Z"/></svg></button>
+        <button type="button" id="br-ed-fliph" aria-label="Flip left to right"><svg viewBox="0 0 24 24" aria-hidden="true"><path class="ln dash" d="M12 3v18"/><path d="M9.5 6v12L3 12Z"/><path class="hollow" d="M14.5 6v12L21 12Z"/></svg></button>
+        <button type="button" id="br-ed-flipv" aria-label="Flip upside down"><svg viewBox="0 0 24 24" aria-hidden="true"><path class="ln dash" d="M3 12h18"/><path d="M6 9.5h12L12 3Z"/><path class="hollow" d="M6 14.5h12L12 21Z"/></svg></button>
+      </div>
+    </div>
+  </div>
 
   <section class="br-screen" id="br-mp" hidden>
     <button class="hub-back outlined" id="br-mp-back" type="button">Back</button>
@@ -411,6 +453,8 @@
 <script src="js/bike-race-art.js"></script>
 <script src="js/bike-race-net.js"></script>
 <script src="js/bike-race.js"></script>
+<script src="js/bike-race-pieces.js"></script>
+<script src="js/bike-race-editor.js"></script>
 <script type="module" src="js/main.js"></script>
 </body>
 </html>

@@ -86,6 +86,7 @@ public/js/bike-race-pieces.js the level editor's track pieces and its level buil
 public/js/bike-race-art.js    canvas drawing: world backdrops, the track line, lava, loops, flags, bikes, riders, particles
 public/js/bike-race-net.js    the connection to the race server: WebSocket or event stream, reconnecting
 public/js/bike-race.js        the game: saves, sound, tilt and touch input, camera and loop, sessions, HUD, menus
+public/js/bike-race-editor.js the level editor: My levels and the build screen (docs/bike-race-editor.md)
 public/index.html             #br-app markup (canvas, HUD, touch areas, screens, modals) and the script tags
 public/css/styles.css         the "Bike Race" section, all classes start with br-
 public/js/hub.js              routes #bike-race and #bike-race/<code> to the game
@@ -94,6 +95,7 @@ tools/serve.py                the site server and race server behind `mise run a
 tools/check-bike-levels.js    proves every bike can finish every level and suggests par times
 tools/check-bike-pieces.js    checks the editor's pieces and that tracks made of them can be ridden
 tools/test-bike-race-browser.js   phone-sized browser tests for the garage and the sheets around it
+tools/test-bike-race-editor.js    phone-sized browser tests for the level editor
 tools/test-bike-race-online.js    live races between phones in the browser, and the no-server fallback
 tools/test-race-server.js     the race server's messages, without a browser
 tools/render-bike-race-card.js    redraws the menu card picture with the game's own drawing code
@@ -238,6 +240,8 @@ Address options for testing in a browser:
 - `?net=ws` or `?net=sse` uses only that way of reaching the race server.
 
 ## Saved data
+
+Levels made in the editor are kept separately, under `bikerace.levels.v1` (see the editor notes).
 
 `localStorage` key `bikerace.v1` holds best times, stars, settings (ghost, sound, tilt), the chosen bike, paint,
 name and `seen` (bikes already looked at in the garage). On load, a saved bike that doesn't exist or isn't

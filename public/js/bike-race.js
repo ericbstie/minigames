@@ -233,7 +233,7 @@ let app, canvas, g, dpr = 1;
 const cam = new A.Camera();
 const particles = new A.Particles();
 let running = false, raf = 0, last = 0, acc = 0, clockT = 0;
-let view = 'home';      // home | worlds | levels | garage | mp | play
+let view = 'home';      // home | worlds | levels | garage | mp | mylevels | editor | play
 let S = null;           // the session being played
 let attract = null;     // the computer rider behind the menus
 let started = false;
@@ -250,6 +250,8 @@ function frame(now) {
   if (!running) return;
   raf = requestAnimationFrame(frame);
   const dt = Math.min(0.1, Math.max(0, (now - last) / 1000)); last = now; clockT += dt;
+  // the level editor draws its own scene (bike-race-editor.js)
+  if (view === 'editor' && window.BikeRaceEditor) { window.BikeRaceEditor.frame(g, dpr, dt, clockT); Sound.engine(0, 0, false); return; }
   const sess = view === 'play' ? S : attract;
   if (sess) {
     if (!sess.paused) {
@@ -284,8 +286,12 @@ function followCamera(sess, dt, snap) {
 
 // ------------------------------------------------------------------------------------------------
 // Sessions
+// opts.custom: a level from the editor, { level (from BikeRacePieces.buildCustomLevel), name, from, onFinish, onExit }.
+// It plays in Clover Hills' colours, without stars, par or a ghost.
 function makeSession(mode, levelId, opts = {}) {
-  const def = C.levelById(levelId), world = C.worldOf(levelId), level = getLevel(levelId);
+  const cu = opts.custom || null;
+  const def = cu ? { id: 'custom', name: cu.name, index: 0, par: 0, custom: true } : C.levelById(levelId);
+  const world = cu ? C.WORLDS[0] : C.worldOf(levelId), level = cu ? cu.level : getLevel(levelId);
   const sim = new C.Sim(level);
   const look = mode === 'attract' ? { bike: save.bike, paint: A.paintAt(save.paint), name: '' } : myLook();
   const me = sim.addBike(look.bike, { id: 'me' });
@@ -295,10 +301,10 @@ function makeSession(mode, levelId, opts = {}) {
     phase: mode === 'attract' ? 'run' : 'ready', paused: false,
     ghost: null, rec: [], recNext: 0, cpus: [], remote: new Map(),
     countdown: 0, crashTimer: 0, finishTimer: 0, respawnTimer: 0, sendTimer: 0, lastCount: -1,
-    results: null, finishedSent: false, flash: [], cpSeen: 0,
+    results: null, finishedSent: false, flash: [], cpSeen: 0, custom: cu,
   };
   if (mode === 'attract') me.running = true;
-  if (mode === 'solo' && save.ghost) sess.ghost = loadGhost(levelId);
+  if (mode === 'solo' && save.ghost && !cu) sess.ghost = loadGhost(levelId);
   return sess;
 }
 
@@ -492,7 +498,8 @@ function hud() {
   if (ui.touch.classList.contains('ready') !== waiting) ui.touch.classList.toggle('ready', waiting);
   // progress dots
   const L = s.level.finishX, pct = (x) => Math.max(0, Math.min(100, x / L * 100)).toFixed(1) + '%';
-  ui.dotMe.style.left = pct(me.c.x);
+  // an editor track can go any way, so its progress is the distance along the track
+  ui.dotMe.style.left = s.custom ? Math.max(0, Math.min(100, me.pathS / s.level.finishS * 100)).toFixed(1) + '%' : pct(me.c.x);
   if (s.ghost && s.ghost.frames.length) { ui.dotGhost.hidden = false; ui.dotGhost.style.left = pct(ghostPose(s.ghost.frames, me.running ? me.time : 0).x); }
   else ui.dotGhost.hidden = true;
   const others = [];
@@ -540,12 +547,31 @@ function startSolo(levelId) {
   center(`<span class="br-lvl">${esc(S.world.name)} ${S.def.index + 1} · ${esc(S.def.name)}</span>${how}${best ? `<span class="br-best">Best ${fmt(best)}s</span>` : ''}`, 'ready', tip);
   S.subText = `${S.world.name} ${S.def.index + 1}`;
 }
+// a level from the editor: a test ride from the editor, or one of My levels
+function startCustom(cu) {
+  closeModals();
+  S = makeSession('solo', 'custom', { custom: cu });
+  enterPlay();
+  const how = isPhone() ? 'Hold <b>GAS</b> to start' : 'Press <b>↑</b> to start';
+  center(`<span class="br-lvl">${esc(cu.from === 'editor' ? 'Test ride · ' + cu.name : cu.name)}</span>${how}${cu.best ? `<span class="br-best">Best ${fmt(cu.best)}s</span>` : ''}`, 'ready');
+  S.subText = cu.name;
+}
+const backLabel = (sess) => sess && sess.custom ? (sess.custom.from === 'editor' ? 'Edit' : 'My levels') : 'Levels';
 function restart() {
   if (!S) return;
-  if (S.mode === 'solo') startSolo(S.levelId);
+  if (S.custom) startCustom(S.custom);
+  else if (S.mode === 'solo') startSolo(S.levelId);
   else if (S.mode === 'cpu') startCpuRace(S.levelId, S.cpus.length);
 }
 function soloFinished(sess) {
+  if (sess.custom) {
+    // the editor keeps best times for its levels
+    const r = sess.custom.onFinish ? sess.custom.onFinish(sess.me.finishTime) : {};
+    sess.newBest = !!r.newBest; sess.prevBest = r.prev || 0; sess.customBest = r.best || sess.me.finishTime;
+    if (r.best) sess.custom.best = r.best;
+    sess.phase = 'finished'; sess.finishTimer = 1.2;
+    return;
+  }
   const id = sess.levelId, time = sess.me.finishTime, prev = save.best[id];
   const stars = C.starsFor(sess.def, time), prevStars = save.stars[id] || 0;
   sess.newBest = !prev || time < prev - 1e-9;
@@ -562,6 +588,19 @@ function soloFinished(sess) {
 }
 function showResult(sess) {
   const def = sess.def, time = sess.me.finishTime, stars = sess.stars;
+  ui.result.classList.toggle('custom', !!sess.custom);
+  ui.resLevels.textContent = backLabel(sess);
+  if (sess.custom) {
+    ui.resTitle.textContent = sess.custom.from === 'editor' ? 'Test ride done!' : 'Finished!';
+    ui.resTime.textContent = fmt(time) + 's';
+    ui.resBest.textContent = fmt(sess.customBest) + 's';
+    ui.resNew.hidden = !sess.newBest || !sess.prevBest;
+    ui.resHint.textContent = sess.custom.from === 'editor' ? 'Edit goes back to the editor.' : '';
+    ui.resNext.hidden = true; ui.resUnlock.hidden = true;
+    garageButtons();
+    openModal(ui.result);
+    return;
+  }
   ui.resStars.forEach((el, i) => { el.classList.toggle('on', i < stars); el.style.animationDelay = (0.15 + i * 0.18) + 's'; });
   const lastInWorld = def.index === sess.world.levels.length - 1, lastWorld = sess.world === C.WORLDS[C.WORLDS.length - 1];
   ui.resTitle.textContent = sess.firstClear && lastInWorld ? (lastWorld ? 'Every world cleared!' : `${sess.world.name} cleared!`)
@@ -589,6 +628,7 @@ function showCrash() {
     ? ['Carry more speed into the jump to clear the gap.', 'Keep the gas on as you take off, and land level.']
     : [air, 'Land with both wheels at the same time for a smooth touchdown.', 'Ease off the gas before big bumps.', 'Lean the way the ground slopes where you will land.'];
   ui.crashText.textContent = tips[Math.floor(Math.random() * tips.length)];
+  ui.crashLevels.textContent = backLabel(S);
   if (S.me.crashKind === 'lava') ui.crashTitle.textContent = 'Too hot!';
   else if (S.me.crashKind === 'fall' || S.me.crashKind === 'pit') ui.crashTitle.textContent = 'Down the pit!';
   else ui.crashTitle.textContent = 'Wipeout!';
@@ -789,7 +829,7 @@ async function invite() {
 // ------------------------------------------------------------------------------------------------
 // Menus
 let ui = {};
-const VIEWS = ['home', 'worlds', 'levels', 'garage', 'mp', 'desktop'];
+const VIEWS = ['home', 'worlds', 'levels', 'garage', 'mp', 'mylevels', 'editor', 'desktop'];
 function showView(v) {
   if (!isPhone() && !allowKeyboard && v !== 'play') v = 'desktop';
   view = v;
@@ -802,6 +842,7 @@ function showView(v) {
   if (v === 'desktop') ui.deskUrl.textContent = location.origin + location.pathname + '#bike-race';
   if (v === 'worlds') renderWorlds();
   if (v === 'garage') renderGarage();
+  if ((v === 'mylevels' || v === 'editor') && window.BikeRaceEditor) window.BikeRaceEditor.onView(v);
   if (v === 'mp') { Net.connect(); renderMp(); clearInterval(listTimer); listTimer = setInterval(() => { if (view === 'mp') { if (!roomState) Net.send({ t: 'list' }); renderConn(); } }, 3000); }
   else clearInterval(listTimer);
   const scr = $('br-' + v); if (scr) scr.scrollTop = 0;
@@ -914,7 +955,7 @@ function closeGarage() {
   enterPlay();
   if (from.modal === 'pause') pause();
   else if (from.modal === 'crash') openModal(ui.crash);
-  else if (from.modal === 'result') { renderUnlock(S); openModal(ui.result); }
+  else if (from.modal === 'result') { if (!S.custom) renderUnlock(S); openModal(ui.result); }
   else openModal(ui.raceResult);
 }
 function pickBike(b) {
@@ -1148,8 +1189,9 @@ function pause() {
   if (S.mode !== 'online') S.paused = true;
   ui.pauseText.textContent = S.mode === 'online' ? 'The race keeps going while this menu is open.' : `${S.world.name} ${S.def.index + 1} · ${S.def.name}` + (save.best[S.levelId] && S.mode === 'solo' ? ` · Best ${fmt(save.best[S.levelId])}s` : '');
   ui.pRestart.hidden = S.mode === 'online';
-  ui.pLevels.textContent = S.mode === 'solo' ? 'Levels' : 'Leave race';
-  ui.pGhostRow.hidden = S.mode !== 'solo';
+  ui.pLevels.textContent = S.mode === 'solo' ? backLabel(S) : 'Leave race';
+  ui.pGhostRow.hidden = S.mode !== 'solo' || !!S.custom;
+  if (S.custom) ui.pauseText.textContent = S.custom.name + (S.custom.best ? ` · Best ${fmt(S.custom.best)}s` : '');
   garageButtons();
   syncToggles();
   openModal(ui.pause);
@@ -1163,6 +1205,7 @@ function syncToggles() {
   if (ui.pTiltRow) ui.pTiltRow.hidden = !isPhone();
 }
 function leaveToMenu() {
+  if (S && S.custom) { const cu = S.custom; exitPlay(); if (cu.onExit) cu.onExit(); else showView('mylevels'); return; }
   const mode = S && S.mode, w = S && S.world;
   exitPlay();
   if (mode === 'solo') { renderLevels(w); showView('levels'); showLevels(); }
@@ -1182,7 +1225,7 @@ function setup() {
     garage: $('br-garage'), bikes: $('br-bikes'), paints: $('br-paints'), name: $('br-name'), garageStars: $('br-garage-stars'),
     gStage: $('br-g-stage'), gName: $('br-g-name'), gPerk: $('br-g-perk'), gBlurb: $('br-g-blurb'), gStats: $('br-g-stats'), gStatus: $('br-g-status'),
     pause: $('br-pausemenu'), pauseText: $('br-pause-text'), pRestart: $('br-p-restart'), pLevels: $('br-p-levels'), tGhost: $('br-t-ghost'), tSound: $('br-t-sound'), pGhostRow: $('br-p-ghost-row'), pTilt: $('br-p-tilt'), pTiltRow: $('br-p-tilt-row'), pTiltWhy: $('br-p-tilt-why'),
-    crash: $('br-crash'), crashTitle: $('br-crash-title'), crashText: $('br-crash-text'),
+    crash: $('br-crash'), crashTitle: $('br-crash-title'), crashText: $('br-crash-text'), crashLevels: $('br-crash-levels'), resLevels: $('br-res-levels'),
     result: $('br-result'), resStars: [...document.querySelectorAll('#br-result .br-rstar')], resTitle: $('br-res-title'), resTime: $('br-res-time'), resBest: $('br-res-best'), resNew: $('br-res-new'), resHint: $('br-res-hint'), resNext: $('br-res-next'),
     resUnlock: $('br-res-unlock'), resUnlockTitle: $('br-res-unlock-title'), resUnlockSub: $('br-res-unlock-sub'), resUnlockMeter: $('br-res-unlock-meter'), resGarage: $('br-res-garage'),
     raceResult: $('br-raceresult'), rrTitle: $('br-rr-title'), rrList: $('br-rr-list'), rrAgain: $('br-rr-again'), rrRoom: $('br-rr-room'), rrWait: $('br-rr-wait'), rrLeave: $('br-rr-leave'),
@@ -1207,6 +1250,7 @@ function setup() {
   $('br-rotate-back').onclick = toHub;
   $('br-go-mp').onclick = go(() => showView('mp'));
   $('br-go-garage').onclick = go(() => openGarage());
+  $('br-go-editor').onclick = go(() => showView('mylevels'));
   $('br-worlds-back').onclick = () => showView('home');
   $('br-levels-back').onclick = () => showView('worlds');
   $('br-garage-back').onclick = () => closeGarage();
@@ -1339,5 +1383,7 @@ function hide() {
   Sound.engineOff();
   if (view === 'play' && S) pause();
 }
-window.BikeRace = { show, hide, _debug: () => ({ S, attract, save, cam, C, Net, startSolo, startCpuRace, readInput, touchCtl, keys, tilt, tiltAngle, refreshControls, remotePose, roomState, inviteLink }) };
+// what the level editor (bike-race-editor.js) uses from the game
+const editorApi = { startCustom, showView, toast, isPhone, get view() { return view; }, get canvas() { return canvas; }, Sound };
+window.BikeRace = { show, hide, editor: editorApi, _debug: () => ({ S, attract, save, cam, C, Net, startSolo, startCpuRace, readInput, touchCtl, keys, tilt, tiltAngle, refreshControls, remotePose, roomState, inviteLink }) };
 })();
