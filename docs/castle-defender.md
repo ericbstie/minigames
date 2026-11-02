@@ -159,7 +159,7 @@ and rushing them before weapons (`expand`) falls before 5 minutes, just as rushi
 pushing out costs no survival time and is the way the world opens up. Since the gold boys bring their coins
 home ten times over (and to the king, so the bot gets them too), the bot ends with over a million coins it has
 nothing left to spend on, and the castle holds about as long: 12:10 with 12 outposts and the border 138 paces out,
-against 12:22, 11 and 113 just before (one run each). Enemies from a camp 2 tiers out have about
+against 12:22, 11 and 113 just before (one run each, before the bosses came), and 12:15 with the bosses. Enemies from a camp 2 tiers out have about
 2.6 times the hit points and 2.1 times the coins of ones from home.
 
 With bosses the bot held 11:21, 11:48 and 11:11 (12:19 and 11:01 without them, the same day) and beat every boss that
