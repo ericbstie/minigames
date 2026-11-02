@@ -180,6 +180,18 @@ The lightning and the flames hit by the weapon (and the shops), not by a share o
 they keep up with what the king builds, not with how tough the enemy gets, and the enemy still outgrows them in the
 end. The numbers are in `castle-defender-lands.ts`.
 
+**Dirty money** (the back roads, 135 paces out). From then on a beaten boss leaves three sacks of dirty money
+(`bossDown`) and a cleared camp one (`clearCamp`), thrown out of where it fell and landing inside the border, where
+the king can get to them (`dropSacks`, `addSack`). No pad takes it. The king picks a sack up by riding over it and
+carries up to six, hanging on his horse's sides and piled behind the saddle (`W.kingSacks`), with a count in the
+bottom corner; a seventh waits on the ground. Riding into one of his shops' tills leaves what he carries there to be
+washed (`updateSacks`): the shop washes one sack at a time, in 30 seconds divided by its level, soap suds bubbling
+out of it, and every sack washed makes everything of the king's hit 5% harder, for good (`G.washed`;
+`G.might` is `kingMight`, the shops' trade times one plus 5% a sack). Markers at the edge of the screen point the way
+to the nearest sack while the horse has room (a sack) and to the nearest shop while it carries any (a shop). It is
+the one thing in the game that keeps adding power for as long as the bosses keep coming, so a long game is a round
+of beating the boss, picking up after it and riding the sacks home.
+
 ## Opening and leaving
 
 The game is a `Game` for the hub (`game`, at the end of `castle-defender.ts`; [development.md](development.md) has
@@ -208,7 +220,9 @@ towers, cannons and their aim, the gold hut and its boys), each stretch of wall'
 front (its road, the stretches added as it fell back, whether and when it opened, its timers and its camp, the
 outposts' camps after the first five, and their timer), the
 ruins, the outposts and their field cannons, the lands open, the lots and shops with their tills, the relics, the
-marks waiting to be dug (and how far each is dug) and when the next comes, the coins paid into
+marks waiting to be dug (and how far each is dug) and when the next comes, the dirty money (the sacks on the king's
+horse, the ones lying about, the ones each shop is washing and how far into the one in it is, and how many have been
+washed), the coins paid into
 pads, the enemies (each with the road it walks, stored once for all who share it, a boss among them) and the groups
 about to set off, when the next boss comes (and from where, once its warning is up), and the coins on the ground.
 Arrows, cannon balls,
@@ -224,8 +238,8 @@ dust, no celebration) through the same helpers the purchases use (`makeForge`, `
 `outpostPad`). The `SavedWorld` Schema checks every field and that the save fits this game (six wall towers,
 every stretch of wall, the five first fronts in order and then only camps of outposts that stand, enemies on roads
 that are there, looks their kind has, one boss at most). A game saved before there were bosses meets its first a minute after it carries on. A save from before the
-lands (no `land`, `lotSeq` or `shops`, no `relics`, `digs` or `digNext`) carries on with none open; they open as
-the border gets there. A save that
+lands (no `land`, `lotSeq` or `shops`, no `relics`, `digs` or `digNext`, no `money`) carries on with none open;
+they open as the border gets there. A save that
 doesn't fit starts a new game, and `castle.bestTime` is a key of its own, so it is kept either way. A save that
 fits but still can't be set up (a mistake in this code) is reported, removed, and a new game starts. A save from
 before there were bazookas (the forge at machine guns, maybe with +1s on them) fits: the forge offers bazookas next,
@@ -285,6 +299,11 @@ the bosses at 18 and 21 minutes and falls to the one at 24 or 27. When the light
 of the enemy's hit points instead of hitting by the weapon, the castle still stood at 60 minutes: the enemy could
 never outgrow them.
 
+With the dirty money the bot held 30:03, 33:49 and 32:25. The back roads open at 19 to 23 minutes, with the ring of
+outposts that takes the border past 135 paces; the bot picks up every sack and rides it to the nearest shop, and has
+15 to 17 washed by the end (75 to 85% more damage), which beats one more boss than before. It is the only power that
+keeps coming, but slower than the enemy grows, so the castle still falls in the end.
+
 ## Checks
 
 ```sh
@@ -301,4 +320,6 @@ balance change. `KEEP_SHOTS=1` keeps the browser test's screenshots in `.shots/`
 past the border), an `advance(seconds)` that runs the game faster than real time, `buy(padId)`, `lockLands()`, lists
 of the pads, outpost spots, fronts, claims, and lots and shops with their tills, and the boss on the field (`boss()`;
 set `G.boss.next` to bring one sooner). For the treasure: `digs()`, `dig(at?)` for a new mark, `relic(i?)` to dig
-one up where the king stands, `setRelics(levels)` and `hurt(enemy, dmg, raw?)`.
+one up where the king stands, `setRelics(levels)` and `hurt(enemy, dmg, raw?)`. For the dirty money: `sacks()`,
+`dropSacks(x, z, n)` (as a boss or a camp throws them, once the back roads are open), `money()` (what the king
+carries, what has been washed, and `G.might`) and `washTime(level)`.

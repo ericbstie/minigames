@@ -53,7 +53,6 @@ import {
   shopRate,
   landWealth,
   closestOnRoad,
-  tradeMight,
   TRADE,
   DIG_SECONDS,
   DIG_EVERY,
@@ -70,6 +69,13 @@ import {
   sturdy,
   pickRelic,
   digsLeft,
+  SACKS_BOSS,
+  SACKS_CAMP,
+  SACK_MAX,
+  SACKS_GROUND,
+  WASH,
+  washTime,
+  kingMight,
 } from './castle-defender-lands';
 import { GameHub, type Game as HubGame } from './hub';
 import { animate, forget, listen, load, type PageServices, run, runSync, save } from './page';
@@ -1541,6 +1547,30 @@ function shovelGeo(): Geo {
     vc(B(0.44, 0.1, 0.1), '#6b4630', T(0, 2.17, -0.9)),
   ]);
 }
+// a sack of dirty money, tied at the neck, stained, a coin painted on it; its bottom at the origin
+function dirtySackGeo(): Geo {
+  const sack = '#9a8350';
+  return merge([
+    vc(S(0.5, 10, 8), sack, T(0, 0.46, 0, 0, 0, 0, 1, 0.92, 1)),
+    vc(Cy(0.15, 0.26, 0.26, 8), sack, T(0, 0.94, 0)),
+    vc(Cy(0.2, 0.2, 0.08, 8), '#4a3428', T(0, 0.9, 0)),
+    vc(Co(0.26, 0.22, 8), sack, T(0, 1.15, 0, Math.PI, 0, 0)),
+    vc(Cy(0.21, 0.21, 0.05, 12), '#f2b52a', T(0, 0.5, 0.47, Math.PI / 2, 0, 0)),
+    vc(Cy(0.14, 0.14, 0.06, 12), '#ffd84a', T(0, 0.5, 0.48, Math.PI / 2, 0, 0)),
+    vc(S(0.13, 6, 5), '#66703a', T(-0.3, 0.26, 0.3)),
+    vc(S(0.1, 6, 5), '#66703a', T(0.34, 0.66, 0.2)),
+    vc(S(0.09, 6, 5), '#66703a', T(0.12, 0.2, -0.44)),
+  ]);
+}
+// where the king's sacks go on his horse: x, y, z, and how far each leans out
+const KING_SACKS: [number, number, number, number][] = [
+  [-0.5, 0.42, -0.2, 0.3],
+  [0.5, 0.42, -0.2, -0.3],
+  [-0.5, 0.42, 0.3, 0.3],
+  [0.5, 0.42, 0.3, -0.3],
+  [-0.2, 1.1, -0.58, 0.25],
+  [0.2, 1.1, -0.58, -0.25],
+];
 function treeGeo(seed: number, wood = '#6b4630'): Geo {
   const R = mulberry(seed),
     p = [vc(Co(0.32, 4.2, 6), wood, T(0, 2.1, 0))];
@@ -2279,6 +2309,9 @@ interface Shop {
   side: Pt; // where its pad goes once it is built (it starts on the lot)
   b: Building | null;
   pad?: Pad;
+  wash: number; // sacks of dirty money waiting to be washed
+  washT: number; // how long the one being washed has been in
+  suds: number; // till the next bubbles
 }
 interface Coin {
   x: number;
@@ -2524,6 +2557,7 @@ interface World {
   pillarGeo: Geo;
   king: THREE.Group;
   kingWeapon: THREE.Group;
+  kingSacks: THREE.Mesh[]; // the dirty money he carries, one for each sack
   ring: BasicMesh;
   castle: LambertMesh;
   emblem: THREE.CanvasTexture;
@@ -2605,6 +2639,10 @@ interface Game {
   stormT: number; // till the Storm Horn's next lightning
   embers: Ember[]; // fallen enemies about to burst into flames (Ember Crown)
   chests: Chest[]; // chests come up out of the ground, for a moment
+  sacks: Sack[]; // dirty money on the ground
+  carried: number; // sacks of it on the king's horse
+  washed: number; // sacks the shops have washed (each makes the army WASH stronger)
+  fullT: number; // till the king says again that his horse is full
   posts: Post[];
   toastQ: string[];
   toastT: number;
@@ -2634,6 +2672,8 @@ interface UI {
   bossFill: HTMLElement;
   bossDir: HTMLElement;
   digDir: HTMLElement;
+  sackDir: HTMLElement;
+  washDir: HTMLElement;
   relics: HTMLElement;
   lastCoins?: number;
   bossKey?: string;
@@ -3735,6 +3775,16 @@ function buildWorld() {
   W.king.add(kb);
   W.kingWeapon = new THREE.Group();
   W.king.add(W.kingWeapon);
+  // the sacks of dirty money he carries hang on the horse's sides, and the last two ride behind the saddle
+  W.kingSacks = KING_SACKS.map(([x, y, z, lean]) => {
+    const m = new THREE.Mesh(geoFor(dirtySackGeo, 1), vmat);
+    m.position.set(x, y, z);
+    m.rotation.z = lean;
+    m.scale.setScalar(0.82);
+    m.visible = false;
+    W.king.add(m);
+    return m;
+  });
   scene.add(W.king);
   W.ring = new THREE.Mesh(
     new THREE.RingGeometry(0.94, 1, 72),
@@ -4207,6 +4257,10 @@ function newGame() {
     stormT: STORM_EVERY,
     embers: [],
     chests: [],
+    sacks: [],
+    carried: 0,
+    washed: 0,
+    fullT: 0,
     posts: [],
     toastQ: [],
     toastT: 0,
@@ -4759,6 +4813,7 @@ function clearCamp(c: Camp): void {
   puff(c.x, 1.2, c.z, '#d8d0c4', 16);
   dust(c.x, c.z, 2.6, 12);
   shockwave(c.x, c.z, 6, '#ffffff');
+  dropSacks(c.x, c.z, SACKS_CAMP);
 }
 function updateCamps(dt: number): void {
   const k = G.king;
@@ -5079,6 +5134,7 @@ function openLand(i: number): void {
     G.digNext = G.t;
     toast('Ride to an X and stay on it to dig.');
   }
+  if (i === 2) toast('Beaten bosses and cleared camps leave dirty money now.');
 }
 
 // ------------------------------------------------------------------ shops ----
@@ -5168,6 +5224,9 @@ function addShop(idx: number, x: number, z: number, yaw: number, kind: Biome, lo
     till: { x: tx, z: tz, value: 0, acc: 0, taking: false },
     side: shopPt({ x, z, yaw }, SHOP_PAD[0], SHOP_PAD[1]),
     b: null,
+    wash: 0,
+    washT: 0,
+    suds: 0,
   };
   G.shops.push(s);
   const side = s.side;
@@ -5215,7 +5274,11 @@ function buyShop(s: Shop): void {
   for (const f of G.followers) burst(f.x, 1, f.z, 3, '#ffd84a');
   refreshObstacles();
 }
-const setMight = () => (G.might = tradeMight(G.shops.map((o) => o.lv)));
+const setMight = () =>
+  (G.might = kingMight(
+    G.shops.map((o) => o.lv),
+    G.washed,
+  ));
 // the tills fill, up to what they hold, and the king empties the one he rides over
 function updateShops(dt: number): void {
   const k = G.king;
@@ -5509,6 +5572,125 @@ function lightning(x: number, z: number): void {
   shockwave(x, z, 2.4, '#9fd8ff');
   burst(x, 1, z, 5, '#cfeeff');
   G.shake = Math.max(G.shake, 0.08);
+}
+
+// ------------------------------------------------------------ dirty money ----
+// Once the third land is open, a beaten boss leaves SACKS_BOSS sacks of dirty money and a cleared camp SACKS_CAMP
+// (castle-defender-lands.ts). No pad takes it: the king picks the sacks up by riding over them, carries up to SACK_MAX
+// on his horse and rides them into a shop's till. The shop washes them one at a time (the higher its level the
+// faster), and every sack washed makes everything of the king's hit WASH harder, for good.
+interface Sack {
+  x: number;
+  z: number;
+  fx: number; // where it was thrown from
+  fz: number;
+  t: number; // since it was thrown (it lands at SACK_FLY)
+  o: THREE.Mesh;
+  glint: number;
+}
+const SACK_FLY = 0.7,
+  SACK_SIZE = 1.5, // on the ground (on the horse they are smaller)
+  SACK_ON = 1.9; // how close the king rides to one to pick it up
+// sacks thrown out of (x, z), each landing where the king can get to it
+function dropSacks(x: number, z: number, n: number): void {
+  if (G.land < 3) return;
+  for (let i = 0; i < n && G.sacks.length < SACKS_GROUND; i++) {
+    const a = Math.random() * Math.PI * 2,
+      r = n > 1 ? 1.8 + Math.random() * 2.2 : 1;
+    addSack(x + Math.cos(a) * r, z + Math.sin(a) * r, [x, z]);
+  }
+  if (!G.washed && !G.shops.some((s) => s.wash))
+    toast('Dirty money! No pad takes it: ride it into one of your shops to wash it.');
+}
+// a sack lying at (x, z), or thrown there from `from` (landing as near as the king can get)
+function addSack(x: number, z: number, from?: Pt): Sack {
+  if (from && !G.free) {
+    [x, z] = clampToClaims(G.claims, x, z, 2.2);
+    x = Math.max(cliffMinX(z) + 1.6, x);
+    [x, z] = pushOutOfMesas(x, z, 1.2);
+  }
+  for (const [ox, oz, r] of from ? G.obs || [] : []) {
+    const dx = x - ox,
+      dz = z - oz,
+      d = Math.hypot(dx, dz);
+    if (d < r + 0.7) {
+      x = ox + (dx / (d || 1)) * (r + 0.7);
+      z = oz + (dz / (d || 1)) * (r + 0.7);
+    }
+  }
+  const o = new THREE.Mesh(geoFor(dirtySackGeo, 1), world.vmat);
+  o.castShadow = true;
+  o.rotation.y = Math.random() * Math.PI * 2;
+  o.scale.setScalar(SACK_SIZE);
+  o.position.set(x, 0, z);
+  scene.add(o);
+  G.dispose.push(o);
+  const [fx, fz] = from || [x, z],
+    s: Sack = { x, z, fx, fz, t: from ? 0 : SACK_FLY, o, glint: Math.random() };
+  G.sacks.push(s);
+  return s;
+}
+function updateSacks(dt: number): void {
+  const k = G.king;
+  G.fullT = Math.max(0, G.fullT - dt);
+  for (const s of G.sacks.slice()) {
+    const flying = s.t < SACK_FLY;
+    s.t += dt;
+    if (flying) {
+      // in the air, landing with a thump
+      const f = Math.min(1, s.t / SACK_FLY);
+      s.o.position.set(s.fx + (s.x - s.fx) * f, 2 * (1 - f) + 8 * f * (1 - f), s.fz + (s.z - s.fz) * f);
+      s.o.rotation.x = (1 - f) * 2.5;
+      if (f >= 1) dust(s.x, s.z, 0.6, 4);
+      continue;
+    }
+    s.o.rotation.z = 0.06 * Math.sin(s.t * 3);
+    if ((s.glint -= dt) <= 0) {
+      s.glint = 1.4;
+      burst(s.x, 1.3, s.z, 2, '#c4e070');
+    }
+    if (G.over || Math.hypot(k.x - s.x, k.z - s.z) > SACK_ON) continue;
+    if (G.carried >= SACK_MAX) {
+      if (!G.fullT) floatText('Full: wash them at a shop', s.x, 2.6, s.z, '#ffffff');
+      G.fullT = 4;
+      continue;
+    }
+    G.carried++;
+    G.sacks.splice(G.sacks.indexOf(s), 1);
+    scene.remove(s.o);
+    puff(s.x, 0.8, s.z, '#cbbf98', 5);
+    floatText(`${G.carried}/${SACK_MAX}`, s.x, 2.4, s.z, '#e3f08a');
+  }
+  // into the till of the shop he rides over, and the shops wash what they have
+  for (const sh of G.shops) {
+    if (!sh.lv) continue;
+    const tl = sh.till;
+    if (G.carried && !G.over && Math.abs(k.x - tl.x) < 2.4 && Math.abs(k.z - tl.z) < 2.4) {
+      if (!G.washed && !G.shops.some((o) => o.wash))
+        toast(`The shop washes it clean: every sack makes your army ${Math.round(WASH * 100)}% stronger.`);
+      sh.wash += G.carried;
+      floatText(`${sh.wash} to wash`, tl.x, 2.6, tl.z, '#cfeeff');
+      burst(tl.x, 1, tl.z, 4 + 2 * G.carried, '#cfeeff');
+      G.carried = 0;
+    }
+    if (!sh.wash) continue;
+    const h = shopH(sh.lv);
+    if ((sh.suds -= dt) <= 0) {
+      // soap suds bubble up out of it while it washes
+      sh.suds = 0.2;
+      smoke(sh.x + (Math.random() - 0.5) * 2.4, h * 0.85, sh.z + (Math.random() - 0.5) * 2.4, '#e6f6ff', 1.1);
+      burst(sh.x, h * 0.9, sh.z, 1, '#bfe9ff');
+    }
+    const need = washTime(sh.lv);
+    if ((sh.washT += dt) >= need) {
+      sh.washT = sh.wash > 1 ? sh.washT - need : 0;
+      sh.wash--;
+      G.washed++;
+      setMight();
+      floatText(`+${Math.round(WASH * 100)}% damage`, sh.x, h + 1.2, sh.z, '#7dff6a', true);
+      burst(sh.x, h, sh.z, 12, '#ffd84a');
+    }
+  }
 }
 
 // a new game: only the first roads, every chunk redecorated, the hand-placed decor back
@@ -5963,6 +6145,7 @@ function bossDown(e: Enemy): void {
   floatText(`+${Math.round(e.value)}`, e.x, 7, e.z, '#ffd84a', true);
   toast(`You beat ${BOSS_NAMES[e.theme]}! Grab the coins.`);
   if (Math.hypot(G.king.x - e.x, G.king.z - e.z) < 40) G.shake = Math.max(G.shake, 0.45);
+  dropSacks(e.x, e.z, SACKS_BOSS);
 }
 
 // spatial hash for enemies
@@ -7201,6 +7384,7 @@ function syncScene(dt: number): void {
   // king
   W.king.position.set(k.x, Math.abs(Math.sin(k.bob)) * 0.08, k.z);
   W.king.rotation.y = k.yaw;
+  W.kingSacks.forEach((m, i) => (m.visible = i < G.carried));
   W.ring.position.set(k.x, 0.07, k.z);
   W.ring.scale.setScalar(G.ringR || 2);
   // followers + tower archers + weapons
@@ -7523,6 +7707,7 @@ function updateHud(force?: boolean): void {
   ui.coins.classList.toggle('gain', G.spentFlash <= 0 && G.gainFlash > 0);
   updateBossHud();
   updateDigHud();
+  updateSackHud();
   updateRelicHud();
 }
 // The boss at the top of the screen: the warning with the time left before it comes, then its name and health. While
@@ -7585,21 +7770,33 @@ const RELIC_ICONS = [
   // a crown of flames
   '<path d="M18 76l-4-40 18 14 6-30 12 22 12-22 6 30 18-14-4 40z"/>',
 ];
+// a sack of dirty money
+const SACK_ICON =
+  '<path d="M40 12h20l-5 15c17 7 31 22 31 40 0 15-15 21-36 21S14 82 14 67c0-18 14-33 31-40z"/>' +
+  '<path d="M41 27h18" stroke-width="7"/>' +
+  '<text x="50" y="76" text-anchor="middle" font-family="system-ui, sans-serif" font-size="38" font-weight="900" fill="#ffd84a" stroke-width="5" paint-order="stroke">$</text>';
 function updateRelicHud(): void {
-  const key = G.relics.join('');
+  const key = G.relics.join('') + '/' + G.carried;
   if (key === ui.relicKey) return;
   ui.relicKey = key;
-  ui.relics.innerHTML = G.relics
-    .map((lv, i) =>
-      lv
-        ? `<span class="cd-relic" role="img" aria-label="${RELICS[i].name}${ROMAN[lv]}"><svg viewBox="0 0 100 100" ` +
-          `fill="${RELICS[i].colour}" stroke="${INK}" stroke-width="6" stroke-linejoin="round" ` +
-          `stroke-linecap="round" aria-hidden="true">${RELIC_ICONS[i]}</svg>` +
-          (lv > 1 ? `<b class="outlined">${lv}</b>` : '') +
-          '</span>'
-        : '',
-    )
-    .join('');
+  const sacks = G.carried
+    ? `<span class="cd-relic cd-sacks" role="img" aria-label="Dirty money: ${G.carried} of ${SACK_MAX} sacks">` +
+      `<svg viewBox="0 0 100 100" fill="#b39a5e" stroke="${INK}" stroke-width="6" stroke-linejoin="round" ` +
+      `aria-hidden="true">${SACK_ICON}</svg><b class="outlined">${G.carried}</b></span>`
+    : '';
+  ui.relics.innerHTML =
+    sacks +
+    G.relics
+      .map((lv, i) =>
+        lv
+          ? `<span class="cd-relic" role="img" aria-label="${RELICS[i].name}${ROMAN[lv]}"><svg viewBox="0 0 100 100" ` +
+            `fill="${RELICS[i].colour}" stroke="${INK}" stroke-width="6" stroke-linejoin="round" ` +
+            `stroke-linecap="round" aria-hidden="true">${RELIC_ICONS[i]}</svg>` +
+            (lv > 1 ? `<b class="outlined">${lv}</b>` : '') +
+            '</span>'
+          : '',
+      )
+      .join('');
 }
 function updateDigHud(): void {
   const k = G.king;
@@ -7607,6 +7804,18 @@ function updateDigHud(): void {
   for (const d of G.over ? [] : G.digs)
     if (!best || Math.hypot(d.x - k.x, d.z - k.z) < Math.hypot(best.x - k.x, best.z - k.z)) best = d;
   pointTo(ui.digDir, best);
+}
+// the way to the nearest sack of dirty money while the horse has room, and to the nearest shop while it carries any
+function updateSackHud(): void {
+  const k = G.king,
+    nearest = <P extends XZ>(list: readonly P[]) => {
+      let best: P | null = null;
+      for (const o of list)
+        if (!best || Math.hypot(o.x - k.x, o.z - k.z) < Math.hypot(best.x - k.x, best.z - k.z)) best = o;
+      return best;
+    };
+  pointTo(ui.sackDir, !G.over && G.carried < SACK_MAX && nearest(G.sacks.filter((s) => s.t >= SACK_FLY)));
+  pointTo(ui.washDir, !G.over && G.carried > 0 && nearest(G.shops.filter((s) => s.lv).map((s) => s.till)));
 }
 // messages at the top of the screen, one after the other
 function toast(msg: string): void {
@@ -7769,6 +7978,10 @@ const SavedWorld = Schema.Struct({
         lv: UpTo(SHOP_MAX),
         lot: Num,
         till: Num, // coins in its till
+        // sacks of dirty money waiting to be washed, and how long the one in has been washed (a game saved before
+        // there was dirty money has neither)
+        wash: Schema.optionalKey(Count),
+        washT: Schema.optionalKey(Num),
       }),
     ),
   ),
@@ -7777,6 +7990,9 @@ const SavedWorld = Schema.Struct({
   relics: Schema.optionalKey(Schema.Array(UpTo(RELIC_MAX))),
   digs: Schema.optionalKey(Schema.Array(Schema.Struct({ at: SavedPt, dug: Num }))),
   digNext: Schema.optionalKey(Num),
+  // the dirty money: sacks on the king's horse, sacks the shops have washed, and the ones lying about (a game saved
+  // before there was dirty money has none)
+  money: Schema.optionalKey(Schema.Struct({ carried: UpTo(SACK_MAX), washed: Count, sacks: Schema.Array(SavedPt) })),
   paid: Schema.Record(Schema.String, Num), // coins paid into a pad so far, by its id
   spawnT: Num,
   nextPath: Count,
@@ -7815,7 +8031,10 @@ const SavedWorld = Schema.Struct({
       w.queue.every(([, kind]) => kind !== 'boss') &&
       w.enemies.filter((e) => e.kind === 'boss').length <= 1 &&
       new Set((w.shops ?? []).map((o) => o.idx)).size === (w.shops ?? []).length &&
-      (w.shops ?? []).every((o) => o.idx < (w.lotSeq ?? 0) && o.lot > 0 && o.till >= 0) &&
+      (w.shops ?? []).every(
+        (o) => o.idx < (w.lotSeq ?? 0) && o.lot > 0 && o.till >= 0 && (o.lv > 0 || !o.wash) && (o.washT ?? 0) >= 0,
+      ) &&
+      (w.money?.sacks.length ?? 0) <= SACKS_GROUND &&
       (w.relics ?? []).length <= RELICS.length &&
       (w.digs ?? []).length <= DIG_MAX &&
       (w.digs ?? []).every((o) => o.dug >= 0) &&
@@ -7911,10 +8130,13 @@ function snapshot(): SavedWorld {
       lv: o.lv,
       lot: o.lot,
       till: o.till.value,
+      wash: o.wash,
+      washT: o.washT,
     })),
     relics: G.relics.slice(),
     digs: G.digs.map((o) => ({ at: [o.x, o.z], dug: o.dug })),
     digNext: G.digNext,
+    money: { carried: G.carried, washed: G.washed, sacks: G.sacks.map((o) => [o.x, o.z]) },
     paid: Object.fromEntries(G.pads.filter((p) => p.paid > 0 && !spots.includes(p.site!)).map((p) => [p.id, p.paid])),
     spawnT: G.spawnT,
     nextPath: G.nextPath,
@@ -8116,7 +8338,12 @@ function restoreGame(w: SavedWorld): void {
     sh.lv = o.lv;
     if (sh.lv) sh.b = makeShop(sh);
     sh.till.value = Math.min(o.till, sh.lv ? tillCap(sh) : 0);
+    sh.wash = sh.lv ? (o.wash ?? 0) : 0;
+    sh.washT = sh.wash ? Math.min(o.washT ?? 0, washTime(sh.lv) * 0.99) : 0;
   }
+  G.washed = w.money?.washed ?? 0;
+  G.carried = w.money?.carried ?? 0;
+  for (const [x, z] of w.money?.sacks ?? []) addSack(x, z);
   setMight();
   for (const o of w.digs ?? []) addDig(o.at)!.dug = Math.min(o.dug, DIG_SECONDS * 0.9);
   G.digNext = w.digNext ?? G.t + DIG_EVERY;
@@ -8331,6 +8558,7 @@ function step(dt: number): void {
   updateGold(dt);
   updateShops(dt);
   updateDigs(dt);
+  updateSacks(dt);
   updatePads(dt);
   updateLands();
   for (const s of G.segs) {
@@ -8383,6 +8611,8 @@ function setup(): void {
     bossFill: document.getElementById('cd-boss-fill')!,
     bossDir: document.getElementById('cd-boss-dir')!,
     digDir: document.getElementById('cd-dig-dir')!,
+    sackDir: document.getElementById('cd-sack-dir')!,
+    washDir: document.getElementById('cd-wash-dir')!,
     relics: document.getElementById('cd-relics')!,
   };
   initRenderer();
@@ -8555,6 +8785,7 @@ function debug() {
         lv: s.lv,
         lot: s.lot,
         till: { x: s.till.x, z: s.till.z, value: s.till.value, cap: s.lv ? tillCap(s) : 0 },
+        wash: s.wash,
       })),
     // the marks waiting to be dug, and a new one now (at a spot, or wherever there is room)
     digs: () => G.digs.map((o) => ({ x: o.x, z: o.z, dug: o.dug })),
@@ -8573,6 +8804,13 @@ function debug() {
     weaponDmg: () => weapon(false).dmg,
     RELICS: RELICS.map((r) => r.name),
     DIG_SECONDS,
+    // the dirty money lying about (and whether it has landed), sacks thrown out of a spot, and what the king carries
+    // and has had washed
+    sacks: () => G.sacks.map((o) => ({ x: o.x, z: o.z, landed: o.t >= SACK_FLY })),
+    dropSacks,
+    money: () => ({ carried: G.carried, washed: G.washed, might: G.might }),
+    SACK_MAX,
+    washTime,
     // keep the lands shut (or open them again): the play-through's control run
     lockLands(on = true) {
       G.lockLands = on;

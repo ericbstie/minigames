@@ -1015,6 +1015,290 @@ describe('The second land: treasure and relics', () => {
   });
 });
 
+describe('The third land: dirty money', () => {
+  beforeAll(async () => {
+    page = await open();
+    await dbg(page, (d) => {
+      const w = window as unknown as Helpers;
+      w.__pushOut = () => {
+        const vis = d.pads().map((p) => p.id);
+        const spots = d.sites().filter((s) => vis.includes(s.id));
+        if (!spots.length) return false;
+        d.buy(spots.reduce((a, b) => (Math.hypot(b.x - 4, b.z) > Math.hypot(a.x - 4, a.z) ? b : a)).id);
+        d.advance(0.5);
+        return true;
+      };
+      w.__quiet = () => {
+        d.G.enemies.length = 0;
+        d.G.spawnQueue.length = 0;
+        d.G.spawnT = 1e9;
+        d.G.centerT = 1e9;
+        d.G.boss.next = 1e9;
+        for (const f of d.G.fronts) f.timer = 1e9;
+      };
+    });
+  });
+  afterAll(() => page.close());
+
+  // a boss brought onto the field and beaten at once; the sacks it leaves
+  const beatBoss = (d: CastleDebug) => {
+    const G = d.G,
+      before = d.sacks().length;
+    G.boss.next = G.t + d.BOSS_WARN + 0.5;
+    d.advance(d.BOSS_WARN + 1);
+    const e = d.boss();
+    if (!e) throw new Error('no boss came');
+    d.hurt(e, e.hp + 1, true);
+    d.advance(0.1);
+    (window as unknown as Helpers).__quiet();
+    return { at: [e.x, e.z], sacks: d.sacks().slice(before), slain: G.boss.slain };
+  };
+
+  test('none before it: a boss beaten in the second land leaves only coins', async () => {
+    const got = await dbg(
+      page,
+      (d, beat) => {
+        d.rich(1e8);
+        for (let i = 0; i < 4; i++) d.buy('recruit');
+        for (let i = 0; i < 6; i++) d.buy('tower' + i);
+        d.buy('cannon0');
+        d.buy('cannon1');
+        d.advance(0.5);
+        for (let n = 0; n < 24 && d.G.land < 2; n++) (window as unknown as Helpers).__pushOut();
+        (window as unknown as Helpers).__quiet();
+        const boss = (0, eval)(beat)(d);
+        return { land: d.G.land, reach: d.G.reach, slain: boss.slain, sacks: d.sacks().length };
+      },
+      beatBoss.toString(),
+    );
+    expect(got.land).toBe(2);
+    expect(got.reach).toBeLessThan(135);
+    expect(got.slain).toBe(1);
+    expect(got.sacks).toBe(0);
+  });
+
+  test('past 135 paces the back roads open, and a cleared camp leaves a sack inside the border', async () => {
+    const got = await dbg(page, (d) => {
+      const w = window as unknown as Helpers;
+      for (let n = 0; n < 24 && d.G.land < 3; n++) w.__pushOut();
+      d.advance(0.5);
+      const opened = { reach: d.G.reach, land: d.G.land, sacks: d.sacks().length };
+      const toast = () => [document.getElementById('cd-toast')!.textContent ?? '', ...d.G.toastQ];
+      const news = toast().some((m) => m.includes('New land: The back roads'));
+      // push on till a camp falls back
+      for (let n = 0; n < 24 && !d.sacks().length; n++) w.__pushOut();
+      w.__quiet();
+      const thrown = d.sacks().map((o) => o.landed);
+      d.advance(1);
+      return {
+        opened,
+        news,
+        thrown,
+        sacks: d.sacks(),
+        border: d.sacks().map((o) => d.borderDist(o.x, o.z)),
+        told: toast().some((m) => m.startsWith('Dirty money!')),
+      };
+    });
+    expect(got.opened.reach).toBeGreaterThanOrEqual(135);
+    expect(got.opened.land).toBe(3);
+    expect(got.opened.sacks).toBe(0);
+    expect(got.news).toBe(true);
+    expect(got.sacks.length).toBeGreaterThan(0);
+    expect(got.thrown.every((landed) => !landed)).toBe(true); // in the air at first
+    expect(got.sacks.every((o) => o.landed)).toBe(true);
+    for (const b of got.border) expect(b).toBeLessThan(-1);
+    expect(got.told).toBe(true);
+  });
+
+  test('a beaten boss leaves three, thrown about where it fell (inside the border)', async () => {
+    const got = await dbg(page, (d, beat) => (0, eval)(beat)(d), beatBoss.toString());
+    expect(got.sacks.length).toBe(3);
+    const sacks: { x: number; z: number }[] = got.sacks;
+    const border = await dbg(page, (d, s) => s.map((o) => d.borderDist(o.x, o.z)), sacks);
+    for (const b of border) expect(b).toBeLessThan(-1);
+  });
+
+  test('the way to the nearest one shows while it is off the screen; riding over one picks it up', async () => {
+    await dbg(page, (d) => {
+      d.teleport(4, 2);
+      d.G.free = false;
+      d.advance(0.5);
+    });
+    await frames(page, 2);
+    const marker = await page.eval(() => !document.getElementById('cd-sack-dir')!.hidden);
+    const got = await dbg(page, (d) => {
+      const s = d.sacks()[0]!,
+        left = d.sacks().length;
+      d.teleport(s.x + 0.5, s.z);
+      d.G.free = false;
+      d.advance(0.2);
+      return { left, now: d.sacks().length, money: d.money() };
+    });
+    expect(marker).toBe(true);
+    expect(got.now).toBe(got.left - 1);
+    expect(got.money.carried).toBe(1);
+    await frames(page, 2);
+    const hud = await page.eval(() => ({
+      badge: document.querySelector('#cd-relics .cd-sacks')?.getAttribute('aria-label'),
+      horse: window.CastleDefender!._debug().world.kingSacks.filter((m) => m.visible).length,
+    }));
+    expect(hud).toEqual({ badge: 'Dirty money: 1 of 6 sacks', horse: 1 });
+  });
+
+  test('the horse carries six at most; the rest wait on the ground', async () => {
+    const got = await dbg(page, (d) => {
+      const k = d.G.king;
+      d.dropSacks(k.x + 3, k.z, 8);
+      d.advance(1);
+      for (let n = 0; n < 12; n++) {
+        const s = d.sacks().sort((a, b) => Math.hypot(a.x - k.x, a.z - k.z) - Math.hypot(b.x - k.x, b.z - k.z))[0];
+        if (!s) break;
+        d.teleport(s.x + 0.3, s.z);
+        d.G.free = false;
+        d.advance(0.2);
+      }
+      return { carried: d.money().carried, left: d.sacks().length };
+    });
+    expect(got.carried).toBe(6);
+    expect(got.left).toBeGreaterThan(0);
+    await frames(page, 2);
+    const hud = await page.eval(() => ({
+      badge: document.querySelector('#cd-relics .cd-sacks')?.getAttribute('aria-label'),
+      horse: window.CastleDefender!._debug().world.kingSacks.filter((m) => m.visible).length,
+      sackDir: document.getElementById('cd-sack-dir')!.hidden,
+    }));
+    expect(hud).toEqual({ badge: 'Dirty money: 6 of 6 sacks', horse: 6, sackDir: true });
+    await shot(page, 'sacks-carried');
+  });
+
+  type Shop = ReturnType<CastleDebug['shops']>[number];
+  let shop: Shop;
+  test('ridden into a shop, they go into its till to wash; the way to a shop shows while he carries any', async () => {
+    // every lot bought, and the king rides off from the furthest shop
+    const far = await dbg(page, (d) => {
+      for (const p of d.pads()) if (p.id.startsWith('shop')) d.buy(p.id);
+      d.advance(0.2);
+      const k = d.G.king,
+        built = d.shops().filter((s) => s.lv);
+      const sh = built.sort(
+        (a, b) => Math.hypot(b.till.x - k.x, b.till.z - k.z) - Math.hypot(a.till.x - k.x, a.till.z - k.z),
+      )[0]!;
+      d.teleport(4, 2);
+      d.G.free = false;
+      d.advance(0.3);
+      return sh;
+    });
+    await frames(page, 2);
+    const washDir = await page.eval(() => !document.getElementById('cd-wash-dir')!.hidden);
+    const got = await dbg(
+      page,
+      (d, sh) => {
+        const might = d.money().might;
+        d.teleport(sh.till.x, sh.till.z);
+        d.G.free = false;
+        d.advance(0.1);
+        return { might, shop: d.shops().find((s) => s.id === sh.id)!, money: d.money() };
+      },
+      far,
+    );
+    expect(Math.hypot(far.till.x - 4, far.till.z - 2)).toBeGreaterThan(40);
+    expect(washDir).toBe(true);
+    expect(got.shop.wash).toBe(6);
+    expect(got.money.carried).toBe(0);
+    expect(got.money.might).toBe(got.might);
+    shop = got.shop;
+    await frames(page, 2);
+    expect(await page.eval(() => document.getElementById('cd-wash-dir')!.hidden)).toBe(true);
+  });
+
+  test('the shop washes them one at a time, the faster the higher its level; each makes the army 5% stronger', async () => {
+    const got = await dbg(
+      page,
+      (d, sh) => {
+        const k = d.G.king;
+        d.teleport(k.x + 6, k.z + 6);
+        d.G.free = false;
+        const m0 = d.money(),
+          t = d.washTime(sh.lv);
+        d.advance(t * 0.9);
+        const early = d.money().washed;
+        d.advance(t * 0.2);
+        const one = d.money();
+        d.advance(t * 5);
+        return { m0, early, one, all: d.money(), wash: d.shops().find((s) => s.id === sh.id)!.wash, t };
+      },
+      shop,
+    );
+    expect(got.t).toBeCloseTo(30 / shop.lv, 6);
+    expect(got.early).toBe(got.m0.washed);
+    expect(got.one.washed).toBe(got.m0.washed + 1);
+    expect(got.all.washed).toBe(got.m0.washed + 6);
+    expect(got.wash).toBe(0);
+    const trade = got.m0.might / (1 + 0.05 * got.m0.washed);
+    expect(got.one.might).toBeCloseTo(trade * (1 + 0.05 * got.one.washed), 9);
+    expect(got.all.might).toBeCloseTo(trade * (1 + 0.05 * got.all.washed), 9);
+    // and it is the hits that get harder (on a dummy that cannot fall)
+    const hit = await dbg(page, (d) => {
+      const dummy = { kind: 'knight', x: 0, z: 0, hp: 1e6, hitFlash: 0 };
+      d.hurt(dummy as never, 10);
+      return (1e6 - dummy.hp) / 10;
+    });
+    expect(hit).toBeCloseTo(got.all.might, 6);
+  });
+
+  test('what the king carries, the sacks about, and what the shops wash and have washed are saved', async () => {
+    await dbg(page, (d) => {
+      const k = d.G.king;
+      // two on the horse, one in a shop's till, and some still on the ground
+      d.dropSacks(k.x, k.z, 3);
+      d.advance(1);
+      for (const s of d.sacks().slice(0, 3)) {
+        d.teleport(s.x, s.z);
+        d.G.free = false;
+        d.advance(0.1);
+      }
+      const sh = d.shops().find((s) => s.lv)!;
+      d.teleport(sh.till.x, sh.till.z);
+      d.G.free = false;
+      d.advance(0.1);
+      d.teleport(sh.till.x + 8, sh.till.z + 8);
+      d.G.free = false;
+      d.dropSacks(d.G.king.x, d.G.king.z, 2);
+      d.advance(1);
+      for (const s of d.sacks().slice(0, 2)) {
+        d.teleport(s.x, s.z);
+        d.G.free = false;
+        d.advance(0.1);
+      }
+      d.dropSacks(sh.till.x + 20, sh.till.z + 20, 2);
+      d.advance(1);
+    });
+    await page.click('#cd-pause-btn');
+    const before = await everything(page);
+    expect(before.money.carried).toBeGreaterThan(0);
+    expect(before.money.sacks.length).toBeGreaterThan(0);
+    expect(before.money.washing.some(([n]) => n! > 0)).toBe(true);
+    await dbg(page, (d) => d.save());
+    await page.reload();
+    await reopened(page);
+    const after = await everything(page);
+    expect(after.money).toEqual(before.money);
+    expect(after.shops).toEqual(before.shops);
+    const hud = await page.eval(() => ({
+      badge: document.querySelector('#cd-relics .cd-sacks')?.getAttribute('aria-label'),
+      horse: window.CastleDefender!._debug().world.kingSacks.filter((m) => m.visible).length,
+    }));
+    expect(hud).toEqual({
+      badge: `Dirty money: ${before.money.carried} of 6 sacks`,
+      horse: before.money.carried,
+    });
+  });
+
+  test('no errors in the page', () => {
+    expect(page.errors).toEqual([]);
+  });
+});
+
 describe('A phone held upright', () => {
   beforeAll(async () => {
     page.close();
@@ -1231,6 +1515,13 @@ const everything = (page: Page) =>
       land: [G.land, G.lotSeq],
       shops: G.shops.map((s) => [s.idx, s.x, s.z, s.yaw, s.kind, s.lv, s.lot, Math.round(s.till.value)]),
       treasure: { relics: G.relics, digs: G.digs.map((o) => [o.x, o.z, o.dug]), next: G.digNext },
+      money: {
+        carried: G.carried,
+        washed: G.washed,
+        might: G.might,
+        sacks: G.sacks.map((o) => [o.x, o.z]),
+        washing: G.shops.map((s) => [s.wash, s.washT]),
+      },
       relicHud: document.getElementById('cd-relics')!.children.length,
     };
   });
@@ -1389,6 +1680,10 @@ describe('A saved game the game cannot carry on from', () => {
       ['a wall tower at a level there is none of', JSON.stringify({ ...saved, towers: [9, 0, 0, 0, 0, 0] })],
       ['a relic at a level there is none of', JSON.stringify({ ...saved, relics: [0, 9, 0, 0, 0] })],
       [
+        'more sacks on the horse than it carries',
+        JSON.stringify({ ...saved, money: { carried: 9, washed: 0, sacks: [] } }),
+      ],
+      [
         'more marks to dig than there can be',
         JSON.stringify({ ...saved, digs: [1, 2, 3].map((x) => ({ at: [x, 50], dug: 0 })) }),
       ],
@@ -1418,6 +1713,7 @@ describe('A saved game the game cannot carry on from', () => {
       relics: _relics,
       digs: _digs,
       digNext: _digNext,
+      money: _money,
       ...older
     } = saved;
     for (const ok of [saved, older]) {
