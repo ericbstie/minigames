@@ -352,7 +352,8 @@ All are JSON objects with a type in `t`.
   click listener on `#br-app` the first time anything in the game is tapped. Chrome has this function too.
   `run` starts an effect there and then, so the request (like going fullscreen and sharing an invite link) still
   happens inside the tap. The answer counts even if the player has left Bike Race by the time it comes.
-  Headless Chrome answers "denied" unless the test grants the `accelerometer` and `gyroscope` permissions, and
+  The headless browser answers "denied" unless the test grants the `sensors` permission over CDP
+  (`page.view.cdp('Browser.grantPermissions', ...)` in `tests/browser/bike-race.test.ts`), and
   `DeviceOrientation.setDeviceOrientationOverride` over CDP simulates turning the phone.
 - The game and the editor need each other. `bike-race.ts` imports the editor and hands it `editorApi` with
   `Editor.connect()` at load; the editor only imports types from `bike-race.ts`, so there is no import cycle at

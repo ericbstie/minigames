@@ -10,7 +10,7 @@ import * as WaterSort from './water-sort';
 registerGame('ant', AntSort.game);
 registerGame('castle', CastleDefender.game);
 registerGame('ws', WaterSort.game);
-registerGame('br', BikeRace);
+registerGame('br', BikeRace.game);
 
 // The menu's cards and the address bar, for as long as the page is open
 run(

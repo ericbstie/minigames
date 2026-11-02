@@ -8,7 +8,7 @@
 import { Effect, FiberHandle, FiberSet, Predicate, Result, Schedule, Schema, type Scope } from 'effect';
 import * as A from './bike-race-art';
 import * as C from './bike-race-core';
-import { forgiving } from './bike-race-core';
+import { forgiving } from './schemas';
 import type {
   Bike,
   BikeEvent,
@@ -26,7 +26,7 @@ import * as Editor from './bike-race-editor';
 import { Net } from './bike-race-net';
 import type { CountdownMessage, NetEvent, RaceResult, RoomMessage, RoomSummary } from './bike-race-net';
 import type { CustomLevel } from './bike-race-pieces';
-import { GameHub } from './hub';
+import { type Game, GameHub } from './hub';
 import { animate, listen, load, nextFrame, type PageServices, run, runSync, save as write } from './page';
 
 const $ = (id: string) => document.getElementById(id)!;
@@ -2737,6 +2737,10 @@ export const reroute: Effect.Effect<void, never, PageServices> = Effect.gen(func
     // coming back to a game in progress
   } else showView(view === 'play' ? 'home' : view);
 });
+
+/** Bike Race for the hub */
+export const game: Game = { open, reroute };
+
 // what the level editor (bike-race-editor.ts) uses from the game
 const editorApi = {
   startCustom,

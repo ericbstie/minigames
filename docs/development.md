@@ -25,6 +25,7 @@ public/index.html        the page; its one script is js/main.ts, which Bun bundl
 public/js/main.ts        imports every game, registers it with the hub, and starts the routing
 public/js/hub.ts         the menu and the #game routing (registerGame, GameHub); each game runs in a scope
 public/js/page.ts        the page's Effect services and helpers: saves, listeners, frame loops, run
+public/js/schemas.ts     Schema helpers for saves and messages that must load whatever is in them
 public/js/<game>*.ts     one game each: Ant Sort, Bike Race, Castle Defender, Water Sort
 public/js/bike-race-protocol.ts  the race messages as Schemas, shared by the game and the server
 public/js/globals.d.ts   what the page puts on window (the debug hooks the tests use)
@@ -78,7 +79,9 @@ wrapping per-frame maths in Effect would cost frame rate and gain nothing. The p
 Conventions:
 
 - Anything from outside goes through a Schema: network messages, saved data, the address. A saved value that doesn't
-  fit gives the defaults, as a broken save always did. A saved-data schema lists every field, because decoding
+  fit gives the defaults, as a broken save always did. Where the old code cleaned a save field by field, the Schema
+  does too: `forgiving` (`schemas.ts`) cleans one field into a value whatever is there, and `keepOnly` keeps the
+  entries of a saved list that can mean something and drops the rest. A saved-data schema lists every field, because decoding
   drops fields it doesn't know, and the next save would lose them. Save keys and the JSON under them stay as they
   are, so players keep their progress.
 - Services are `Context.Service` classes with a `layer`; settings with a default are a `Context.Reference`. Errors
@@ -89,6 +92,9 @@ Conventions:
 - Per-frame code stays plain: a frame step is a function, not an effect, and draws or steps without allocating
   fibers. Plain code that needs an effect (saving after a win, say) returns it from a `listen` handler or passes it
   to `run`.
+- Plain code that starts a timer (a frame noticing a win, a tween ending) starts it in the game's visit: `open`
+  makes a runner with `FiberSet.makeRuntime` and keeps it in the module, so the timer stops when the player leaves.
+  A timer that replaces the one before (a toast, a hint) is a `FiberHandle`.
 - Tests run effects with `Effect.runPromise` under `bun test`, with `TestClock` from `effect/testing` for anything
   timed. `tests/support/browser.ts` builds the real server with `ManagedRuntime`.
 

@@ -7,7 +7,6 @@ import { Predicate, Schema } from 'effect';
 import {
   type Box,
   type Dir,
-  forgiving,
   GRAVITY,
   type Ghosts,
   type Level,
@@ -15,6 +14,7 @@ import {
   Terrain,
   type TerrainLine,
 } from './bike-race-core';
+import { forgiving } from './schemas';
 
 const DEG = Math.PI / 180;
 // Every loop piece shares one radius, so a 3/4 loop and a quarter loop (or two half loops) close into a full loop.
