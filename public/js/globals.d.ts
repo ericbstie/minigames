@@ -6,8 +6,8 @@ declare global {
   interface Window {
     GameHub: typeof GameHub;
 
-    // Castle Defender
-    CastleDefender?: ShowHide & { _debug(): import('./castle-defender').CastleDebug };
+    // Castle Defender: its state for the browser tests and the balance bot (tools/play-castle-defender.ts)
+    CastleDefender?: { _debug(): import('./castle-defender').CastleDebug };
 
     // Ant Sort: its state for the browser tests, and a speed beyond the 2x button for them (a software-rendered
     // browser draws a level at a few frames a second)

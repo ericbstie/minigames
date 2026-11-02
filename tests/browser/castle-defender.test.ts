@@ -18,9 +18,14 @@ type Terrain = ReturnType<CastleDebug['terrain']>;
 type Front = ReturnType<CastleDebug['fronts']>[number];
 type Site = ReturnType<CastleDebug['sites']>[number];
 
-/** Castle Defender in a page, once a game is up */
-async function open({ width = 1000, height = 600, mobile = false } = {}): Promise<Page> {
-  const page = await openPage(site, { width, height, mobile, path: '/#castle-defender' });
+/** Castle Defender in a page, once a game is up (storage: localStorage items in place before it loads) */
+async function open({
+  width = 1000,
+  height = 600,
+  mobile = false,
+  storage,
+}: { width?: number; height?: number; mobile?: boolean; storage?: Record<string, string> } = {}): Promise<Page> {
+  const page = await openPage(site, { width, height, mobile, storage, path: '/#castle-defender' });
   await page.waitFor(() => !!window.CastleDefender?._debug().G, [], { timeout: 20_000 });
   // the ground away from the king is made a little each frame: give it the frames 300 ms would bring at 60 a second
   // (this browser draws WebGL in software, at a few frames a second)
@@ -495,5 +500,103 @@ describe('A phone held upright', () => {
   });
   test('no errors in the page', () => {
     expect(page.errors).toEqual([]);
+  });
+});
+
+/**
+ * Let the castle fall at game time t: the first enemy on its way is put at the castle with a blow that ends it.
+ * With leave, the player goes back to the menu straight away, before the game-over panel's delay is over.
+ */
+const fall = (page: Page, t: number, leave = false) =>
+  dbg(
+    page,
+    (d, [t, leave]) => {
+      const G = d.G;
+      for (let i = 0; i < 60 && !G.enemies.length; i++) d.advance(1);
+      Object.assign(G.enemies[0]!, { state: 'castle', atk: 0, dmg: 1e9 });
+      G.t = t;
+      d.advance(1 / 30);
+      if (leave) window.GameHub.menu();
+      return G.over;
+    },
+    [t, leave] as const,
+  );
+const overPanel = (page: Page) => page.until(() => !document.getElementById('cd-over')!.hidden, [], 5000);
+const overText = (page: Page) => page.eval(() => document.getElementById('cd-over-text')!.textContent);
+const savedBest = (page: Page) => page.eval(() => localStorage.getItem('castle.bestTime'));
+const drawn = (page: Page) => dbg(page, (d) => d.renderer.info.render.frame);
+const comeBack = async (page: Page) => {
+  await page.eval(() => (location.hash = '#castle-defender'));
+  expect(await page.until(() => !document.getElementById('cd-app')!.hidden)).toBe(true);
+};
+
+describe('The longest time held', () => {
+  beforeAll(async () => {
+    page = await open({ storage: { 'castle.bestTime': '123' } });
+  });
+
+  test('a shorter game says how long the longest was, and keeps it', async () => {
+    expect(await fall(page, 30)).toBe(true);
+    expect(await overPanel(page)).toBe(true);
+    expect(await overText(page)).toBe('You held out for 0:30. Your longest is 2:03.');
+    expect(await savedBest(page)).toBe('123');
+  });
+  test('a longer game is the new longest, saved in whole seconds', async () => {
+    await page.eval(() => document.getElementById('cd-retry')!.click());
+    expect(await fall(page, 200.6)).toBe(true);
+    expect(await overPanel(page)).toBe(true);
+    expect(await overText(page)).toBe('You held out for 3:20, your longest yet.');
+    expect(await savedBest(page)).toBe('200');
+  });
+});
+
+describe('Leaving and coming back', () => {
+  afterAll(() => page.close());
+
+  test('leaving pauses the game under the pause panel and stops drawing it', async () => {
+    await page.eval(() => document.getElementById('cd-retry')!.click());
+    await frames(page, 2);
+    await page.eval(() => window.GameHub.menu());
+    expect(
+      await page.until(
+        () => window.CastleDefender!._debug().G.paused && !document.getElementById('cd-pausemenu')!.hidden,
+      ),
+    ).toBe(true);
+    const away = await drawn(page);
+    await wait(400);
+    expect(await drawn(page)).toBe(away);
+  });
+  test('coming back finds it paused under the pause panel, drawn again, and it plays on', async () => {
+    const away = await drawn(page);
+    await comeBack(page);
+    expect(await page.until((n) => window.CastleDefender!._debug().renderer.info.render.frame > n, [away])).toBe(true);
+    expect(await dbg(page, (d) => d.G.paused)).toBe(true);
+    expect(await page.visible('cd-pausemenu')).toBe(true);
+    await page.click('#cd-resume');
+    expect(await dbg(page, (d) => d.G.paused)).toBe(false);
+    expect(await page.visible('cd-pausemenu')).toBe(false);
+  });
+  test('leaving just after the castle falls, the game-over panel is up on coming back', async () => {
+    expect(await fall(page, 30, true)).toBe(true);
+    expect(await page.visible('cd-app')).toBe(false);
+    await comeBack(page);
+    expect(await overPanel(page)).toBe(true);
+    expect(await page.visible('cd-over')).toBe(true);
+    expect(await page.visible('cd-pausemenu')).toBe(false);
+  });
+  test('no errors in the page', () => {
+    expect(page.errors).toEqual([]);
+  });
+});
+
+describe('Junk where the longest time is saved', () => {
+  test('counts as no longest time, and the new one is saved over it', async () => {
+    const junk = await open({ storage: { 'castle.bestTime': 'two minutes' } });
+    expect(await fall(junk, 30)).toBe(true);
+    expect(await overPanel(junk)).toBe(true);
+    expect(await overText(junk)).toBe('You held out for 0:30, your longest yet.');
+    expect(await savedBest(junk)).toBe('30');
+    expect(junk.errors).toEqual([]);
+    junk.close();
   });
 });

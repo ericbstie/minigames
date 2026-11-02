@@ -76,6 +76,21 @@ that stretch plus the old road, so its march gets longer, through the king's lan
 keep the road they started on. `tests/castle-defender-world.test.ts` checks that nearly every outpost built on a
 front's road clears that front's camp.
 
+## Opening and leaving
+
+The game is a `Game` for the hub (`game`, at the end of `castle-defender.ts`; [development.md](development.md) has
+how games are scoped). The first time it opens it makes the renderer and the world, which stay for the page, and
+waits for the Lilita One font the pad labels are drawn in. The rest belongs to the visit: the stick and the keys,
+the buttons, the resize listener and the frame loop (`animate`). The game's rules, the world and the drawing are
+plain functions the frame calls. Leaving closes the visit: the loop and the listeners stop, a game still going
+pauses under the pause panel, and a key or a drag still held is let go. Coming back finds the game where it was,
+paused.
+
+When the castle falls, the time it held is checked against the longest saved under `castle.bestTime` (whole
+seconds, as plain text such as `123`; anything else there counts as none) and saved if it is longer. The game-over
+panel comes up 1.4 s later, from a fiber of the visit; leaving before then brings it up straight away, ready for
+when the player comes back.
+
 ## Balance
 
 `tools/play-castle-defender.ts` plays the real page like a person: the king rides to coins and stands on pads

@@ -8,7 +8,7 @@ import { listen, run } from './page';
 import * as WaterSort from './water-sort';
 
 registerGame('ant', showHideGame(AntSort));
-registerGame('castle', showHideGame(CastleDefender));
+registerGame('castle', CastleDefender.game);
 registerGame('ws', showHideGame(WaterSort));
 registerGame('br', showHideGame(BikeRace));
 
