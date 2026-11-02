@@ -321,9 +321,7 @@ async function main(): Promise<void> {
       development: !https,
     });
   } catch (e) {
-    console.error(
-      `serve: can't listen on ${hostname}:${port} (${(e as Error).message}). Is it already running? PORT picks another port.`,
-    );
+    console.error(`serve: can't listen on ${hostname}:${port}. ${(e as Error).message} PORT picks another port.`);
     process.exit(1);
   }
   if (https) {

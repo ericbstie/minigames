@@ -87,23 +87,25 @@ public/js/bike-race-art.js    canvas drawing: world backdrops, the track line, l
 public/js/bike-race-net.js    the connection to the race server: WebSocket or event stream, reconnecting
 public/js/bike-race.js        the game: saves, sound, tilt and touch input, camera and loop, sessions, HUD, menus
 public/js/bike-race-editor.js the level editor: My levels and the build screen (docs/bike-race-editor.md)
-public/index.html             #br-app markup (canvas, HUD, touch areas, screens, modals) and the script tags
+public/index.html             #br-app markup (canvas, HUD, touch areas, screens, modals)
 public/css/styles.css         the "Bike Race" section, all classes start with br-
-public/js/hub.js              routes #bike-race and #bike-race/<code> to the game
-public/assets/img/bike-race.jpg   menu card picture, made by tools/render-bike-race-card.js
-tools/serve.py                the site server and race server behind `mise run app` and `mise run phone`
+public/js/hub.ts              routes #bike-race and #bike-race/<code> to the game
+public/js/main.ts             loads the Bike Race scripts in order (bike-race-globals.ts puts the core on window)
+public/assets/img/bike-race.jpg   menu card picture, made by tools/render-bike-race-card.ts
+server/serve.ts               the site server and race server behind `mise run app` and `mise run phone`
+server/race.ts                the rooms and races
 tools/check-bike-levels.js    proves every bike can finish every level and suggests par times
 tools/check-bike-pieces.js    checks the editor's pieces and that tracks made of them can be ridden
-tools/test-bike-race-browser.js   phone-sized browser tests for the garage and the sheets around it
-tools/test-bike-race-editor.js    phone-sized browser tests for the level editor
-tools/test-bike-race-online.js    live races between phones in the browser, and the no-server fallback
-tools/test-race-server.js     the race server's messages, without a browser
-tools/render-bike-race-card.js    redraws the menu card picture with the game's own drawing code
+tests/browser/bike-race.test.ts          phone-sized browser tests for the garage and the sheets around it
+tests/browser/bike-race-editor.test.ts   phone-sized browser tests for the level editor
+tests/browser/bike-race-online.test.ts   live races between phones in the browser, and the no-server fallback
+tests/race-server.test.ts     the race server's messages, without a browser
+tools/render-bike-race-card.ts    redraws the menu card picture with the game's own drawing code
 ```
 
 ## How the code fits together
 
-- `bike-race-core.js` has no DOM code. It loads in the page as `window.BikeRaceCore` and in Node with `require`.
+- `bike-race-core.js` has no DOM code. It loads in the page as `window.BikeRaceCore` and in Bun with `require`.
   - `buildLevel(world, def)` walks a list of track pieces (`flat`, `hill`, `bumps`, `kicker`, `gap`, `table`,
     `ledge`, `step`, `loop`, `ice`, ...) and returns the terrain, finish line, checkpoints and drawing data.
   - `Sim` steps every bike at a fixed 1/120 s with 5 substeps. `Bike` is a chassis plus two sprung wheels, and
@@ -192,9 +194,9 @@ floats too long there.
 ## Checking levels
 
 ```sh
-node tools/check-bike-levels.js                 # every level with every bike, as a table of times
-node tools/check-bike-levels.js --robust        # and seven riding styles each (about 20 s)
-node tools/check-bike-levels.js moon-3 --bike=comet --verbose
+bun tools/check-bike-levels.js                  # every level with every bike, as a table of times
+bun tools/check-bike-levels.js --robust         # and seven riding styles each (about 20 s)
+bun tools/check-bike-levels.js moon-3 --bike=comet --verbose
 ```
 
 It prints each bike's finish time, or where it crashed and on which track piece, and exits with an error if any
@@ -209,29 +211,29 @@ line shows up. Every bike finishes every level in all seven styles.
 ## Browser tests
 
 ```sh
-node tools/test-bike-race-browser.js            # about a minute
-node tools/test-bike-race-browser.js --keep     # also saves screenshots to tools/.shots/
+bun test tests/browser/bike-race.test.ts                 # about a minute
+KEEP_SHOTS=1 bun test tests/browser/bike-race.test.ts    # also saves screenshots to .shots/
 ```
 
-It serves `public/` with `tools/serve.py` on port 8123 (`BR_PORT` changes it) and opens the game in headless
-Chromium as a touch phone held sideways. It checks the garage with no stars and with unlocked bikes, that picks survive a reload,
+It runs the server in-process on a free port and opens the game in Bun's headless browser as a touch phone held
+sideways. It checks the garage with no stars and with unlocked bikes, that picks survive a reload,
 that bad saves are put right, the round trips from the pause, crash and result sheets, the unlock card, that
 every bike finishes a level in the page, and that the garage and pause sheet fit without scrolling at six phone
-sizes from 568x320 to 932x430. It needs Playwright (`require('playwright')`).
+sizes from 568x320 to 932x430. See [development.md](development.md) for what the browser tests need.
 
 ```sh
-node tools/test-race-server.js                  # the race server on its own (about 10 s, Node 22 or newer)
-node tools/test-bike-race-online.js             # live races between phones (about two minutes)
-node tools/test-bike-race-online.js --keep      # also saves screenshots of the room, a race and the results
+bun test tests/race-server.test.ts                       # the race server on its own (a few seconds)
+bun test tests/browser/bike-race-online.test.ts          # live races between phones (about two minutes)
+KEEP_SHOTS=1 bun test tests/browser/bike-race-online.test.ts   # also saves screenshots of the room, a race and the results
 ```
 
-`test-race-server.js` talks to the server over a WebSocket and the event stream: static files, rooms and codes,
+`race-server.test.ts` talks to the server over a WebSocket and the event stream: the page, rooms and codes,
 a whole race with results, the closing clock, dropping out and coming back, and the host passing on.
-`test-bike-race-online.js` plays the real page as two phones with the computer rider steering: create a room, join
+`bike-race-online.test.ts` plays the real page as two phones with the computer rider steering: create a room, join
 through the invite link, race, results on both, race again, leave a race, drop the connection mid-race and come
 back, the room list, the host leaving. Then the same over https with one phone forced onto the event stream, a
-page with no race server falling back to computer riders, and that the room fits at 568x320. It starts its own
-servers on ports 8126 to 8128.
+page with no race server (the `bun build` output on a plain static server) falling back to computer riders, and
+that the room fits at 568x320. It starts its own servers on free ports.
 
 Address options for testing in a browser:
 
@@ -253,10 +255,11 @@ as `{ time, bike, f }`. `bike` is the bike that set it, so the ghost is drawn on
 
 ## Race server
 
-`tools/serve.py` is one Python process, standard library only, behind both mise tasks. It serves `public/` (with
-ETags, so unchanged files come back as 304) and runs the rooms. `python tools/serve.py` listens on
-127.0.0.1:8000; `--https` listens on every address on port 8443 with the certificate in `.cert/`. `PORT` and
-`HOST` change either. It prints a line for each room opened, joined and closed, each race and its results.
+`server/serve.ts` is one Bun process behind both mise tasks. It serves the page (Bun bundles `public/index.html`
+with its scripts, styles and pictures) and runs the rooms, which live in `server/race.ts`. `bun server/serve.ts`
+listens on 127.0.0.1:8000 and rebuilds the page when a file changes; `--https` listens on every address on port
+8443 with the certificate in `.cert/`, and bundles the page once. `PORT` and `HOST` change either. It prints a
+line for each room opened, joined and closed, each race and its results.
 
 The server only keeps rooms and passes messages on. Every phone runs its own bike in its own simulation, sends
 its pose 20 times a second, and draws the others from their poses. Bikes don't touch each other.
@@ -313,7 +316,7 @@ All are JSON objects with a type in `t`.
 - Finish times are each phone's own race clock (`bike.time`), so lag never changes a result.
 - If the connection was down when the results came, the `last` field of the next `room` message shows them.
 - Live race rules on the server: `COUNTDOWN` 3 s, `ENDING` 30 s after the first finish, `RACE_LIMIT` 300 s, six
-  riders a room. The tests shorten them with the `BR_COUNTDOWN`, `BR_ENDING` and `BR_AWAY` variables.
+  riders a room. The tests shorten them with the `countdown`, `ending` and `away` options of `startServer`.
 - The garage buttons are hidden during a live race, since the bike is fixed for the race. `sendProfile()` sends a
   new name, paint or bike to the room.
 
@@ -325,9 +328,9 @@ All are JSON objects with a type in `t`.
   click listener on `#br-app` the first time anything in the game is tapped. Chrome has this function too.
   Headless Chrome answers "denied" unless the test grants the `accelerometer` and `gyroscope` permissions, and
   `DeviceOrientation.setDeviceOrientationOverride` over CDP simulates turning the phone.
-- Script order in `index.html` matters: core, art, net, then `bike-race.js`.
-- `hub.js` routes once before the later scripts have loaded, and `main.js` routes again afterwards. Code that
-  runs on `#bike-race` has to cope with being called after load.
+- Script order in `main.ts` matters: the core (through `bike-race-globals.ts`), art, net, then `bike-race.js`.
+- `main.ts` routes once every game has loaded. Code that runs on `#bike-race` has to cope with being called after
+  load.
 - Chrome won't paint an SVG gradient defined inside a hidden element. That's why `#br-app` has its own
   `br-gold` gradient for stars, rather than using the one in `#app`.
 - Loops use collision groups. Each loop is two halves, and a bike only collides with the half it should be on.
@@ -336,7 +339,7 @@ All are JSON objects with a type in `t`.
   lands on the kicker's face, which stops it dead or throws it on its head. Leave at least 8 m of flat before the
   next kicker, and 14 m after a 5 m step down. That is why Slag Slide, Core Meltdown, Ember Gauntlet and Eruption
   have the extra flats they do.
-- Changing a bike's tuning changes every level for it. Run `node tools/check-bike-levels.js --robust` after.
+- Changing a bike's tuning changes every level for it. Run `bun tools/check-bike-levels.js --robust` after.
 - A phone stops a page in the background, so its bike stops too: a locked screen during a live race pauses that
   rider's clock and bike, and the others see them fade until they come back.
 - Invite links use the page's own address. A page opened as localhost would hand out a link nobody else can open,
@@ -348,8 +351,8 @@ All are JSON objects with a type in `t`.
 ## Menu picture
 
 ```sh
-node tools/render-bike-race-card.js                       # writes public/assets/img/bike-race.jpg
-node tools/render-bike-race-card.js --level=ember-1 --t=5 --out=/tmp/card.jpg
+bun tools/render-bike-race-card.ts                        # writes public/assets/img/bike-race.jpg
+bun tools/render-bike-race-card.ts --level=ember-1 --t=5 --out=/tmp/card.jpg
 ```
 
 It races three computer riders (Comet, Scout and Twister, held to the same speed so they stay together) on a real
@@ -358,7 +361,7 @@ as a 640x480 JPEG. Run it again after changing the art so the card matches the g
 
 ## On a real phone
 
-Everything above is tested in headless Chromium posing as a phone. These need a real iPhone and a real Android
+Everything above is tested in a headless browser posing as a phone. These need a real iPhone and a real Android
 phone on `mise run phone`:
 
 - Tilt feel: full lean at 14° and the 1.5° dead zone. Is a full flip easy to start and stop? Too twitchy riding

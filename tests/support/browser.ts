@@ -132,7 +132,14 @@ export class Page {
 
   /** Load a path on this page's own origin */
   async goto(path: string): Promise<void> {
-    await this.view.navigate(this.site.url(path, this.host));
+    const url = this.site.url(path, this.host);
+    const page = (u: string) => u.replace(/#.*$/, '');
+    // a change of hash alone never fires a load event, so it is made in the page instead
+    if (url.includes('#') && this.view.url && page(this.view.url) === page(url)) {
+      await this.eval((u) => (location.href = u), url);
+      return;
+    }
+    await this.view.navigate(url);
   }
 
   async reload(): Promise<void> {

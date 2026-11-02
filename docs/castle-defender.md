@@ -1,8 +1,9 @@
 # Castle Defender
 
 Ride the king around the castle, collect the coins that fallen enemies drop, and spend them on the pads to grow
-a troop, towers, walls, cannons and weapons, and outposts that push the border out. The game lives in `public/js/castle-defender.js` (three.js) and
-`public/js/castle-defender-world.js` (the world's shape, as plain functions).
+a troop, towers, walls, cannons and weapons, and outposts that push the border out. The game lives in
+`public/js/castle-defender.ts` (three.js) and `public/js/castle-defender-world.ts` (the world's shape, as plain
+functions).
 
 ## The world
 
@@ -72,12 +73,12 @@ anyone. The front's new camp goes up on outward from home in about the same dire
 paces further, 14 past the new border (so the next outpost on its road reaches it), clear of the canyon wall and
 of the other camps. A new stretch of road (`campRoad`) runs from it to the old camp, and the front's road becomes
 that stretch plus the old road, so its march gets longer, through the king's land. Enemies already on the way
-keep the road they started on. `tools/check-castle-world.mjs` checks that nearly every outpost built on a front's
-road clears that front's camp.
+keep the road they started on. `tests/castle-defender-world.test.ts` checks that nearly every outpost built on a
+front's road clears that front's camp.
 
 ## Balance
 
-`tools/play-castle-defender.js` plays the real page like a person: the king rides to coins and stands on pads
+`tools/play-castle-defender.ts` plays the real page like a person: the king rides to coins and stands on pads
 to buy (through the gates, round the buildings), buying the cheapest pad it can afford. With it the castle holds
 about 11:10 to 12:15 and the border gets about 110 to 135 paces out with 10 or 11 outposts; the game from before the
 open world held about 11:00 to 11:45 with the same player. Building outposts last (`turtle`) lasts about as long,
@@ -88,12 +89,13 @@ pushing out costs no survival time and is the way the world opens up. Enemies fr
 ## Checks
 
 ```sh
-node tools/check-castle-world.mjs                   # the world functions, in Node
-node tools/test-castle-defender-browser.js          # the real page in headless Chromium (Playwright); --keep saves screenshots
-node tools/play-castle-defender.js 15 balanced --check   # a headless play-through, a line per game minute
+bun test tests/castle-defender-world.test.ts             # the world functions, no browser
+bun test tests/browser/castle-defender.test.ts           # the real page in Bun's headless browser
+bun tools/play-castle-defender.ts 15 balanced --check    # a headless play-through, a line per game minute
 ```
 
-The browser test loads three.js from its CDN; `CD_THREE=/path/to/three.module.js` serves a local copy instead.
+`mise run test` runs both tests with all the others. The play-through is not a test: run it by hand after a
+balance change. `KEEP_SHOTS=1` keeps the browser test's screenshots in `.shots/`.
 `CastleDefender._debug()` in the page gives the tests the game state, a `teleport(x, z)` (which also lets the king
 past the border), an `advance(seconds)` that runs the game faster than real time, `buy(padId)`, and lists of the
 pads, outpost spots, fronts and claims.
