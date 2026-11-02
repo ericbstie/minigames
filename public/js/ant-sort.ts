@@ -1417,7 +1417,8 @@ DATA.levels.forEach((L, i) => {
     }
   b.append(cv);
   const t = document.createElement('div');
-  t.innerHTML = `<div class="lv">Level ${i + 1}</div><div class="nm outlined">${L.name}</div>`;
+  t.innerHTML = `<div class="lv">Level ${i + 1}</div><div class="nm outlined"></div>`;
+  t.querySelector('.nm')!.textContent = L.name;
   b.append(t);
   const st = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
   st.setAttribute('viewBox', '0 0 24 24');
