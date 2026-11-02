@@ -85,6 +85,7 @@ public/js/bike-race-core.ts   physics, track builder, worlds and levels, bikes, 
 public/js/bike-race-pieces.ts the level editor's track pieces and its level builder (docs/bike-race-editor.md)
 public/js/bike-race-art.ts    canvas drawing: world backdrops, the track line, lava, loops, flags, bikes, riders, particles
 public/js/bike-race-net.ts    the connection to the race server: WebSocket or event stream, reconnecting
+public/js/bike-race-protocol.ts  every race message as an Effect Schema, shared with the server
 public/js/bike-race.ts        the game: saves, sound, tilt and touch input, camera and loop, sessions, HUD, menus
 public/js/bike-race-editor.ts the level editor: My levels and the build screen (docs/bike-race-editor.md)
 public/index.html             #br-app markup (canvas, HUD, touch areas, screens, modals)
@@ -93,7 +94,7 @@ public/js/hub.ts              routes #bike-race and #bike-race/<code> to the gam
 public/js/main.ts             registers bike-race.ts with the hub as the `br` game
 public/assets/img/bike-race.jpg   menu card picture, made by tools/render-bike-race-card.ts
 server/serve.ts               the site server and race server behind `mise run app` and `mise run phone`
-server/race.ts                the rooms and races
+server/race.ts                the rooms and races (the RaceLobby service)
 tools/check-bike-levels.ts    prints every level's times on every bike and suggests par times
 tools/bike-levels.ts          the computer rider's riding styles, shared by the level checker and its test
 tests/bike-race-levels.test.ts   every bike finishes every level in all seven riding styles
@@ -102,6 +103,7 @@ tests/browser/bike-race.test.ts          phone-sized browser tests for the garag
 tests/browser/bike-race-editor.test.ts   phone-sized browser tests for the level editor
 tests/browser/bike-race-online.test.ts   live races between phones in the browser, and the no-server fallback
 tests/race-server.test.ts     the race server's messages, without a browser
+tests/race-lobby.test.ts      the rooms on Effect's TestClock: whole races with the real timings, no waiting
 tools/render-bike-race-card.ts    redraws the menu card picture with the game's own drawing code
 ```
 
@@ -323,7 +325,8 @@ All are JSON objects with a type in `t`.
 - Finish times are each phone's own race clock (`bike.time`), so lag never changes a result.
 - If the connection was down when the results came, the `last` field of the next `room` message shows them.
 - Live race rules on the server: `COUNTDOWN` 3 s, `ENDING` 30 s after the first finish, `RACE_LIMIT` 300 s, six
-  riders a room. The tests shorten them with the `countdown`, `ending` and `away` options of `startServer`.
+  riders a room. The browser tests shorten them with the `countdown`, `ending` and `away` options of `startSite`
+  (`RaceSettings` in `server/race.ts`); `tests/race-lobby.test.ts` keeps them and runs on a `TestClock` instead.
 - The garage buttons are hidden during a live race, since the bike is fixed for the race. `sendProfile()` sends a
   new name, paint or bike to the room.
 
