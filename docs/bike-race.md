@@ -10,16 +10,18 @@ leans forward. Hold the right half of the screen for gas and the left half to br
 the bike has stopped and it backs up slowly. Before the start the two halves are tinted red and green with a
 dashed line between them, so it's clear which is which.
 
-In the air the tilt sets how fast the bike turns, so a small turn of the phone gives a slow rotation, a full turn
-(14°) a fast one, and levelling the phone stops the spin within about a quarter of a second. On the ground, leaning
-back pulls a wheelie and leaning forward keeps the nose down. A crash throws the rider off and the wheels come off
+The tilt sets how fast the bike turns, not how hard it is pushed, so there is no momentum to build up or fight. In
+the air a small turn of the phone gives a slow rotation and a full turn (14°) a fast one; the bike reaches that
+speed within about a twentieth of a second, and levelling the phone stops it just as quickly. On the ground,
+leaning back lifts the front at a steady rate for a wheelie and leaning forward keeps the nose down. The
+suspension is firm: it soaks up a landing in a single bounce. A crash throws the rider off and the wheels come off
 the bike.
 
 Five worlds with six levels each: Clover Hills, Ember Canyon, Frostbite Pass (ice), Crater Moon (low gravity and
 loops) and Magma Works (lava). Finish a level to open the next one, and finish a world to open the next world.
 
 - Three stars for beating par, two for finishing within 30% of par, one for finishing.
-- Each landed flip takes 0.5 s off the clock.
+- Landed flips get a cheer, but no time off: the clock is just the time from start to finish.
 - Your best run on each level is saved and replayed as a ghost (it can be turned off in the pause menu).
 - Stars unlock bikes in the garage. See [Garage](#garage).
 
@@ -105,10 +107,10 @@ tools/render-bike-race-card.js    redraws the menu card picture with the game's 
     turns the springs off, so the wheels and the frame tumble on their own (the frame gets two extra hit circles,
     `WRECK_HULLS`), and the rider becomes a separate body (`bike.rider`).
   - Bike input is `{ gas, brake, lean }`, with lean from -1 (forward) to 1 (back). Tilt gives values in between.
-  - Leaning works two ways (see `Bike.step`). On the ground it is a push of `lean` (the bike's tuning) times the
-    input. In the air it steers the spin rate towards input × `leanMaxW`, with a push of at most `lean` ×
-    `AIR_LEAN`, and with no input it brings the spin to a stop. That is what makes the air control snappy: the
-    bike turns while the phone is turned and stops when it's level.
+  - Leaning sets the spin rate (see `Bike.step`). In the air the bike's spin follows input × `leanMaxW` within
+    1/`AIR_SNAP` s (about 0.02 s), and with no input it stops; air means both wheels off the ground for 0.06 s.
+    On the ground, while leaning, it pushes towards `GROUND_SPIN` (55%) of that rate, never harder than the
+    bike's `lean`, so wheelies come up at a steady rate; with no lean the ground and springs decide.
   - Braking slows both wheels. Once the bike is stopped or rolling back on the ground, holding the brake (without
     gas) drives the back wheel backwards, up to `REVERSE` (15%) of top speed.
   - Bikes report what happened through `bike.events` (flip, land, crash, finish).
@@ -146,22 +148,22 @@ on the right are your rider name and ten paints. Picks save as soon as they are 
 | Bike | Stars | Perk | Tuning (changes from `BASE` in `bike-race-core.js`) |
 |---|---|---|---|
 | Scout | 0 | All-rounder | none |
-| Hopper | 10 | Big air | light, soft long-travel springs, 86% gravity, a bit less grip |
-| Twister | 25 | Fast flips | strong, fast lean: a flip takes 0.70 s against 0.89 s |
+| Hopper | 10 | Big air | light, softer long-travel springs, 86% gravity, a bit less grip |
+| Twister | 25 | Fast flips | strong, fast lean: a flip takes 0.63 s against 0.82 s |
 | Bulldog | 45 | Grip | heavy, grippy tyres (ice grip 0.55 against 0.28), strong pull, slow lean, falls a bit faster |
 | Comet | 70 | Top speed | top speed 18 m/s against 15.6, quick off the line, big wheelies, slides on ice |
 
 There are 90 stars in all. What the computer rider measures on flat ground (top speed, 0 to 10 m/s, time for
 one flip at full lean from a standstill in the air, and time and distance in the air off an 8 m long, 2 m high
-kicker taken at 11 m/s):
+ramp with no drop after it, taken at 11 m/s):
 
 | Bike | Top speed | 0–10 m/s | Flip | Air |
 |---|---|---|---|---|
-| Scout | 15.6 m/s | 1.57 s | 0.89 s | 0.97 s, 8.7 m |
-| Hopper | 15.6 m/s | 1.47 s | 0.90 s | 1.10 s, 10.0 m |
-| Twister | 15.6 m/s | 1.57 s | 0.70 s | 0.96 s, 8.6 m |
-| Bulldog | 15.1 m/s | 1.39 s | 1.00 s | 0.93 s, 8.4 m |
-| Comet | 18.0 m/s | 1.27 s | 0.91 s | 0.97 s, 8.8 m |
+| Scout | 15.6 m/s | 1.57 s | 0.82 s | 0.56 s, 5.7 m |
+| Hopper | 15.6 m/s | 1.46 s | 0.82 s | 0.69 s, 7.1 m |
+| Twister | 15.6 m/s | 1.57 s | 0.63 s | 0.57 s, 5.8 m |
+| Bulldog | 15.1 m/s | 1.39 s | 0.98 s | 0.54 s, 5.5 m |
+| Comet | 18.0 m/s | 1.27 s | 0.82 s | 0.58 s, 5.9 m |
 
 Bulldog climbs an icy hill in 5.3 s where Scout takes 6.9 s. Hopper is the slowest on the moon, because it
 floats too long there.
@@ -170,7 +172,7 @@ floats too long there.
   `blurb` and `tune`, which is merged over `BASE`. Two tuning values were added for the garage: `iceMu` (grip on
   ice) and `grav` (multiplies the level's gravity, read through `bike.gravity`).
 - `bikeStats(bike)` turns the tuning into the four 0 to 1 bars (Speed, Grip, Flips, Air). `flipTime(tune)` is
-  the time for one full flip, ignoring the slow-down as the spin reaches its top rate.
+  the time for one full flip.
 - Looks are in `SHAPES` in `bike-race-art.js`: tyres, rims, springs, fenders, frame, fairing and how far the
   rider tucks. Paints are `PAINTS` (10 of them).
 - Locked bikes are drawn as grey silhouettes with a padlock and "N more stars". Tapping one shakes it.
@@ -302,7 +304,7 @@ All are JSON objects with a type in `t`.
   network jitter doesn't make bikes stutter.
 - A crashed rider's bike is drawn without its rider and faded until they're back at a checkpoint. A rider whose
   poses stop for 3 s fades too.
-- Finish times are each phone's own race clock (`bike.time` less flip bonuses), so lag never changes a result.
+- Finish times are each phone's own race clock (`bike.time`), so lag never changes a result.
 - If the connection was down when the results came, the `last` field of the next `room` message shows them.
 - Live race rules on the server: `COUNTDOWN` 3 s, `ENDING` 30 s after the first finish, `RACE_LIMIT` 300 s, six
   riders a room. The tests shorten them with the `BR_COUNTDOWN`, `BR_ENDING` and `BR_AWAY` variables.
@@ -324,9 +326,10 @@ All are JSON objects with a type in `t`.
   `br-gold` gradient for stars, rather than using the one in `#app`.
 - Loops use collision groups. Each loop is two halves, and a bike only collides with the half it should be on.
   See `updateLoops` in the core.
-- Never put a kicker right after a table or a ledge. A fast or floaty bike flies over the gap and lands on the
-  kicker's face, which stops it dead or throws it on its head. Leave at least 8 m of flat before the next kicker.
-  That is why Slag Slide, Core Meltdown and Ember Gauntlet have the extra flats they do.
+- Never put a kicker right after a table, a ledge or a step down. A fast or floaty bike flies over the gap and
+  lands on the kicker's face, which stops it dead or throws it on its head. Leave at least 8 m of flat before the
+  next kicker, and 14 m after a 5 m step down. That is why Slag Slide, Core Meltdown, Ember Gauntlet and Eruption
+  have the extra flats they do.
 - Changing a bike's tuning changes every level for it. Run `node tools/check-bike-levels.js --robust` after.
 - A phone stops a page in the background, so its bike stops too: a locked screen during a live race pauses that
   rider's clock and bike, and the others see them fade until they come back.
@@ -353,8 +356,8 @@ Everything above is tested in headless Chromium posing as a phone. These need a 
 phone on `mise run phone`:
 
 - Tilt feel: full lean at 14° and the 1.5° dead zone. Is a full flip easy to start and stop? Too twitchy riding
-  along? `TILT_FULL` and `TILT_DEAD` in `bike-race.js`, and `AIR_LEAN` and each bike's `lean` and `leanMaxW` in
-  the core, are the knobs.
+  along? `TILT_FULL` and `TILT_DEAD` in `bike-race.js`, and `AIR_SNAP`, `GROUND_SPIN` and each bike's `lean` and
+  `leanMaxW` in the core, are the knobs. The springs are `kU`, `cU` and `travelUp` in `BASE`.
 - iPhone: the motion permission prompt on the first tap, and what happens after "Don't Allow" (lean arrows and
   the "Motion access is off" line in the pause menu).
 - The certificate warning on each phone, then a live race between the two. The room screen shows how each phone

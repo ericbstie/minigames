@@ -190,7 +190,7 @@ function buildLevel(world, def) {
 const WORLDS = [
   { id: 'clover', name: 'Clover Hills', blurb: 'Rolling meadows and gentle jumps.', gravity: 1, levels: [
     { name: 'First Gear', par: 16, track: [['hill', 24, 1.5], ['flat', 10], ['hill', 30, 3], ['flat', 8], ['bumps', 24, 3, 0.5], ['flat', 10], ['rise', 24, 4], ['flat', 12], ['rise', 24, -4], ['flat', 10], ['hill', 26, 2.5]] },
-    { name: 'Daisy Dash', par: 18, track: [['bumps', 32, 4, 0.5], ['flat', 8], ['kicker', 7, 1.2], ['flat', 26], ['hill', 34, 4], ['flat', 6], ['kicker', 8, 1.6], ['flat', 28], ['bumps', 24, 3, 0.45], ['rise', 18, 3], ['flat', 10], ['rise', 26, -3]] },
+    { name: 'Daisy Dash', par: 18.5, track: [['bumps', 32, 4, 0.5], ['flat', 8], ['kicker', 7, 1.2], ['flat', 26], ['hill', 34, 4], ['flat', 6], ['kicker', 8, 1.6], ['flat', 28], ['bumps', 24, 3, 0.45], ['rise', 18, 3], ['flat', 10], ['rise', 26, -3]] },
     { name: 'Hay Bale Hop', par: 17.5, track: [['kicker', 7, 1.4], ['flat', 24], ['table', 8, 2, 6, 12], ['flat', 10], ['hill', 40, 5], ['flat', 8], ['kicker', 8, 1.8], ['gap', 6, 0], ['flat', 22], ['bumps', 30, 4, 0.6], ['flat', 10], ['table', 8, 2.2, 8, 12]] },
     { name: 'Windmill Way', par: 21, track: [['rise', 30, 6], ['flat', 6], ['rise', 18, -3], ['hill', 26, 3], ['kicker', 8, 1.8], ['gap', 7, -1], ['flat', 20], ['bumps', 24, 3, 0.6], ['rise', 34, 7], ['flat', 4], ['rise', 30, -10], ['flat', 8], ['kicker', 9, 2], ['flat', 28], ['hill', 30, 4]] },
     { name: 'Picnic Plunge', par: 20.5, track: [['table', 9, 2.5, 4, 12], ['flat', 6], ['rise', 26, 8], ['flat', 6], ['step', -4], ['flat', 14], ['bumps', 30, 4, 0.6], ['kicker', 9, 2], ['gap', 8, 0], ['flat', 22], ['hill', 36, 5], ['hill', 24, -2.5], ['kicker', 8, 1.6], ['flat', 26], ['rise', 20, 3]] },
@@ -199,14 +199,14 @@ const WORLDS = [
   { id: 'ember', name: 'Ember Canyon', blurb: 'Red rock, deep gaps and big drops.', gravity: 1, levels: [
     { name: 'Dust Devil', par: 16.5, track: [['rise', 20, 4], ['step', -2], ['flat', 12], ['kicker', 8, 1.6], ['gap', 7, 0], ['flat', 22], ['hill', 30, 5], ['flat', 20], ['step', -3], ['flat', 10], ['bumps', 20, 3, 0.5], ['rise', 24, 5], ['flat', 6], ['rise', 24, -6]] },
     { name: 'Mesa Mile', par: 18.5, track: [['rise', 26, 6], ['flat', 10], ['kicker', 6, 1], ['gap', 9, -4], ['rise', 24, -2], ['flat', 8], ['table', 8, 3, 8, 12], ['bumps', 26, 3, 0.7], ['rise', 30, 8], ['flat', 8], ['step', -5], ['flat', 12], ['kicker', 9, 2], ['gap', 9, 0], ['flat', 20]] },
-    { name: 'Rattlesnake Run', par: 20.5, track: [['bumps', 36, 4, 0.7], ['kicker', 8, 1.8], ['gap', 8, 1], ['flat', 20], ['rise', 20, 4], ['step', -6], ['flat', 12], ['hill', 26, 4], ['hill', 26, -3], ['kicker', 9, 2.2], ['gap', 10, -2], ['flat', 20], ['bumps', 24, 3, 0.6], ['rise', 30, -4]] },
+    { name: 'Rattlesnake Run', par: 21, track: [['bumps', 36, 4, 0.7], ['kicker', 8, 1.8], ['gap', 8, 1], ['flat', 20], ['rise', 20, 4], ['step', -6], ['flat', 12], ['hill', 26, 4], ['hill', 26, -3], ['kicker', 9, 2.2], ['gap', 10, -2], ['flat', 20], ['bumps', 24, 3, 0.6], ['rise', 30, -4]] },
     { name: 'Spire Leap', par: 18.5, track: [['rise', 34, 9], ['kicker', 6, 1.2], ['gap', 12, -6], ['rise', 24, -3], ['flat', 6], ['kicker', 8, 1.8], ['gap', 8, 1], ['flat', 18], ['ledge', 1.2], ['flat', 8], ['ledge', 1.2], ['flat', 8], ['rise', 26, -6], ['bumps', 30, 4, 0.6], ['table', 10, 3.5, 6, 14]] },
     { name: 'Canyon Drop', par: 19, track: [['rise', 40, 12], ['flat', 6], ['step', -6], ['flat', 6], ['rise', 18, -6], ['flat', 6], ['kicker', 9, 2.4], ['gap', 12, 0], ['flat', 20], ['hill', 30, 5], ['kicker', 8, 2], ['gap', 10, 2], ['flat', 20], ['bumps', 26, 3, 0.7], ['rise', 26, -6]] },
     { name: 'Ember Gauntlet', par: 25, track: [['kicker', 8, 2], ['gap', 9, 0], ['flat', 18], ['rise', 30, 8], ['step', -4], ['bumps', 24, 3, 0.6], ['kicker', 9, 2.4], ['gap', 12, -2], ['flat', 20], ['table', 9, 3.5, 4, 12], ['flat', 10], ['ledge', 1.4], ['flat', 7], ['ledge', 1.4], ['flat', 13], ['kicker', 6, 1.2], ['gap', 8, -4], ['rise', 24, -4], ['hill', 40, 7], ['kicker', 9, 2.2], ['gap', 11, 0], ['flat', 20]] },
   ] },
   { id: 'frost', name: 'Frostbite Pass', blurb: 'Snowy peaks with slippery ice patches.', gravity: 1, levels: [
     { name: 'First Frost', par: 15.5, track: [['hill', 26, 3], ['ice', true], ['flat', 24], ['ice', false], ['kicker', 8, 1.6], ['flat', 26], ['rise', 26, 6], ['ice', true], ['rise', 26, -6], ['ice', false], ['bumps', 24, 3, 0.5], ['hill', 30, 4]] },
-    { name: 'Icicle Alley', par: 16.5, track: [['ice', true], ['bumps', 30, 3, 0.5], ['ice', false], ['kicker', 8, 1.8], ['gap', 7, 0], ['flat', 20], ['rise', 30, 7], ['flat', 6], ['ice', true], ['rise', 30, -7], ['flat', 10], ['ice', false], ['table', 9, 2.5, 6, 12], ['hill', 30, 4]] },
+    { name: 'Icicle Alley', par: 16, track: [['ice', true], ['bumps', 30, 3, 0.5], ['ice', false], ['kicker', 8, 1.8], ['gap', 7, 0], ['flat', 20], ['rise', 30, 7], ['flat', 6], ['ice', true], ['rise', 30, -7], ['flat', 10], ['ice', false], ['table', 9, 2.5, 6, 12], ['hill', 30, 4]] },
     { name: 'Glacier Glide', par: 16, track: [['rise', 30, 8], ['ice', true], ['flat', 10], ['rise', 34, -10], ['ice', false], ['kicker', 9, 2.2], ['gap', 10, 0], ['flat', 20], ['ice', true], ['hill', 30, 3], ['ice', false], ['bumps', 26, 3, 0.6], ['kicker', 8, 1.8], ['gap', 8, 1], ['flat', 20]] },
     { name: 'Avalanche', par: 17, track: [['rise', 40, 12], ['flat', 4], ['ice', true], ['rise', 30, -9], ['ice', false], ['step', -3], ['flat', 10], ['kicker', 9, 2.2], ['gap', 10, -1], ['flat', 20], ['ice', true], ['bumps', 30, 3, 0.6], ['ice', false], ['table', 10, 3, 6, 14], ['hill', 26, 3]] },
     { name: 'Polar Pipe', par: 20, track: [['hill', 34, -4], ['hill', 34, -5], ['kicker', 8, 2], ['gap', 9, 0], ['flat', 18], ['ice', true], ['flat', 16], ['ice', false], ['rise', 26, 7], ['kicker', 6, 1.2], ['gap', 10, -5], ['rise', 24, -2], ['ice', true], ['bumps', 26, 3, 0.6], ['ice', false], ['hill', 36, 6]] },
@@ -217,15 +217,15 @@ const WORLDS = [
     { name: 'Crater Hop', par: 28, track: [['hill', 40, -6], ['flat', 30], ['kicker', 8, 2], ['gap', 18, 0], ['flat', 50], ['hill', 44, -8], ['flat', 30], ['loop', 4], ['flat', 14], ['kicker', 9, 2.2], ['gap', 16, 2], ['flat', 50]] },
     { name: 'Moonwalk', par: 30.5, track: [['loop', 4.5], ['flat', 14], ['rise', 30, 10], ['flat', 8], ['kicker', 6, 1.5], ['gap', 20, -8], ['rise', 40, -2], ['flat', 30], ['table', 10, 3, 10, 16], ['flat', 30], ['bumps', 40, 3, 0.8], ['flat', 10], ['kicker', 9, 2.4], ['gap', 18, 0], ['flat', 50]] },
     { name: 'Orbit', par: 37, track: [['kicker', 9, 2.4], ['gap', 18, 0], ['flat', 50], ['loop', 5], ['flat', 10], ['hill', 50, 8], ['flat', 40], ['kicker', 8, 2], ['gap', 20, -4], ['flat', 50], ['loop', 4.5], ['flat', 14], ['bumps', 40, 3, 0.8], ['flat', 10], ['kicker', 10, 2.6], ['gap', 22, 0], ['flat', 50]] },
-    { name: 'Dark Side', par: 40, track: [['rise', 40, 14], ['flat', 6], ['kicker', 6, 1.4], ['gap', 20, -12], ['rise', 50, -2], ['flat', 20], ['loop', 5], ['flat', 10], ['table', 12, 4, 10, 18], ['flat', 30], ['hill', 50, -10], ['flat', 30], ['kicker', 10, 2.6], ['gap', 22, 2], ['flat', 50], ['bumps', 30, 2, 0.8], ['flat', 10], ['loop', 4.5], ['flat', 16]] },
+    { name: 'Dark Side', par: 40.5, track: [['rise', 40, 14], ['flat', 6], ['kicker', 6, 1.4], ['gap', 20, -12], ['rise', 50, -2], ['flat', 20], ['loop', 5], ['flat', 10], ['table', 12, 4, 10, 18], ['flat', 30], ['hill', 50, -10], ['flat', 30], ['kicker', 10, 2.6], ['gap', 22, 2], ['flat', 50], ['bumps', 30, 2, 0.8], ['flat', 10], ['loop', 4.5], ['flat', 16]] },
     { name: 'Lunar Loopfest', par: 45, track: [['loop', 4.5], ['flat', 10], ['kicker', 9, 2.4], ['gap', 20, 0], ['flat', 50], ['loop', 5], ['flat', 10], ['rise', 40, 12], ['flat', 6], ['kicker', 6, 1.4], ['gap', 20, -10], ['rise', 50, -2], ['flat', 20], ['loop', 5.5], ['flat', 10], ['hill', 50, 8], ['flat', 40], ['kicker', 10, 2.6], ['gap', 24, 0], ['flat', 50], ['loop', 4.5], ['flat', 12]] },
   ] },
   { id: 'magma', name: 'Magma Works', blurb: 'Lava pits. Do not fall in.', gravity: 1, levels: [
     { name: 'Hot Start', par: 17, track: [['hill', 26, 3], ['kicker', 8, 1.8], ['gap', 7, 0, 'lava'], ['flat', 22], ['bumps', 24, 3, 0.5], ['kicker', 8, 2], ['gap', 8, 0, 'lava'], ['flat', 22], ['rise', 24, 5], ['flat', 6], ['rise', 24, -5], ['hill', 26, 3]] },
     { name: 'Cinder Steps', par: 17, track: [['flat', 4], ['ledge', 1.2], ['flat', 8], ['ledge', 1.2], ['flat', 8], ['kicker', 8, 2], ['gap', 9, -2, 'lava'], ['flat', 20], ['rise', 30, 7], ['kicker', 6, 1.2], ['gap', 9, -4, 'lava'], ['rise', 24, -3], ['bumps', 26, 3, 0.6], ['table', 9, 3, 6, 12]] },
-    { name: 'Forge Floor', par: 17.5, track: [['kicker', 8, 2], ['gap', 9, 0, 'lava'], ['flat', 18], ['hill', 30, 5], ['kicker', 9, 2.2], ['gap', 11, 0, 'lava'], ['flat', 18], ['step', -4], ['flat', 8], ['bumps', 30, 4, 0.6], ['kicker', 8, 2], ['gap', 9, 1, 'lava'], ['flat', 18], ['rise', 26, -5]] },
+    { name: 'Forge Floor', par: 17, track: [['kicker', 8, 2], ['gap', 9, 0, 'lava'], ['flat', 18], ['hill', 30, 5], ['kicker', 9, 2.2], ['gap', 11, 0, 'lava'], ['flat', 18], ['step', -4], ['flat', 8], ['bumps', 30, 4, 0.6], ['kicker', 8, 2], ['gap', 9, 1, 'lava'], ['flat', 18], ['rise', 26, -5]] },
     { name: 'Slag Slide', par: 22.5, track: [['rise', 40, 12], ['flat', 4], ['rise', 30, -10], ['kicker', 9, 2.4], ['gap', 12, -2, 'lava'], ['flat', 20], ['table', 9, 3.5, 4, 12], ['flat', 8], ['kicker', 8, 2], ['gap', 10, 0, 'lava'], ['flat', 18], ['bumps', 26, 3, 0.7], ['rise', 30, 6], ['kicker', 6, 1.4], ['gap', 10, -5, 'lava'], ['rise', 24, -2], ['flat', 10]] },
-    { name: 'Eruption', par: 23, track: [['hill', 40, 8], ['kicker', 9, 2.4], ['gap', 12, 0, 'lava'], ['flat', 18], ['ledge', 1.3], ['flat', 7], ['ledge', 1.3], ['flat', 7], ['kicker', 8, 2], ['gap', 10, -2, 'lava'], ['flat', 18], ['bumps', 30, 4, 0.6], ['rise', 34, 9], ['step', -5], ['flat', 8], ['kicker', 9, 2.4], ['gap', 12, 0, 'lava'], ['flat', 18], ['hill', 26, -3]] },
+    { name: 'Eruption', par: 23, track: [['hill', 40, 8], ['kicker', 9, 2.4], ['gap', 12, 0, 'lava'], ['flat', 18], ['ledge', 1.3], ['flat', 7], ['ledge', 1.3], ['flat', 7], ['kicker', 8, 2], ['gap', 10, -2, 'lava'], ['flat', 18], ['bumps', 30, 4, 0.6], ['rise', 34, 9], ['step', -5], ['flat', 14], ['kicker', 9, 2.4], ['gap', 12, 0, 'lava'], ['flat', 18], ['hill', 26, -3]] },
     { name: 'Core Meltdown', par: 28, track: [['kicker', 8, 2], ['gap', 9, 0, 'lava'], ['flat', 18], ['rise', 30, 8], ['kicker', 6, 1.4], ['gap', 12, -5, 'lava'], ['rise', 24, -3], ['bumps', 24, 3, 0.6], ['kicker', 9, 2.4], ['gap', 12, 0, 'lava'], ['flat', 18], ['table', 10, 3.5, 4, 12], ['flat', 8], ['ledge', 1.4], ['flat', 7], ['ledge', 1.4], ['flat', 7], ['kicker', 9, 2.4], ['gap', 12, -2, 'lava'], ['flat', 18], ['hill', 40, 7], ['kicker', 10, 2.6], ['gap', 13, 0, 'lava'], ['flat', 20]] },
   ] },
 ];
@@ -248,18 +248,20 @@ const twoStarTime = (level) => Math.round(level.par * 1.3 * 10) / 10;
 // runs every bike through every level; rerun it after changing anything here.
 //   torque, maxSpin   engine pull and top wheel speed (top speed is maxSpin * radius m/s)
 //   wheelie           how much the front lifts under gas
-//   lean, leanMaxW    lean push on the ground (AIR_LEAN times more in the air) and the air spin at full lean
+//   lean, leanMaxW    the most push leaning has on the ground, and the spin speed at full lean (rad/s)
 //   mu, iceMu         tyre grip on ground and on ice
 //   grav              share of the level's gravity the bike feels (below 1 floats longer in the air)
 //   kU, cU, travelUp  suspension spring, damping and travel
-const AIR_LEAN = 2.4, REVERSE = 0.15;   // air lean strength over ground lean; reverse speed over top wheel speed
+// The tilt sets how fast the bike turns, not how hard it is pushed: full lean asks for leanMaxW in the air and
+// GROUND_SPIN of that on the ground. AIR_SNAP is how quickly the air spin follows (1/s, so 1/AIR_SNAP seconds).
+const AIR_SNAP = 45, GROUND_SPIN = 0.55, REVERSE = 0.15;   // REVERSE: backing-up speed over top wheel speed
 const WRECK_HULLS = [[-0.3, 0.3, 0.18], [0.35, 0.3, 0.18]];   // extra hit circles for the frame once it tumbles on its own
 const BASE = {
   massC: 10, inertiaC: 3.0, massW: 1.0, radius: 0.34, inertiaW: 0.09,
   anchors: [[-0.62, -0.4], [0.64, -0.4]],
-  kU: 560, cU: 30, kP: 7000, cP: 90, travelUp: 0.2, travelDown: 0.1,
+  kU: 1500, cU: 85, kP: 7000, cP: 90, travelUp: 0.12, travelDown: 0.06,
   torque: 30, maxSpin: 46, wheelie: 0.15, brake: 40,
-  lean: 42, leanMaxW: 10, mu: 1.15, iceMu: 0.28, grav: 1,
+  lean: 90, leanMaxW: 8.5, mu: 1.15, iceMu: 0.28, grav: 1,
   head: [0.08, 0.98, 0.21], torso: [-0.2, 0.52, 0.17],
   hulls: [[0, -0.12, 0.25], [-0.62, -0.02, 0.16], [0.6, 0.06, 0.15]],
 };
@@ -269,24 +271,21 @@ const BIKES = [
     blurb: 'Steady and forgiving. Good at a bit of everything.', tune: {} },
   { id: 'hopper', name: 'Hopper', stars: 10, perk: 'Big air',
     blurb: 'Light and springy. Floats over gaps, but drifts on the moon.',
-    tune: { massC: 8.6, inertiaC: 2.6, kU: 480, cU: 22, travelUp: 0.28, torque: 29, grav: 0.86, mu: 1.05, lean: 38 } },
+    tune: { massC: 8.6, inertiaC: 2.6, kU: 1100, cU: 60, travelUp: 0.17, torque: 29, grav: 0.86, mu: 1.05, lean: 64 } },
   { id: 'twister', name: 'Twister', stars: 25, perk: 'Fast flips',
     blurb: 'Spins round in a flash, so flips come easy. Twitchy on the ground.',
-    tune: { lean: 58, leanMaxW: 14, inertiaC: 2.5, wheelie: 0.18 } },
+    tune: { lean: 86, leanMaxW: 11.5, inertiaC: 2.5, wheelie: 0.18 } },
   { id: 'bulldog', name: 'Bulldog', stars: 45, perk: 'Grip',
     blurb: 'Heavy and grippy. Climbs ice like it is dry, but drops fast off jumps.',
-    tune: { massC: 12.5, inertiaC: 4.3, mu: 1.5, iceMu: 0.55, torque: 40, maxSpin: 44.5, wheelie: 0.08, lean: 48, leanMaxW: 8.5, kU: 640, cU: 36, grav: 1.05 } },
+    tune: { massC: 12.5, inertiaC: 4.3, mu: 1.5, iceMu: 0.55, torque: 40, maxSpin: 44.5, wheelie: 0.08, lean: 96, leanMaxW: 7, kU: 1700, cU: 95, grav: 1.05 } },
   { id: 'comet', name: 'Comet', stars: 70, perk: 'Top speed',
     blurb: 'The fastest bike. Pulls big wheelies and slides on ice.',
-    tune: { maxSpin: 53, torque: 37, wheelie: 0.28, lean: 40, mu: 1.08, iceMu: 0.22 } },
+    tune: { maxSpin: 53, torque: 37, wheelie: 0.28, lean: 72, mu: 1.08, iceMu: 0.22 } },
 ];
 for (const b of BIKES) b.spec = Object.assign({}, BASE, b.tune);
 const bikeById = (id) => BIKES.find(b => b.id === id) || BIKES[0];
-// Seconds to lean through one full turn from a standstill in the air (ignores air drag).
-function flipTime(s) {
-  const acc = s.lean * AIR_LEAN / s.inertiaC, w = s.leanMaxW, spinUp = w / acc, turned = w * w / (2 * acc);
-  return turned >= TAU ? Math.sqrt(2 * TAU / acc) : spinUp + (TAU - turned) / w;
-}
+// Seconds for one full flip at full lean, from a standstill in the air.
+function flipTime(s) { return TAU / s.leanMaxW + 1 / AIR_SNAP; }
 // 0..1 ratings for the garage bars, worked out from the tuning above
 function bikeStats(b) {
   const s = b.spec;
@@ -294,7 +293,7 @@ function bikeStats(b) {
     speed: clamp((s.maxSpin * s.radius - 13.5) / 5 * 0.8 + (s.torque / (s.massC + 2 * s.massW) - 2.3) * 0.2, 0, 1),
     grip: clamp((s.mu - 0.9) / 0.7 * 0.6 + (s.iceMu - 0.15) / 0.45 * 0.4, 0, 1),
     spin: clamp((1.0 - flipTime(s)) / 0.45, 0, 1),
-    air: clamp((1.1 - s.grav) / 0.25 + (s.travelUp - 0.2) * 1.5, 0, 1),
+    air: clamp((1.1 - s.grav) / 0.25 + (s.travelUp - 0.12) * 1.5, 0, 1),
   };
 }
 
@@ -326,7 +325,6 @@ class Bike {
     this.crashed = false; this.crashAt = 0; this.crashKind = '';
     this.finished = false; this.finishTime = 0;
     this.time = 0;                 // seconds since this bike's race clock started
-    this.bonus = 0;                // seconds taken off for flips
     this.flips = 0;
     this.airborne = 0; this.airRot = 0; this.grounded = true;
     this.leanVis = 0;
@@ -340,11 +338,10 @@ class Bike {
   }
   // put the bike back on its feet at x, keeping the race clock running (multiplayer crashes)
   respawn(x) {
-    const keep = { time: this.time, bonus: this.bonus, flips: this.flips, checkpoint: this.checkpoint, running: this.running };
+    const keep = { time: this.time, flips: this.flips, checkpoint: this.checkpoint, running: this.running };
     this.reset(x);
     Object.assign(this, keep);
   }
-  get clock() { return Math.max(0, this.time - this.bonus); }
   get speed() { return Math.hypot(this.c.vx, this.c.vy); }
   // the level's gravity times the bike's own float (grav below 1 hangs in the air longer)
   get gravity() { return this.sim.level.gravity * this.s.grav; }
@@ -394,17 +391,15 @@ class Bike {
       }
     }
     for (const W of this.wheels) W.om *= 1 - 0.15 * dt;      // bearing drag
-    const lean = clamp(inp.lean, -1, 1);
-    if (this.grounded) {
-      // on the ground leaning is a push: lean back to pull a wheelie, forward to keep the nose down
-      if (lean && !(Math.sign(lean) === Math.sign(c.w) && Math.abs(c.w) > s.leanMaxW)) tq += lean * s.lean;
-    } else if (live) {
-      // in the air the lean sets how fast the bike turns, so it starts and stops turning almost at once
-      const want = lean * s.leanMaxW, rate = lean ? 10 : 3.5, most = s.lean * AIR_LEAN;
-      tq += clamp((want - c.w) * rate * s.inertiaC, -most, most);
-    } else c.w *= 1 - 0.4 * dt;   // a wreck, or a bike past the finish, just tumbles
+    // Leaning sets how fast the bike turns. On the ground it pushes towards GROUND_SPIN of that speed, as hard as
+    // the bike's `lean` allows, so a wheelie comes up at a steady rate; let go and the bike settles by itself.
+    const lean = clamp(inp.lean, -1, 1), air = live && !this.grounded;
+    if (live && this.grounded && lean) tq += clamp((lean * s.leanMaxW * GROUND_SPIN - c.w) * 20 * s.inertiaC, -s.lean, s.lean);
+    else if (!live && !this.grounded) c.w *= 1 - 0.4 * dt;   // a wreck, or a bike past the finish, just tumbles
     // integrate
     c.vx += (fx / s.massC) * dt; c.vy += (fy / s.massC) * dt; c.w += (tq / s.inertiaC) * dt;
+    // in the air the spin follows the lean almost at once (within 1/AIR_SNAP s), and stops when the phone is level
+    if (air) c.w = lean * s.leanMaxW + (c.w - lean * s.leanMaxW) * Math.exp(-AIR_SNAP * dt);
     const drag = 1 - 0.012 * dt;
     c.vx *= drag; c.vy *= drag;
     c.x += c.vx * dt; c.y += c.vy * dt; c.a += c.w * dt;
@@ -419,7 +414,7 @@ class Bike {
     if (touching) {
       if (this.airborne > 0.25 && live) {
         const n = Math.floor((Math.abs(this.airRot) + 0.7) / TAU);
-        if (n > 0) { this.flips += n; this.bonus += 0.5 * n; this.events.push({ type: 'flip', n, back: this.airRot > 0 }); }
+        if (n > 0) { this.flips += n; this.events.push({ type: 'flip', n, back: this.airRot > 0 }); }
         if (this.airborne > 0.45) this.events.push({ type: 'land', hard: Math.min(1, this.airborne / 1.6) });
       }
       this.airborne = 0; this.airRot = 0; this.grounded = true;
@@ -598,7 +593,7 @@ class Sim {
         if (b.running) b.time += h;
         if (!b.finished && !b.crashed && b.running && b.c.x >= this.level.finishX) {
           const f = (this.level.finishX - x0) / Math.max(1e-6, b.c.x - x0);
-          b.finished = true; b.finishTime = Math.max(0, b.time - h * (1 - f) - b.bonus);
+          b.finished = true; b.finishTime = Math.max(0, b.time - h * (1 - f));
           b.events.push({ type: 'finish', time: b.finishTime });
         }
         const cps = this.level.checkpoints;
