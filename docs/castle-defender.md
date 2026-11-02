@@ -137,6 +137,25 @@ does (800 coins, at his speed) and hands it in at the nearest base, which is nea
 bottom, and a coin for each one left over on top (at most 300 bills and 400 coins are drawn). A boy handing in a
 thousand or more sends a bill flying in for each thousand, up to four.
 
+## The lands
+
+The further out the border reaches, the more there is to do. The lands are rings of distance from home, listed in
+`LANDS` in `public/js/castle-defender-lands.ts` with the numbers behind them (plain functions, checked by
+`tests/castle-defender-lands.test.ts`). The first time `G.reach` (how far the border reaches from home) gets to a
+land's distance, the land opens (`updateLands`): a banner says what has come, and it shows up. `G.land` counts the
+lands open. Everything in them works the way the rest of the game does, by riding over things and standing on pads.
+
+**Shops** (the market roads, 75 paces out, usually the third or fourth outpost). A lot for sale shows beside every
+outpost standing, and beside each one built after (`addLot`): 8 paces off the outpost's road, further in towards the
+castle, its door facing the road, clear of roads, buildings, pads and other lots (`lotFree`). Each lot costs 1.45 times
+the one before (3,000 first). Buying it opens a shop (`buyShop`), whose kind and look come from the biome it stands in:
+a bakery in the canyon, a fur trader in the Frozen Pass, a herbalist in the Mire, a smeltery in the Ashlands. The
+shop fills the till in front of its door with coins, and the king empties it by riding over it, the way he empties the
+gold plot. A till holds 75 seconds of takings and then stops filling, so shops pay the king for riding round his land.
+The same pad, now beside the shop, buys four more levels, each costing twice the last and earning 2.2 times as much (a
+first level shop earns its lot back in a minute); the shop grows with them (crates, an upper floor, a side room, a
+turret). Shops further out, in richer land, earn more for the same price (`landWealth`).
+
 ## Opening and leaving
 
 The game is a `Game` for the hub (`game`, at the end of `castle-defender.ts`; [development.md](development.md) has
@@ -164,9 +183,10 @@ falls the save is removed, so the next visit starts a new game.
 towers, cannons and their aim, the gold hut and its boys), each stretch of wall's hit points, the claims, every
 front (its road, the stretches added as it fell back, whether and when it opened, its timers and its camp, the
 outposts' camps after the first five, and their timer), the
-ruins, the outposts and their field cannons, the coins paid into pads, the enemies (each with the road it walks,
-stored once for all who share it, a boss among them) and the groups about to set off, when the next boss comes (and
-from where, once its warning is up), and the coins on the ground. Arrows, cannon balls,
+ruins, the outposts and their field cannons, the lands open, the lots and shops with their tills, the coins paid into
+pads, the enemies (each with the road it walks, stored once for all who share it, a boss among them) and the groups
+about to set off, when the next boss comes (and from where, once its warning is up), and the coins on the ground.
+Arrows, cannon balls,
 dust and floating numbers start again empty. Coins flying to the king are added to his, and coins paid into a spot
 for an outpost go back to him: `refreshFrontier` works the spots out again from the border, in the same places.
 Each gold boy is saved with what he carries, and works out again which base to take it to; an outpost's boy is
@@ -178,7 +198,8 @@ had to fetch them): the king gets those.
 dust, no celebration) through the same helpers the purchases use (`makeForge`, `makeCannon`, `makeGoldHut`,
 `outpostPad`). The `SavedWorld` Schema checks every field and that the save fits this game (six wall towers,
 every stretch of wall, the five first fronts in order and then only camps of outposts that stand, enemies on roads
-that are there, looks their kind has, one boss at most). A game saved before there were bosses meets its first a minute after it carries on. A save that
+that are there, looks their kind has, one boss at most). A game saved before there were bosses meets its first a minute after it carries on. A save from before the
+lands (no `land`, `lotSeq` or `shops`) carries on with none open; they open as the border gets there. A save that
 doesn't fit starts a new game, and `castle.bestTime` is a key of its own, so it is kept either way. A save that
 fits but still can't be set up (a mistake in this code) is reported, removed, and a new game starts. A save from
 before there were bazookas (the forge at machine guns, maybe with +1s on them) fits: the forge offers bazookas next,
@@ -217,16 +238,27 @@ forge. Before bazookas, when the castle fell at about 12 minutes, the new camps 
 11:59 and 10:48 against 11:56, 12:16, 11:48 and 12:15): they don't add to how many enemies are out (300 at most), but
 theirs are tougher, standing out past the border, and sending their groups less often made no difference.
 
+**The threat level.** The enemy's strength follows a threat level, `threatLevel(t)` in
+`castle-defender-lands.ts`: hit points grow 1.1 times and blows 1.06 times a level, and groups get bigger and come
+sooner. Up to 12 minutes it is the clock's, a level every 13 seconds, which makes the enemy about 55% tougher every
+minute; after that it keeps growing, ever more slowly (`EASE_FROM`, `EASE_K`). The game from before the lands fell by
+12 minutes whatever it had built, so easing off after that can't make that game last longer, and only what the
+lands bring can keep the castle standing into the easier stretch. `--no-lands` checks it: with the lands shut the
+play-through falls when the game before them did.
+
 ## Checks
 
 ```sh
 bun test tests/castle-defender-world.test.ts             # the world functions, no browser
+bun test tests/castle-defender-lands.test.ts             # the lands' numbers, no browser
 bun test tests/browser/castle-defender.test.ts           # the real page in Bun's headless browser
 bun tools/play-castle-defender.ts 15 balanced --check    # a headless play-through, a line per game minute
+bun tools/play-castle-defender.ts 60 balanced --no-lands # the same with the lands shut, to compare
 ```
 
 `mise run test` runs both tests with all the others. The play-through is not a test: run it by hand after a
 balance change. `KEEP_SHOTS=1` keeps the browser test's screenshots in `.shots/`.
 `CastleDefender._debug()` in the page gives the tests the game state, a `teleport(x, z)` (which also lets the king
-past the border), an `advance(seconds)` that runs the game faster than real time, `buy(padId)`, lists of the
-pads, outpost spots, fronts and claims, and the boss on the field (`boss()`; set `G.boss.next` to bring one sooner).
+past the border), an `advance(seconds)` that runs the game faster than real time, `buy(padId)`, `lockLands()`, lists
+of the pads, outpost spots, fronts, claims, and lots and shops with their tills, and the boss on the field (`boss()`;
+set `G.boss.next` to bring one sooner).

@@ -2,17 +2,19 @@
 // the pads to buy, through the gates and around the buildings (no teleports, no free coins). Prints a line per
 // minute of game time and how long the castle held. For balance work on the open world.
 //
-// Usage: bun tools/play-castle-defender.ts [minutes=15] [strategy=balanced] [--check]
+// Usage: bun tools/play-castle-defender.ts [minutes=15] [strategy=balanced] [--check] [--no-lands]
 //   strategy: balanced (buys the cheapest pad it can afford, outposts a little later), turtle (outposts last),
 //             expand (outposts first)
 //   --check: fail unless the castle holds 9 minutes and the border has been pushed out by 5 outposts (balanced)
+//   --no-lands: the lands past the first border never open (no shops...), to compare with the game before them
 // It serves the site itself, like the browser tests, and needs Chrome or Chromium installed.
 import { openPage, startSite } from '../tests/support/browser';
 
 const args = process.argv.slice(2).filter((a) => !a.startsWith('--'));
 const minutes = +(args[0] || 15),
   strategy = args[1] || 'balanced',
-  check = process.argv.includes('--check');
+  check = process.argv.includes('--check'),
+  noLands = process.argv.includes('--no-lands');
 
 type Gate = [x: number, z: number, nx: number, nz: number];
 interface Bot {
@@ -25,6 +27,7 @@ interface Bot {
   wiggle: number;
   wa?: number;
   outposts: number[]; // the game time each outpost went up
+  lands: number[]; // the game time each land opened
 }
 declare global {
   interface Window {
@@ -63,7 +66,15 @@ function bot(strategy: string): void {
     };
     return clip(-dx, ax + 15.2) && clip(dx, 15.2 - ax) && clip(-dz, az + 13.2) && clip(dz, 13.2 - az) && t0 <= t1;
   };
-  const B: Bot = (window.__bot = { goal: '', stuck: 0, last: [0, 0], via: null, wiggle: 0, outposts: [] });
+  const B: Bot = (window.__bot = {
+    goal: '',
+    stuck: 0,
+    last: [0, 0],
+    via: null,
+    wiggle: 0,
+    outposts: [],
+    lands: [],
+  });
   window.__think = () => {
     const G = d.G,
       k = G.king;
@@ -96,10 +107,24 @@ function bot(strategy: string): void {
           best = c;
         }
       }
+      // a shop's till worth the ride (a full one more so) beats a coin as far away
+      let till = false;
+      for (const s of d.shops()) {
+        const tl = s.till;
+        if (!s.lv || tl.value < Math.max(150, tl.cap * 0.3)) continue;
+        const v =
+          Math.hypot(tl.x - k.x, tl.z - k.z) * (tl.value > tl.cap * 0.95 ? 0.5 : 0.8) +
+          Math.hypot(tl.x - 4, tl.z) * 0.3;
+        if (v < bd) {
+          bd = v;
+          best = tl;
+          till = true;
+        }
+      }
       if (best) {
         tx = best.x;
         tz = best.z;
-        B.goal = 'coin';
+        B.goal = till ? 'till' : 'coin';
       }
     }
     // a pad on the wall line is bought from just inside
@@ -193,6 +218,7 @@ function bot(strategy: string): void {
     G.input.x = L > 0.3 ? dx / L : 0;
     G.input.z = L > 0.3 ? dz / L : 0;
     while (B.outposts.length < G.outposts) B.outposts.push(Math.round(G.t));
+    while (B.lands.length < G.land) B.lands.push(Math.round(G.t));
   };
 }
 // runs in the page: a minute of play, then the state
@@ -227,6 +253,8 @@ function minute() {
       .join(''),
     reach: Math.round(G.reach),
     bosses: `${G.boss.slain}/${G.boss.came}`, // beaten / come
+    land: G.land,
+    shops: G.shops.map((s) => s.lv).join(''),
     camps: d
       .fronts()
       .filter((f) => f.open)
@@ -238,17 +266,19 @@ function minute() {
 const site = startSite();
 const page = await openPage(site, { width: 640, height: 400, path: '/#castle-defender' });
 let last: Awaited<ReturnType<typeof minute>> | null = null,
-  outposts: number[] = [];
+  outposts: number[] = [],
+  lands: number[] = [];
 try {
   await page.waitFor(() => !!window.CastleDefender?._debug().G, [], { timeout: 20_000 });
   await page.eval(bot, strategy);
-  console.log(`Castle Defender, ${strategy} play, up to ${minutes} minutes`);
+  if (noLands) await page.eval(() => window.CastleDefender!._debug().lockLands());
+  console.log(`Castle Defender, ${strategy} play${noLands ? ', lands shut' : ''}, up to ${minutes} minutes`);
   for (let m = 0; m < minutes; m++) {
     last = await page.eval(minute);
     console.log(JSON.stringify(last));
     if (last.over) break;
   }
-  outposts = await page.eval(() => window.__bot!.outposts);
+  ({ outposts, lands } = await page.eval(() => window.__bot!));
   if (page.errors.length) {
     console.log('page errors:', page.errors);
     process.exitCode = 1;
@@ -261,9 +291,11 @@ if (last) {
   const held = last.over
     ? `the castle fell after ${Math.floor(last.t / 60)}:${String(last.t % 60).padStart(2, '0')}`
     : `the castle still stands after ${minutes} minutes`;
+  const at = (ts: number[]) => ts.map((t) => `${Math.floor(t / 60)}:${String(t % 60).padStart(2, '0')}`).join(', ');
   console.log(
     `\n${held}; ${outposts.length} outposts (at ${outposts.join(', ') || '-'} s), border ${last.reach} paces out`,
   );
+  console.log(`lands opened: ${lands.length ? at(lands) : 'none'}; ${last.coins} coins left unspent`);
   if (check && ((last.over && last.t < 540) || outposts.length < 5)) {
     console.log('FAIL: expected the castle to hold 9 minutes with 5 outposts');
     process.exitCode = 1;
