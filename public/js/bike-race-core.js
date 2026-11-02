@@ -20,13 +20,15 @@ const EMPTY = [];
 // Terrain: polylines in metres, y up. Each segment can have a kind (ground, ice, pit, lava) and a
 // group. Group 0 always collides; loop halves use other groups that a bike switches on and off
 // as it goes round, so the way in and the way out of a loop never block each other.
+// A line may also carry `s`, each segment's distance along the track (levels built in the editor use it to
+// know where a bike is, see Bike.updateGhosts); Terrain.s is then that distance per segment.
 const CELL = 1;
 const PAD = 1.4;   // bigger than the largest collider radius
 
 class Terrain {
   constructor(lines) {
     this.lines = lines;
-    const ax = [], ay = [], bx = [], by = [], nx = [], ny = [], kind = [], group = [];
+    const ax = [], ay = [], bx = [], by = [], nx = [], ny = [], kind = [], group = [], segS = [];
     for (const L of lines) {
       const p = L.pts;
       for (let i = 0, s = 0; i + 3 < p.length; i += 2, s++) {
@@ -37,6 +39,7 @@ class Terrain {
         nx.push(-dy / l); ny.push(dx / l);
         kind.push((L.kinds && L.kinds[s]) || L.kind || 'ground');
         group.push(L.group || 0);
+        segS.push(L.s ? L.s[s] : NaN);
       }
     }
     this.n = ax.length;
@@ -44,6 +47,7 @@ class Terrain {
     this.bx = Float64Array.from(bx); this.by = Float64Array.from(by);
     this.nx = Float64Array.from(nx); this.ny = Float64Array.from(ny);
     this.kind = kind; this.group = Int32Array.from(group);
+    this.s = Float64Array.from(segS);
     let lo = Infinity, hi = -Infinity;
     for (let i = 0; i < this.n; i++) { lo = Math.min(lo, ax[i], bx[i]); hi = Math.max(hi, ax[i], bx[i]); }
     this.x0 = Math.floor(lo - PAD);
@@ -312,8 +316,9 @@ class Bike {
     this.reset(opts.x != null ? opts.x : sim.level.startX);
   }
   reset(x) {
-    const s = this.s, T = this.sim.level.terrain;
-    const surf = T.surface(x) || { y: 0, angle: 0 };
+    const s = this.s, L = this.sim.level, T = L.terrain;
+    // startTop: a level from the editor may have track above the start, so look below it
+    const surf = T.surface(x, L.startTop != null ? L.startTop : 1e9) || { y: 0, angle: 0 };
     const a = surf.angle;
     const lift = -s.anchors[0][1] + s.radius + 0.02;
     const [ox, oy] = rot(a, 0, lift);
@@ -333,8 +338,11 @@ class Bike {
     this.loose = false;            // after a crash the wheels come off and everything tumbles on its own
     this.checkpoint = 0;           // index of the last checkpoint passed (multiplayer respawns)
     this.disabledGroups.clear();
-    for (const L of this.sim.level.loops) this.disabledGroups.add(L.gB);
-    this.loopState = this.sim.level.loops.map(() => 0);
+    for (const lp of L.loops) this.disabledGroups.add(lp.gB);
+    this.loopState = L.loops.map(() => 0);
+    this.pathS = L.ghosts ? L.ghosts.startS : 0;   // how far along the track the bike is (editor levels)
+    this.ghostZone = -1;
+    if (L.ghosts) this.updateGhosts();
   }
   // put the bike back on its feet at x, keeping the race clock running (multiplayer crashes)
   respawn(x) {
@@ -484,7 +492,7 @@ class Bike {
       let jt = -vt / kt; const lim = mu * jn;
       if (jt > lim) jt = lim; else if (jt < -lim) jt = -lim;
       W.vx += (jt / s.massW) * tx; W.vy += (jt / s.massW) * ty; W.om += (jt * r) / s.inertiaW;
-      W.contact = true; W.age = 0; W.nx = nx; W.ny = ny; W.kind = kind;
+      W.contact = true; W.age = 0; W.nx = nx; W.ny = ny; W.kind = kind; W.seg = i;
       hit = true;
     }
     if (!hit && W.age > 0.05) W.contact = false;
@@ -537,6 +545,7 @@ class Bike {
 
   // loop halves: the second half switches on once the bike is over the top, and back after the exit
   updateLoops() {
+    if (this.sim.level.ghosts) this.updateGhosts();
     const L = this.sim.level.loops;
     for (let k = 0; k < L.length; k++) {
       const lp = L[k], c = this.c, st = this.loopState[k];
@@ -545,6 +554,26 @@ class Bike {
       } else if (st === 1 && (c.x > lp.cx + lp.r + 2.5 || c.x < lp.cx - lp.r - 6)) {
         this.loopState[k] = 0; this.disabledGroups.delete(lp.gA); this.disabledGroups.add(lp.gB);
       }
+    }
+  }
+
+  // Levels from the editor can cross themselves: a loop made of a 3/4 loop and a quarter loop comes back down
+  // onto the track it started from. Where two stretches far apart along the track come close, each is solid only
+  // while the bike is nearer to it along the track (level.ghosts, made by BikeRacePieces.buildCustomLevel), so the
+  // way out of a loop never blocks the way in. pathS follows the segments the wheels touch.
+  updateGhosts() {
+    const G = this.sim.level.ghosts, T = this.sim.level.terrain;
+    let sum = 0, n = 0;
+    for (const W of this.wheels) if (W.age < 0.005 && W.seg != null && T.s[W.seg] === T.s[W.seg]) { sum += T.s[W.seg]; n++; }
+    if (n) this.pathS = sum / n;
+    // the switch points are sorted, so only redo the groups when the bike moves past one
+    const b = G.bounds, s = this.pathS;
+    let lo = 0, hi = b.length;
+    while (lo < hi) { const m = (lo + hi) >> 1; if (b[m] <= s) lo = m + 1; else hi = m; }
+    if (lo === this.ghostZone) return;
+    this.ghostZone = lo;
+    for (const q of G.segs) {
+      if (s >= q.lo && s < q.hi) this.disabledGroups.delete(q.g); else this.disabledGroups.add(q.g);
     }
   }
 
@@ -591,7 +620,7 @@ class Sim {
         const x0 = b.c.x;
         b.step(h);
         if (b.running) b.time += h;
-        if (!b.finished && !b.crashed && b.running && b.c.x >= this.level.finishX) {
+        if (!b.finished && !b.crashed && b.running && this.crossedFinish(b, x0)) {
           const f = (this.level.finishX - x0) / Math.max(1e-6, b.c.x - x0);
           b.finished = true; b.finishTime = Math.max(0, b.time - h * (1 - f));
           b.events.push({ type: 'finish', time: b.finishTime });
@@ -601,6 +630,14 @@ class Sim {
       }
     }
     this.t += STEP;
+  }
+  // Past the finish line. A level from the editor has a finish flag somewhere on its track (finishY) and may be
+  // ridden leftwards (finishDir -1), so the bike has to cross the line near the flag, going the right way.
+  crossedFinish(b, x0) {
+    const L = this.level, x = b.c.x;
+    if (L.finishY == null) return x >= L.finishX;
+    const dir = L.finishDir || 1, y = b.c.y - L.finishY;
+    return (x - L.finishX) * dir >= 0 && (x0 - L.finishX) * dir < 0 && y > -1 && y < 5;
   }
 }
 
