@@ -2738,8 +2738,14 @@ export const reroute: Effect.Effect<void, never, PageServices> = Effect.gen(func
   } else showView(view === 'play' ? 'home' : view);
 });
 
+// on the menu's card: the stars won
+const progress = Effect.sync(() => {
+  const n = totalStars();
+  return n ? [`${n} of ${C.LEVELS.length * 3} stars`] : [];
+});
+
 /** Bike Race for the hub */
-export const game: Game = { open, reroute };
+export const game: Game = { open, reroute, progress };
 
 // what the level editor (bike-race-editor.ts) uses from the game
 const editorApi = {

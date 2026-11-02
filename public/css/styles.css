@@ -1180,6 +1180,26 @@ button:focus-visible {
   color: #8d7f86;
   text-wrap: balance;
 }
+/* how far the player has got: a few notes, filled in by the hub; the line goes when there are none */
+.hub-card .pg {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 6px;
+}
+.hub-card .pg:empty {
+  display: none;
+}
+.hub-card .pg span {
+  padding: 4px 11px 5px;
+  border-radius: 999px;
+  background: var(--gold-sheet);
+  box-shadow: inset 0 0 0 1.5px var(--gold-deep);
+  font:
+    700 13px/1.25 system-ui,
+    sans-serif;
+  color: var(--ink);
+}
 .hub-back {
   position: absolute;
   top: 14px;

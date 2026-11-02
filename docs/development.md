@@ -120,6 +120,11 @@ level picker.
 A level in progress only loads if it is a position the level can be in (`wsFits` in `water-sort-logic.ts`,
 `simFromSave` in `ant-sort-logic.ts`): a save edited by hand can't make a level that can't be won, or crash it.
 
+The menu's cards show what has been saved: each game's `progress` (an effect on its `Game`, in `hub.ts`) gives a few
+short notes, such as `3 of 20 stars`, `Level 5 in progress` or `Best 6:30`, read through the same Schemas, and the hub
+puts them under the card each time the menu shows, so they are up to date when the player comes back from a game. A
+game with nothing saved has no notes, and its card no line for them.
+
 ## Tests
 
 ```sh

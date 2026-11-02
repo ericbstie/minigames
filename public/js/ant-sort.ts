@@ -1529,6 +1529,17 @@ export const game: Game = {
     pushProgress = yield* syncProgress;
     yield* animate(frame);
   }),
+  // on the menu's card: the stars (saved here, or come from the per-user store while the game was open), and the
+  // level left unfinished
+  progress: Effect.gen(function* () {
+    const saved = new Set([...stars, ...(yield* load(STAR_KEY, StarNames, () => []))]),
+      n = DATA.levels.filter((L) => saved.has(L.name)).length,
+      playing = yield* load<SavedPlay | null>(PLAY_KEY, SavedPlay, () => null);
+    return [
+      ...(n ? [`${n} of ${DATA.levels.length} stars`] : []),
+      ...(playing ? [`Level ${levelNamed(playing.level) + 1} in progress`] : []),
+    ];
+  }),
 };
 
 // What the browser tests read, and a speed for them: a software-rendered browser draws a level at a few frames a

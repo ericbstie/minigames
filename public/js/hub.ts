@@ -4,6 +4,9 @@
 // A game runs in a scope while it is on screen: the hub opens a scope and runs the game's `open` effect in it when
 // the player arrives, and closes it when they leave, which removes the game's listeners and stops its loops and
 // timers (page.ts has the helpers that tie them to the scope).
+//
+// Each time the menu shows, its cards say how far the player has got in each game (the stars, a level or a game left
+// in progress), from what the game has saved.
 import { Effect, Exit, Scope } from 'effect';
 import { type PageServices, run } from './page';
 
@@ -14,10 +17,19 @@ export interface Game {
   readonly open: Effect.Effect<void, never, Scope.Scope | PageServices>;
   /** The address changed while the game is open (#bike-race to #bike-race/CODE, say) */
   readonly reroute?: Effect.Effect<void, never, PageServices>;
+  /** What the game's card on the menu says of the player's progress: a few short notes, none before they have any */
+  readonly progress?: Effect.Effect<readonly string[], never, PageServices>;
 }
 
 // The element that holds each game's screen
 const SCREENS: Record<GameId, string> = { ant: 'app', castle: 'cd-app', ws: 'ws-app', br: 'br-app' };
+// Each game's address, which is also its card's data-game
+const ADDRESSES: Record<GameId, string> = {
+  ant: 'ant-sort',
+  castle: 'castle-defender',
+  ws: 'water-sort',
+  br: 'bike-race',
+};
 const games: Partial<Record<GameId, Game>> = {};
 // The game on screen and its scope
 let current: { id: GameId; scope: Scope.Closeable } | null = null;
@@ -28,12 +40,31 @@ export function registerGame(id: GameId, game: Game): void {
 
 function wanted(): GameId | 'menu' {
   const h = location.hash.slice(1);
-  if (h === 'ant-sort') return 'ant';
-  if (h === 'castle-defender') return 'castle';
-  if (h === 'water-sort') return 'ws';
-  if (h === 'bike-race' || h.startsWith('bike-race/')) return 'br';
-  return 'menu';
+  if (h.startsWith('bike-race/')) return 'br';
+  return (Object.keys(ADDRESSES) as GameId[]).find((id) => ADDRESSES[id] === h) ?? 'menu';
 }
+
+// The notes under each card, read again from the games' saves
+const showProgress = Effect.suspend(() =>
+  Effect.forEach(
+    Object.keys(games) as GameId[],
+    (id) =>
+      Effect.gen(function* () {
+        const box = document.querySelector(`.hub-card[data-game="${ADDRESSES[id]}"] .pg`),
+          progress = games[id]?.progress;
+        if (!box || !progress) return;
+        const notes = yield* progress;
+        box.replaceChildren(
+          ...notes.map((text) => {
+            const note = document.createElement('span');
+            note.textContent = text;
+            return note;
+          }),
+        );
+      }),
+    { discard: true },
+  ),
+);
 
 /** Shows the screen the address asks for: closes the game being left, and opens the one arrived at */
 export const route: Effect.Effect<void, never, PageServices> = Effect.gen(function* () {
@@ -46,8 +77,9 @@ export const route: Effect.Effect<void, never, PageServices> = Effect.gen(functi
     current = null;
     yield* Scope.close(left.scope, Exit.void);
   }
-  const next = game === 'menu' ? undefined : games[game];
-  if (!next || game === 'menu') return;
+  if (game === 'menu') return yield* showProgress;
+  const next = games[game];
+  if (!next) return;
   if (current) return yield* next.reroute ?? Effect.void;
   const scope = yield* Scope.make();
   current = { id: game, scope };
