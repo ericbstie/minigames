@@ -341,7 +341,7 @@ function onEvent(sess, me, e) {
     return;
   }
   if (e.type === 'flip') {
-    toast(`${e.n > 1 ? e.n + 'x ' : ''}${e.back ? 'Backflip' : 'Frontflip'}! −${(0.5 * e.n).toFixed(1)}s`);
+    toast(`${e.n > 1 ? e.n + 'x ' : ''}${e.back ? 'Backflip' : 'Frontflip'}!`);
     Sound.flip();
     particles.burst(me.c.x, me.c.y + 1, ['#ffd43b', '#fff3b0'], 10, 4, 'star');
   } else if (e.type === 'land') {
@@ -482,7 +482,7 @@ let hudCache = {};
 function setText(el, key, text) { if (hudCache[key] !== text) { hudCache[key] = text; el.textContent = text; } }
 function hud() {
   const s = S, me = s.me;
-  const t = me.finished ? me.finishTime : me.clock;
+  const t = me.finished ? me.finishTime : me.time;
   setText(ui.time, 'time', fmt(t));
   const left = s.endsAt && !me.finished ? Math.max(0, Math.ceil(s.endsAt - performance.now() / 1000)) : -1;
   setText(ui.sub, 'sub', left >= 0 ? `Race ends in ${left}s` : s.subText || '');
@@ -570,7 +570,6 @@ function showResult(sess) {
   ui.resBest.textContent = fmt(save.best[def.id]) + 's';
   ui.resNew.hidden = !sess.newBest || !sess.prevBest;
   let hint = stars < 3 ? `Finish under ${fmt(stars < 2 ? C.twoStarTime(def) : def.par)}s for ${stars < 2 ? 2 : 3} stars.` : `Under par (${fmt(def.par)}s). Nice riding.`;
-  if (sess.me.flips) hint += ` ${sess.me.flips} flip${sess.me.flips > 1 ? 's' : ''} took off ${(sess.me.flips * 0.5).toFixed(1)}s.`;
   if (sess.firstClear && lastInWorld && lastWorld) hint = `That was the last level. ${totalStars()} of ${C.LEVELS.length * 3} stars so far: go back for the rest.`;
   ui.resHint.textContent = hint;
   garageButtons();
@@ -588,7 +587,7 @@ function showCrash() {
     : 'Lean back (←) in the air if the nose drops, forward (→) if it rises.';
   const tips = kind === 'lava' || kind === 'fall' || kind === 'pit'
     ? ['Carry more speed into the jump to clear the gap.', 'Keep the gas on as you take off, and land level.']
-    : [air, 'Land with both wheels at the same time for a smooth touchdown.', 'Ease off the gas before big bumps.', 'Lean the way the ground slopes where you will land.', 'Flips take 0.5s off your time each, if you land them.'];
+    : [air, 'Land with both wheels at the same time for a smooth touchdown.', 'Ease off the gas before big bumps.', 'Lean the way the ground slopes where you will land.'];
   ui.crashText.textContent = tips[Math.floor(Math.random() * tips.length)];
   if (S.me.crashKind === 'lava') ui.crashTitle.textContent = 'Too hot!';
   else if (S.me.crashKind === 'fall' || S.me.crashKind === 'pit') ui.crashTitle.textContent = 'Down the pit!';
