@@ -1,7 +1,10 @@
 // Bike Race level editor: My levels (new, play, edit, rename, delete) and the build screen, where a track is put
 // together from one row of ready-made pieces (bike-race-pieces.ts) on the game's canvas. Levels are saved in this
 // browser and played as solo runs by bike-race.ts, which imports this module, hands it what it needs from the game
-// (connect), shows its screens (onView) and lets it draw on the canvas while the editor is up (frame).
+// (connect), runs its part of a visit to Bike Race (open: its listeners and timers, which stop when the player
+// leaves), shows its screens (onView) and lets it draw on the canvas while the editor is up (frame).
+import { Effect, FiberHandle, FiberSet, type Scope } from 'effect';
+import * as KeyValueStore from 'effect/persistence/KeyValueStore';
 import * as A from './bike-race-art';
 import type { BestResult, CustomRun, EditorApi } from './bike-race';
 import * as C from './bike-race-core';
@@ -17,6 +20,7 @@ import type {
   SavedLevel,
   SavedLevels,
 } from './bike-race-pieces';
+import { listen, load, nextFrame, type PageServices, runSync, Saves } from './page';
 
 const $ = (id: string) => document.getElementById(id)!;
 // the game, once it has connected
@@ -60,40 +64,35 @@ interface Pinch {
   ppm0: number;
   mid: Point;
 }
-/** A stored value nobody has checked yet */
-type Unchecked = Record<string, unknown>;
-const isObj = (v: unknown): v is Unchecked => !!v && typeof v === 'object';
 
 // ------------------------------------------------------------------------------------------------
-// Saved levels: localStorage 'bikerace.levels.v1' = { v: 1, levels: [{ id, data, best: { t, key } | null, updated }] }.
-// `data` is a bike-race-pieces.ts level; best.key is the track's trackKey, so a best time is dropped once the track changes.
-const STORE_KEY = 'bikerace.levels.v1',
-  MAX_LEVELS = 100;
-let store: SavedLevels = { v: 1, levels: [] };
+// While Bike Race is open (see open, at the end): fork runs a fiber that stops when the player leaves, and hintTimer
+// runs the hint's timer, a new hint replacing the last one's. Both are null while the game is closed, when nothing
+// here starts a timer.
+let fork: ((effect: Effect.Effect<void, never, PageServices>) => unknown) | null = null;
+let hintTimer: ((effect: Effect.Effect<void>) => unknown) | null = null;
+/** fn on the next frame, once the page has laid out what was just added */
+const afterFrame = (fn: () => void) => fork?.(Effect.map(nextFrame, () => fn()));
+
+// ------------------------------------------------------------------------------------------------
+// Saved levels: localStorage 'bikerace.levels.v1', read and written through P.SavedLevels, which checks and cleans
+// every level on the way in (see bike-race-pieces.ts). best.key is the track's trackKey, so a best time is dropped
+// once the track changes.
+const STORE_KEY = 'bikerace.levels.v1';
+const emptyStore = (): SavedLevels => ({ v: 1, levels: [] });
+let store: SavedLevels = emptyStore();
 function loadStore() {
-  let raw: unknown = null;
-  try {
-    raw = JSON.parse(localStorage.getItem(STORE_KEY) || 'null');
-  } catch {}
-  const list: unknown[] = isObj(raw) && Array.isArray(raw.levels) ? raw.levels : [];
-  const seen = new Set<string>();
-  store = { v: 1, levels: [] };
-  for (const L of list.slice(0, MAX_LEVELS)) {
-    if (!isObj(L) || typeof L.id !== 'string' || !/^[a-z0-9]{1,24}$/.test(L.id) || seen.has(L.id)) continue;
-    seen.add(L.id);
-    const best =
-      isObj(L.best) && Number(L.best.t) > 0 && typeof L.best.key === 'string'
-        ? { t: Number(L.best.t), key: L.best.key.slice(0, 16) }
-        : null;
-    store.levels.push({ id: L.id, data: P.sanitize(L.data), best, updated: Number(L.updated) || 0 });
-  }
+  store = runSync(load(STORE_KEY, P.SavedLevels, emptyStore));
 }
+// page.ts's save, but saying whether the browser took it
+const writeStore = (value: SavedLevels) =>
+  Effect.gen(function* () {
+    yield* KeyValueStore.toSchemaStore(yield* Saves, P.SavedLevels).set(STORE_KEY, value);
+  }).pipe(Effect.match({ onFailure: () => false, onSuccess: () => true }));
 let saveFailed = false;
 function saveStore() {
-  try {
-    localStorage.setItem(STORE_KEY, JSON.stringify(store));
-    saveFailed = false;
-  } catch {
+  if (runSync(writeStore(store))) saveFailed = false;
+  else {
     if (!saveFailed) api().toast("Couldn't save: this browser's storage is full", 2600, 'small');
     saveFailed = true;
   }
@@ -121,7 +120,8 @@ function nextName() {
 }
 
 // ------------------------------------------------------------------------------------------------
-// My levels
+// My levels. The cards are made again on every visit to the list, so their buttons and name fields are handled by
+// listeners on the list itself (see open), which find the card from the element tapped.
 function renderList() {
   loadStore();
   const list = $('br-ml-list');
@@ -141,40 +141,44 @@ function renderList() {
       <div class="br-ml-info"><input class="br-ml-name" type="text" maxlength="${P.NAME_MAX}" value="${esc(L.data.name)}" aria-label="Level name" spellcheck="false" enterkeyhint="done">
       <span class="br-ml-meta">${n} piece${n === 1 ? '' : 's'}${best ? ' · Best ' + fmt(best) + 's' : ''}</span></div>
       <div class="br-ml-btns"><button class="b go outlined" type="button" data-act="play">Play</button><button class="b sky outlined" type="button" data-act="edit">Edit</button><button class="b plain outlined" type="button" data-act="del">Delete</button></div>`;
-    const name = card.querySelector('input')!;
-    name.onchange = () => {
-      L.data.name = P.cleanName(name.value) || L.data.name;
-      name.value = L.data.name;
-      L.updated = Date.now();
-      saveStore();
-    };
-    name.onkeydown = (e) => {
-      if (e.key === 'Enter') name.blur();
-    };
-    card.querySelector<HTMLElement>('[data-act="play"]')!.onclick = () => play(L.id, 'list');
-    card.querySelector<HTMLElement>('[data-act="edit"]')!.onclick = () => openEditor(L.id);
-    const del = card.querySelector<HTMLElement>('[data-act="del"]')!;
-    let armed = 0;
-    del.onclick = () => {
-      // a second tap within 3 s deletes it
-      if (!armed) {
-        del.textContent = 'Sure?';
-        del.classList.add('warn');
-        armed = window.setTimeout(() => {
-          armed = 0;
-          del.textContent = 'Delete';
-          del.classList.remove('warn');
-        }, 3000);
-        return;
-      }
-      clearTimeout(armed);
-      store.levels = store.levels.filter((x) => x.id !== L.id);
-      saveStore();
-      renderList();
-    };
     list.appendChild(card);
-    requestAnimationFrame(() => drawThumb(card.querySelector('canvas')!, L.data));
+    afterFrame(() => drawThumb(card.querySelector('canvas')!, L.data));
   }
+}
+// the saved level whose card holds el
+function cardLevel(el: Element): SavedLevel | null {
+  const id = el.closest<HTMLElement>('.br-ml-card')?.dataset.id;
+  return id ? byId(id) : null;
+}
+// a button on a card: Play, Edit, or Delete (tap twice)
+function cardButton(b: HTMLElement, L: SavedLevel) {
+  const act = b.dataset.act;
+  if (act === 'play') play(L.id, 'list');
+  else if (act === 'edit') openEditor(L.id);
+  else if (act === 'del') {
+    // the first tap arms the button for 3 s; a second tap in that time deletes the level
+    if (!b.classList.contains('warn')) {
+      b.textContent = 'Sure?';
+      b.classList.add('warn');
+      fork?.(
+        Effect.sync(() => {
+          b.textContent = 'Delete';
+          b.classList.remove('warn');
+        }).pipe(Effect.delay(3000)),
+      );
+      return;
+    }
+    store.levels = store.levels.filter((x) => x.id !== L.id);
+    saveStore();
+    renderList();
+  }
+}
+// a card's name was changed
+function rename(input: HTMLInputElement, L: SavedLevel) {
+  L.data.name = P.cleanName(input.value) || L.data.name;
+  input.value = L.data.name;
+  L.updated = Date.now();
+  saveStore();
 }
 function drawThumb(cv: HTMLCanvasElement, data: LevelData) {
   const g = cv.getContext('2d')!,
@@ -196,8 +200,8 @@ function drawThumb(cv: HTMLCanvasElement, data: LevelData) {
 }
 function newLevel() {
   loadStore();
-  if (store.levels.length >= MAX_LEVELS) {
-    api().toast(`That's ${MAX_LEVELS} levels: delete one to make room`, 2600, 'small');
+  if (store.levels.length >= P.MAX_LEVELS) {
+    api().toast(`That's ${P.MAX_LEVELS} levels: delete one to make room`, 2600, 'small');
     return;
   }
   const L: SavedLevel = { id: newId(), data: P.newLevel(nextName()), best: null, updated: Date.now() };
@@ -244,13 +248,11 @@ const HINTS: Record<EdMode, string> = {
   edit: 'Tap a piece to pick it, then turn or flip it. Drag to move it: ends snap together.',
   delete: 'Tap a piece to remove it.',
 };
-let hintTimer = 0;
 function hint(text: string, ms = 4000) {
   const el = $('br-ed-hint');
   el.textContent = text;
   el.classList.add('show');
-  clearTimeout(hintTimer);
-  hintTimer = window.setTimeout(() => el.classList.remove('show'), ms);
+  hintTimer?.(Effect.sync(() => el.classList.remove('show')).pipe(Effect.delay(ms)));
 }
 
 const fi = () => P.finishIndex(ed.data!);
@@ -860,7 +862,8 @@ function drawCursor(g: CanvasRenderingContext2D, cam: A.Camera, c: Cursor, t: nu
 }
 
 // ---------- the row of pieces ----------
-// Each piece drawn small; pieces of a kind share a scale so short, medium and long look it.
+// Each piece drawn small; pieces of a kind share a scale so short, medium and long look it. A tap on one adds it
+// (a listener on the row, see open).
 function renderRow() {
   const row = $('br-ed-row');
   if (!row.children.length) {
@@ -872,11 +875,10 @@ function renderRow() {
       b.setAttribute('aria-label', 'Add ' + T.name.toLowerCase());
       b.title = T.name;
       b.innerHTML = '<canvas aria-hidden="true"></canvas>';
-      b.onclick = () => addPiece(T.id);
       row.appendChild(b);
     }
   }
-  requestAnimationFrame(() => {
+  afterFrame(() => {
     for (const b of row.children as HTMLCollectionOf<HTMLElement>)
       drawTile(b.querySelector('canvas')!, b.dataset.t as PieceTypeId);
   });
@@ -920,37 +922,66 @@ function drawTile(cv: HTMLCanvasElement, t: PieceTypeId) {
 }
 
 // ------------------------------------------------------------------------------------------------
-function setup() {
+/**
+ * The editor's part of a visit to Bike Race: its buttons, the gestures on the canvas, and its timers. The game runs
+ * it inside its own open, so all of it goes when the player leaves Bike Race.
+ */
+export const open: Effect.Effect<void, never, Scope.Scope | PageServices> = Effect.gen(function* () {
   loadStore();
-  $('br-ml-back').onclick = () => api().showView('home');
-  $('br-ml-new').onclick = () => newLevel();
-  $('br-ed-back').onclick = () => api().showView('mylevels');
-  $('br-ed-undo').onclick = () => undo();
-  $('br-ed-redo').onclick = () => redo();
-  $('br-ed-test').onclick = () => {
+  fork = yield* FiberSet.makeRuntime<PageServices>();
+  hintTimer = yield* FiberHandle.makeRuntime<never>();
+  yield* Effect.addFinalizer(() =>
+    Effect.sync(() => {
+      fork = null;
+      hintTimer = null;
+    }),
+  );
+  const click = (id: string, fn: () => void) => listen($(id), 'click', () => fn());
+  yield* click('br-ml-back', () => api().showView('home'));
+  yield* click('br-ml-new', newLevel);
+  yield* click('br-ed-back', () => api().showView('mylevels'));
+  yield* click('br-ed-undo', undo);
+  yield* click('br-ed-redo', redo);
+  yield* click('br-ed-test', () => {
     if (ed.id) play(ed.id, 'editor');
-  };
+  });
   for (const b of document.querySelectorAll<HTMLElement>('.br-ed-modes button'))
-    b.onclick = () => setMode(b.dataset.mode as EdMode);
+    yield* listen(b, 'click', () => setMode(b.dataset.mode as EdMode));
   for (const [id, k] of [
     ['br-ed-rotl', 'rotl'],
     ['br-ed-rotr', 'rotr'],
     ['br-ed-fliph', 'fliph'],
     ['br-ed-flipv', 'flipv'],
   ] as const)
-    $(id).onclick = () => act(k);
-  const cv = $('br-canvas');
-  cv.addEventListener('pointerdown', onDown);
-  cv.addEventListener('pointermove', onMove);
-  cv.addEventListener('pointerup', onUp);
-  cv.addEventListener('pointercancel', onUp);
-  cv.addEventListener('wheel', onWheel, { passive: false });
-  window.addEventListener('resize', () => {
-    if (api().view === 'editor') requestAnimationFrame(() => renderRow());
+    yield* click(id, () => act(k));
+  // the row of pieces, and the cards in My levels
+  yield* listen($('br-ed-row'), 'click', (e) => {
+    const b = e.target instanceof Element ? e.target.closest<HTMLElement>('.br-ed-tile') : null;
+    if (b) addPiece(b.dataset.t!);
   });
-}
-if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', setup);
-else setup();
+  const list = $('br-ml-list');
+  yield* listen(list, 'click', (e) => {
+    const b = e.target instanceof Element ? e.target.closest<HTMLElement>('button[data-act]') : null;
+    const L = b && cardLevel(b);
+    if (b && L) cardButton(b, L);
+  });
+  yield* listen(list, 'change', (e) => {
+    const L = e.target instanceof HTMLInputElement && e.target.matches('.br-ml-name') ? cardLevel(e.target) : null;
+    if (L) rename(e.target as HTMLInputElement, L);
+  });
+  yield* listen(list, 'keydown', (e) => {
+    if (e.key === 'Enter' && e.target instanceof HTMLInputElement && e.target.matches('.br-ml-name')) e.target.blur();
+  });
+  const cv = $('br-canvas');
+  yield* listen(cv, 'pointerdown', onDown);
+  yield* listen(cv, 'pointermove', onMove);
+  yield* listen(cv, 'pointerup', onUp);
+  yield* listen(cv, 'pointercancel', onUp);
+  yield* listen(cv, 'wheel', onWheel, { passive: false });
+  yield* listen(window, 'resize', () => {
+    if (api().view === 'editor') afterFrame(renderRow);
+  });
+});
 
 // for the browser tests (tests/browser/bike-race-editor.test.ts)
 function debug() {

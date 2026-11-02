@@ -210,6 +210,124 @@ describe('Saves that name a locked bike are put right', () => {
   });
 });
 
+describe('Old and damaged saves still load', () => {
+  const GHOST = 'bikerace.ghost.v1.clover-1';
+  /** The ghost a solo run on clover-1 starts with, after putting one in storage */
+  async function ghostFrom(page: Page, stored: string) {
+    await page.eval((k, v) => localStorage.setItem(k, v), GHOST, stored);
+    await dbg(page, (d) => void d.startSolo('clover-1'));
+    return dbg(page, (d) =>
+      d.S.ghost ? { time: d.S.ghost.time, bike: d.S.ghost.bike, frames: d.S.ghost.frames.length } : null,
+    );
+  }
+
+  test('a save from the first version gets the settings it lacks, and its ghost rides Scout', async () => {
+    // no name, paint, seen bikes, tilt, computer riders or last world; a ghost saved before ghosts had a bike
+    const page = await phone({
+      save: { best: { 'clover-1': 31.25 }, stars: { 'clover-1': 2 }, bike: 'scout', ghost: true, sound: false },
+    });
+    try {
+      expect(await dbg(page, (d) => d.save)).toEqual({
+        best: { 'clover-1': 31.25 },
+        stars: { 'clover-1': 2 },
+        bike: 'scout',
+        paint: 0,
+        name: '',
+        seen: ['scout'],
+        ghost: true,
+        sound: false,
+        tilt: true,
+        cpu: 2,
+        lastWorld: 'clover',
+      });
+      const f = await dbg(
+        page,
+        (d) =>
+          d.C.encodeGhost([
+            [0, 1, 0],
+            [0.5, 1, 0.1],
+          ]) as string,
+      );
+      expect(await ghostFrom(page, JSON.stringify({ time: 31.25, f }))).toEqual({
+        time: 31.25,
+        bike: 'scout',
+        frames: 2,
+      });
+      expect(page.errors).toEqual([]);
+    } finally {
+      page.close();
+    }
+  });
+
+  test('a save with every field the wrong shape takes the default for each, and a broken ghost is none', async () => {
+    const page = await phone({
+      save: {
+        best: 'fast',
+        stars: [3, 3],
+        bike: 'rocket',
+        paint: 'blue',
+        name: 42,
+        seen: 'all',
+        ghost: 1,
+        sound: 'yes',
+        tilt: null,
+        cpu: 'many',
+        lastWorld: 7,
+      },
+    });
+    try {
+      // (settings are read as before: anything there is on or off by its truthiness)
+      expect(await dbg(page, (d) => d.save)).toEqual({
+        best: {},
+        stars: {},
+        bike: 'scout',
+        paint: 0,
+        name: '42',
+        seen: ['scout'],
+        ghost: true,
+        sound: true,
+        tilt: false,
+        cpu: 2,
+        lastWorld: 'clover',
+      });
+      for (const stored of ['{"time": 30, "f": ""}', '{"time": 30}', '[1, 2]', 'not json'])
+        expect(await ghostFrom(page, stored)).toBeNull();
+      expect(page.errors).toEqual([]);
+    } finally {
+      page.close();
+    }
+  });
+
+  test('a save that is not JSON starts afresh', async () => {
+    const page = await openPage(site, {
+      width: 844,
+      height: 390,
+      mobile: true,
+      path: '/#bike-race',
+      storage: { 'bikerace.v1': '{"best": {' },
+    });
+    try {
+      await page.waitFor(() => !!window.BikeRace && !document.getElementById('br-home')!.hidden);
+      expect(await dbg(page, (d) => d.save)).toEqual({
+        best: {},
+        stars: {},
+        bike: 'scout',
+        paint: 0,
+        name: '',
+        seen: ['scout'],
+        ghost: true,
+        sound: true,
+        tilt: true,
+        cpu: 2,
+        lastWorld: 'clover',
+      });
+      expect(page.errors).toEqual([]);
+    } finally {
+      page.close();
+    }
+  });
+});
+
 describe('Garage from the pause menu', () => {
   let page: Page;
   beforeAll(async () => {

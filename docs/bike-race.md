@@ -145,9 +145,16 @@ tools/render-bike-race-card.ts    redraws the menu card picture with the game's 
   - The finish is one pole with a chequered flag that ripples. The start has a small post.
 - The camera (`followCamera` in `bike-race.ts`) zooms out a little in the air and, when the ground below is far
   away (a big jump or drop), pulls back and lowers itself so the landing stays on screen.
-- `bike-race.ts` owns everything else and is the game the hub shows (`show`, `hide`). A _session_ (`makeSession(mode, levelId)`) holds one
-  run: the sim, your bike, the ghost and the phase (`ready`, `countdown`, `run`, `crashed`, `finished`). The modes
-  are `solo`, `cpu`, `online` and `attract` (the menu background).
+- `bike-race.ts` owns everything else and is the game the hub opens (`open`, and `reroute` for a new address while
+  it is open). A _session_ (`makeSession(mode, levelId)`) holds one run: the sim, your bike, the ghost and the
+  phase (`ready`, `countdown`, `run`, `crashed`, `finished`). The modes are `solo`, `cpu`, `online` and `attract`
+  (the menu background).
+- A _visit_ is Bike Race on screen. The hub runs `open` in a scope when the player arrives and closes the scope
+  when they leave. `open` adds every listener (the editor's too, through `Editor.open`), listens to `Net` and runs
+  the frame loop with `animate`. Timers started during the visit (the toast, the tilt wait, the lobby's refresh
+  every 3 s, the short waits after a finish) are fibers started through `visit`, so leaving stops them all. A
+  finalizer does the rest of leaving: it leaves any room, closes the connection, leaves fullscreen, quiets the
+  engine and pauses a run. `visit` is null while the game is closed, and nothing reaches the game then.
 - Tilt lives in the "Input" section of `bike-race.ts`. `tiltAngle(beta, gamma, screenAngle)` works out which way
   is down on the screen from the `deviceorientation` angles, so it reads the steering-wheel turn however far the
   phone is tipped back. Full lean is 14° (`TILT_FULL`), with a 1.5° dead zone around level (`TILT_DEAD`). `tilt.state` is `idle`, `asking`,
@@ -263,6 +270,11 @@ to 16 characters.
 Each level's ghost is stored under `bikerace.ghost.v1.<level id>`, for example `bikerace.ghost.v1.clover-1`,
 as `{ time, bike, f }`. `bike` is the bike that set it, so the ghost is drawn on that bike, in a pale paint.
 
+Both are read and written through page.ts's `load` and `save` with a Schema that lists every field (`SaveSchema`
+in `bike-race.ts`, `SavedGhost` in the core). A field that is missing or doesn't fit gets its default, so a save
+from an older version or edited by hand still loads; one that isn't JSON or isn't an object loads as a new save.
+A ghost needs its `f`; one saved before ghosts had a `bike` is drawn on Scout.
+
 ## Race server
 
 `server/serve.ts` is one Bun process behind both mise tasks. It serves the page (Bun bundles `public/index.html`
@@ -338,6 +350,8 @@ All are JSON objects with a type in `t`.
   lean buttons.
 - `DeviceOrientationEvent.requestPermission()` only works inside a tap or click, so the game calls it from a
   click listener on `#br-app` the first time anything in the game is tapped. Chrome has this function too.
+  `run` starts an effect there and then, so the request (like going fullscreen and sharing an invite link) still
+  happens inside the tap. The answer counts even if the player has left Bike Race by the time it comes.
   Headless Chrome answers "denied" unless the test grants the `accelerometer` and `gyroscope` permissions, and
   `DeviceOrientation.setDeviceOrientationOverride` over CDP simulates turning the phone.
 - The game and the editor need each other. `bike-race.ts` imports the editor and hands it `editorApi` with

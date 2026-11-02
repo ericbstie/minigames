@@ -44,7 +44,7 @@ declare global {
 
     // Bike Race and its level editor: their state for the browser tests (the game reaches the editor through
     // imports, not these)
-    BikeRace?: ShowHide & { editor: import('./bike-race').EditorApi; _debug(): import('./bike-race').BikeRaceDebug };
+    BikeRace?: { editor: import('./bike-race').EditorApi; _debug(): import('./bike-race').BikeRaceDebug };
     BikeRaceEditor?: {
       onView: typeof import('./bike-race-editor').onView;
       frame: typeof import('./bike-race-editor').frame;

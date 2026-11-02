@@ -1,9 +1,13 @@
 // Bike Race track pieces: the shapes the level editor places, the edits it makes to them (append, move, rotate,
 // flip, delete) and buildCustomLevel, which turns a saved editor level into a level the simulation can ride.
-// No DOM access, so Bun can load it (tests/bike-race-pieces.test.ts). The editor imports it.
+// It also has the editor's saved levels as a Schema (SavedLevels), so a level read from storage is checked and cleaned
+// the same way wherever it is read. No DOM access, so Bun can load it (tests/bike-race-pieces.test.ts). The editor
+// imports it.
+import { Predicate, Schema } from 'effect';
 import {
   type Box,
   type Dir,
+  forgiving,
   GRAVITY,
   type Ghosts,
   type Level,
@@ -180,8 +184,7 @@ export const TYPE = Object.fromEntries(TYPES.map((t) => [t.id, t])) as Record<Ty
 for (const k of Object.keys(PAD) as PadId[])
   TYPE[k] = { id: k, name: k === 'start' ? 'Start' : 'Finish', len: PAD[k].len, pad: true };
 /** Whether v names a piece type or a pad */
-export const isTypeId = (v: unknown): v is TypeId =>
-  typeof v === 'string' && Object.prototype.hasOwnProperty.call(TYPE, v);
+export const isTypeId = (v: unknown): v is TypeId => Predicate.isString(v) && Object.hasOwn(TYPE, v);
 export const MAX_PIECES = 400,
   NAME_MAX = 24;
 const MAX_COORD = 5000;
@@ -263,7 +266,8 @@ export function newLevel(name?: string): LevelData {
 }
 
 // ------------------------------------------------------------------------------------------------
-// Saved levels come from localStorage, which anyone can edit, so everything is checked and clamped on the way in.
+// Saved levels come from localStorage, which anyone can edit, so everything is checked and clamped on the way in:
+// SavedLevels (below) for the store and each level's id, best time and date, and sanitize for the level itself.
 const num = (v: unknown, lim: number) => {
   const n = Number(v);
   return Number.isFinite(n) ? Math.max(-lim, Math.min(lim, Math.round(n * 1000) / 1000)) : 0;
@@ -275,7 +279,8 @@ export function cleanName(v: unknown) {
     .slice(0, NAME_MAX);
 }
 type Obj = Record<string, unknown>;
-const isObj = (v: unknown): v is Obj => !!v && typeof v === 'object';
+// an object, or an array (whose named fields are all missing)
+const isObj = (v: unknown): v is Obj => Predicate.isObjectOrArray(v);
 export function sanitize(raw: unknown): LevelData {
   const d: Obj = isObj(raw) ? raw : {};
   const pieces = (Array.isArray(d.pieces) ? (d.pieces as unknown[]) : [])
@@ -296,6 +301,52 @@ export function sanitize(raw: unknown): LevelData {
   }
   return { v: 1, name: cleanName(d.name) || 'My level', pieces, finish };
 }
+
+// localStorage 'bikerace.levels.v1' = { v: 1, levels: [{ id, data, best: { t, key } | null, updated }] }: at most
+// MAX_LEVELS levels, data as sanitize leaves it, best.key the track's trackKey when the time was set. On the way in a
+// level with a bad id, or one already seen, is dropped, and everything else is cleaned, so one broken level never
+// costs the others.
+export const MAX_LEVELS = 100;
+const LEVEL_ID = /^[a-z0-9]{1,24}$/;
+const isLevelId = (v: unknown): v is string => Predicate.isString(v) && LEVEL_ID.test(v);
+const PieceSchema = Schema.Struct({
+  t: Schema.Literals(Object.keys(TYPE) as TypeId[]), // a pad never gets this far: sanitize drops them
+  x: Schema.Number,
+  y: Schema.Number,
+  a: Schema.Number,
+  m: Schema.Boolean,
+});
+const LevelDataSchema = Schema.Struct({
+  v: Schema.Literal(1),
+  name: Schema.String,
+  pieces: Schema.mutable(Schema.Array(PieceSchema)),
+  finish: Schema.Struct({ x: Schema.Number, y: Schema.Number, d: Schema.Literals([1, -1]) }),
+});
+// a time over 0 set on a track (key, cut to 16 characters), or none
+const cleanBest = (v: unknown) =>
+  isObj(v) && Number(v.t) > 0 && Predicate.isString(v.key) ? { t: Number(v.t), key: v.key.slice(0, 16) } : null;
+const SavedLevelSchema = Schema.Struct({
+  id: Schema.String.check(Schema.isPattern(LEVEL_ID)),
+  data: forgiving(LevelDataSchema, sanitize),
+  best: forgiving(Schema.NullOr(Schema.Struct({ t: Schema.Number, key: Schema.String })), cleanBest),
+  updated: forgiving(Schema.Number, (v) => Number(v) || 0),
+});
+// the first MAX_LEVELS stored levels that have a good id, each id once (SavedLevelSchema cleans the rest)
+function cleanLevels(v: unknown): { id: string }[] {
+  const seen = new Set<string>(),
+    out: { id: string }[] = [];
+  for (const L of Array.isArray(v) ? v.slice(0, MAX_LEVELS) : []) {
+    if (!isObj(L) || !isLevelId(L.id) || seen.has(L.id)) continue;
+    seen.add(L.id);
+    out.push({ ...L, id: L.id });
+  }
+  return out;
+}
+/** The editor's saved levels, read from storage and written back */
+export const SavedLevels: Schema.Codec<SavedLevels, unknown> = Schema.Struct({
+  v: forgiving(Schema.Literal(1), () => 1 as const),
+  levels: forgiving(Schema.mutable(Schema.Array(SavedLevelSchema)), cleanLevels),
+});
 
 // ------------------------------------------------------------------------------------------------
 // Editing. All of these work on piece numbers in allPieces(data): 0 is the start pad, the last is the finish pad.
