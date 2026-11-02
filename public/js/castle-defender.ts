@@ -4805,7 +4805,19 @@ function siteFree(x: number, z: number): boolean {
     G.pads.some((p) => !(p.site && !p.site.built) && !p.id.startsWith('shop') && Math.hypot(p.x - x, p.z - z) < 5.5)
   )
     return false;
-  if (G.shops.some((s) => Math.hypot(s.x - x, s.z - z) < 8 || Math.hypot(s.side[0] - x, s.side[1] - z) < 5.5))
+  // nor may the pad an outpost or a field cannon has towards home (4.4 in) land on a shop or its pad
+  const hl = Math.hypot(HOME.x - x, HOME.z - z) || 1,
+    ux = x + ((HOME.x - x) / hl) * 4.4,
+    uz = z + ((HOME.z - z) / hl) * 4.4;
+  if (
+    G.shops.some(
+      (s) =>
+        Math.hypot(s.x - x, s.z - z) < 8 ||
+        Math.hypot(s.side[0] - x, s.side[1] - z) < 5.5 ||
+        Math.hypot(s.x - ux, s.z - uz) < 6 ||
+        Math.hypot(s.side[0] - ux, s.side[1] - uz) < 5,
+    )
+  )
     return false;
   return (
     !G.fronts.some((f) => Math.hypot(f.camp.x - x, f.camp.z - z) < 7) &&
@@ -5048,9 +5060,14 @@ function addLot(t: Tower): void {
     if (!p) return;
     for (const sd of [-side, side]) {
       const x = p.x + p.dz * sd * LOT_OFF,
-        z = p.z - p.dx * sd * LOT_OFF;
-      if (!lotFree(x, z)) continue;
-      const s = addShop(G.lotSeq++, x, z, Math.atan2(p.x - x, p.z - z), biomeAt(x, z), 0);
+        z = p.z - p.dx * sd * LOT_OFF,
+        yaw = Math.atan2(p.x - x, p.z - z),
+        [px, pz] = shopPt({ x, z, yaw }, SHOP_PAD[0], SHOP_PAD[1]);
+      // the lot, and the spot beside it where its pad goes once the shop is built
+      const near = (list: readonly XZ[], r: number) => list.some((o) => Math.hypot(o.x - px, o.z - pz) < r);
+      if (!lotFree(x, z) || near(G.pads, 5) || near(G.towers, 4.5) || near(G.cannons, 4.5)) continue;
+      if ((G.obs || []).some(([ox, oz, r]) => Math.hypot(ox - px, oz - pz) < r + 2)) continue;
+      const s = addShop(G.lotSeq++, x, z, yaw, biomeAt(x, z), 0);
       s.lot = lotPrice(s.idx);
       s.pad!.cost = s.pad!.price();
       bigText('For sale', x, 4, z);
