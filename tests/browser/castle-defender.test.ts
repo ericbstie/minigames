@@ -600,3 +600,247 @@ describe('Junk where the longest time is saved', () => {
     junk.close();
   });
 });
+
+/**
+ * Everything the saved game has to bring back, as it is in the page: the game paused, so nothing moves while it is
+ * read. Coins on their way to the king count as his, coins paid into a spot for an outpost as his too (they go back to
+ * him), and recruits running over to join someone as part of that someone; spots for outposts are known by where they
+ * are (they get new ids).
+ */
+const everything = (page: Page) =>
+  dbg(page, (d) => {
+    const G = d.G;
+    const sort = <T>(a: T[]) => a.map((x) => JSON.stringify(x)).sort();
+    const spots = G.towers.filter((t) => t.outer && !t.built);
+    return {
+      t: G.t,
+      kills: G.kills,
+      wealth: Math.round(
+        G.coins +
+          G.flying.reduce((n, f) => n + (f.to === 'king' ? f.v : 0), 0) +
+          spots.reduce((n, t) => n + (t.pad ? t.pad.paid : 0), 0),
+      ),
+      king: [G.king.x, G.king.z, G.king.yaw],
+      castle: [G.castle.hp, G.castle.max],
+      troop: G.followers.map((f) => [f.x, f.z, f.rank + G.joiners.filter((j) => j.target === f).length]),
+      levels: [G.recruitIdx, G.barracksLv, G.tier, G.extraDmg, !!G.forge, G.outposts, G.fieldCannons],
+      buildings: sort(G.buildings.map((b) => [b.x, b.z, b.lv, b.fn.name, b.h])),
+      towers: sort(G.towers.map((t) => [t.x, t.z, t.up, t.outer, t.built, t.level, t.built && t.outer ? t.idx : -1])),
+      cannons: G.cannons.map((c) => [c.x, c.z, c.side, c.field ?? false, c.built, c.level, c.cost0, c.yaw]),
+      gold: [G.gold.built, G.gold.lv, G.gold.plot.value, G.gold.boys.map((b) => [b.x, b.z, b.load])],
+      walls: G.segs.map((s) => [s.hp, s.alive, s.tier, s.max]),
+      wallsUp: G.wallsUp,
+      claims: d.claims(),
+      reach: G.reach,
+      fronts: G.fronts.map((f) => [
+        f.id,
+        f.road,
+        f.segs,
+        f.open,
+        f.openAt,
+        f.shared,
+        f.timer,
+        f.restAt,
+        f.camp.x,
+        f.camp.z,
+        f.camp.theme,
+        f.camp.state,
+        f.camp.group.visible,
+      ]),
+      ruins: G.ruins.map((c) => [c.x, c.z, c.theme, c.state]),
+      pads: sort(
+        G.pads
+          .filter((p) => p.visibleNow)
+          .map((p) =>
+            p.site && !p.site.built ? ['spot', p.x, p.z, p.cost] : [p.id, p.x, p.z, p.cost, Math.floor(p.paid)],
+          ),
+      ),
+      drawn: G.pads.filter((p) => p.visibleNow).every((p) => p.key !== ''),
+      clear: sort(G.clear),
+      roads: d.terrain().roads.slice().sort(),
+      posts: G.posts.length,
+      obstacles: G.obs,
+      spawn: [G.spawnT, G.nextPath, G.spawnQueue.map((q) => [q.f.id, q.kind, q.t])],
+      enemies: G.enemies
+        .filter((e) => e.hp > 0)
+        .map((e) => [
+          e.kind,
+          e.mkey,
+          e.x,
+          e.z,
+          e.hp,
+          e.max,
+          e.speed,
+          e.dmg,
+          e.value,
+          e.state,
+          e.wp,
+          e.route,
+          e.seg ? G.segs.indexOf(e.seg) : -1,
+        ]),
+      ground: G.coinsOnGround.map((c) => [c.x, c.z, c.v]),
+    };
+  });
+const WORLD = 'castle.world.v1';
+const savedWorld = (page: Page) => page.eval((k) => localStorage.getItem(k), WORLD);
+/** After a reload: wait for the game to be up again */
+const reopened = async (page: Page) => {
+  await page.waitFor(() => !!window.CastleDefender?._debug().G, [], { timeout: 20_000 });
+  await frames(page, 2);
+};
+
+describe('The game is saved, and a reload carries on with it', () => {
+  let before: Awaited<ReturnType<typeof everything>>;
+  beforeAll(async () => {
+    page = await open();
+  });
+  afterAll(() => page.close());
+
+  test('a game well under way: walls, forge, cannons, an outpost, the gold hut, enemies and coins', async () => {
+    const got = await dbg(page, (d) => {
+      const G = d.G;
+      d.rich(1e6);
+      for (let i = 0; i < 4; i++) d.buy('recruit');
+      for (let i = 0; i < 6; i++) d.buy('tower' + i);
+      d.buy('tower0');
+      d.buy('tower0');
+      d.buy('tower1');
+      d.buy('forgebuild');
+      for (let i = 0; i < 3; i++) d.buy('forge');
+      d.buy('cannon0');
+      d.buy('cannon1');
+      d.buy('cannon0');
+      d.advance(0.5);
+      const vis = d.pads().map((p) => p.id);
+      const east = d
+        .sites()
+        .filter((s) => vis.includes(s.id))
+        .reduce((a, b) => (b.x > a.x ? b : a));
+      d.buy(east.id);
+      d.advance(0.5);
+      const field = G.cannons.findIndex((c) => c.field);
+      if (field >= 0) d.buy('cannon' + field);
+      d.buy('gold');
+      d.buy('gold');
+      d.teleport(4, 2);
+      G.free = false;
+      G.coins = 321;
+      d.advance(60);
+      // a stretch of wall knocked about, and coins paid into a pad (and into a spot for an outpost)
+      const wall = G.segs.find((s) => s.alive && !s.gate)!;
+      wall.hp = Math.round(wall.max / 3);
+      for (const p of G.pads.filter((p) => p.visibleNow && p.cost > 20)) p.paid = 7;
+      return {
+        enemies: G.enemies.length,
+        outposts: G.outposts,
+        field,
+        ruins: G.ruins.length,
+        ground: G.coinsOnGround.length,
+        spots: G.towers.filter((t) => t.outer && !t.built).length,
+      };
+    });
+    expect(got.outposts).toBe(1);
+    expect(got.field).toBeGreaterThanOrEqual(3);
+    expect(got.ruins).toBeGreaterThanOrEqual(1);
+    expect(got.enemies).toBeGreaterThan(0);
+    expect(got.spots).toBeGreaterThan(0);
+  });
+
+  test('it is saved every few seconds while it runs', async () => {
+    expect(await page.until((k) => (JSON.parse(localStorage.getItem(k) ?? '{}').t ?? 0) > 60, [WORLD], 8000)).toBe(
+      true,
+    );
+    const saved = JSON.parse((await savedWorld(page))!);
+    expect(saved.outposts).toHaveLength(1);
+    expect(saved.t).toBeGreaterThan(60);
+  });
+
+  test('a reload (the page saves as it goes) comes back to it as it was, paused under the pause panel', async () => {
+    await page.click('#cd-pause-btn');
+    expect(await dbg(page, (d) => d.G.paused)).toBe(true);
+    before = await everything(page);
+    await shot(page, 'before-reload');
+    await page.reload();
+    await reopened(page);
+    expect(await dbg(page, (d) => d.G.paused)).toBe(true);
+    expect(await page.visible('cd-pausemenu')).toBe(true);
+    expect(await page.visible('cd-over')).toBe(false);
+    const after = await everything(page);
+    for (const key of Object.keys(before) as (keyof typeof before)[]) expect(after[key], key).toEqual(before[key]);
+    await shot(page, 'after-reload');
+  });
+
+  test('Keep playing carries on: the enemies march, the towers shoot, coins come in', async () => {
+    await page.click('#cd-resume');
+    expect(await dbg(page, (d) => d.G.paused)).toBe(false);
+    const played = await dbg(page, (d) => {
+      const G = d.G,
+        kills = G.kills,
+        t = G.t;
+      d.advance(30);
+      return { kills: G.kills - kills, t: G.t - t, over: G.over };
+    });
+    expect(played.kills).toBeGreaterThan(0);
+    expect(played.t).toBeGreaterThan(29);
+    expect(played.over).toBe(false);
+  });
+
+  test('Restart starts a new game, and saves it over the old one', async () => {
+    await page.click('#cd-pause-btn');
+    await page.click('#cd-restart');
+    expect(await dbg(page, (d) => [d.G.t < 1, d.G.outposts, d.G.paused])).toEqual([true, 0, false]);
+    const saved = JSON.parse((await savedWorld(page))!);
+    expect(saved.t).toBeLessThan(1);
+    expect(saved.outposts).toEqual([]);
+  });
+
+  test('when the castle falls the save goes, and a reload starts a new game', async () => {
+    expect(await fall(page, 50)).toBe(true);
+    expect(await page.until((k) => localStorage.getItem(k) === null, [WORLD])).toBe(true);
+    await page.reload();
+    await reopened(page);
+    expect(await dbg(page, (d) => [d.G.t < 2, d.G.over, d.G.paused])).toEqual([true, false, false]);
+    expect(await page.visible('cd-pausemenu')).toBe(false);
+  });
+
+  test('no errors in the page', () => {
+    expect(page.errors).toEqual([]);
+  });
+});
+
+describe('A saved game the game cannot carry on from', () => {
+  test('starts a new game, and keeps the longest time held', async () => {
+    const good = await open();
+    await dbg(good, (d) => {
+      d.advance(20);
+      d.save();
+    });
+    const saved = JSON.parse((await savedWorld(good))!);
+    good.close();
+    const broken: [why: string, saved: string][] = [
+      ['not JSON', JSON.stringify(saved).slice(0, -1)],
+      ['another kind of save', JSON.stringify({ t: 30, coins: 5 })],
+      ['a front missing', JSON.stringify({ ...saved, fronts: saved.fronts.slice(1) })],
+      [
+        'an enemy on a road there is none of',
+        JSON.stringify({ ...saved, enemies: [{ ...saved.enemies[0], route: 99 }] }),
+      ],
+      ['a castle already fallen', JSON.stringify({ ...saved, castle: 0 })],
+      ['a wall tower at a level there is none of', JSON.stringify({ ...saved, towers: [9, 0, 0, 0, 0, 0] })],
+    ];
+    expect(saved.enemies.length).toBeGreaterThan(0);
+    for (const [why, junk] of broken) {
+      const page = await open({ storage: { [WORLD]: junk, 'castle.bestTime': '123' } });
+      expect(await dbg(page, (d) => [d.G.t < 2, d.G.paused]), why).toEqual([true, false]);
+      expect(await page.visible('cd-pausemenu'), why).toBe(false);
+      expect(await savedBest(page)).toBe('123');
+      expect(page.errors, why).toEqual([]);
+      page.close();
+    }
+    // and the good one carries on
+    const back = await open({ storage: { [WORLD]: JSON.stringify(saved) } });
+    expect(await dbg(back, (d) => [Math.round(d.G.t), d.G.paused])).toEqual([Math.round(saved.t), true]);
+    expect(back.errors).toEqual([]);
+    back.close();
+  });
+});
