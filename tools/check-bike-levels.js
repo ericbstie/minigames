@@ -10,7 +10,7 @@
 // The starter bike's line shows a suggested par: its time plus 0.5 s, rounded up to the next 0.5 s.
 // The pars in the level list are set this way, so a "*" means the track changed and the par needs updating.
 const path = require('path');
-const C = require(path.join(__dirname, '..', 'public', 'js', 'bike-race-core.js'));
+const C = require(path.join(__dirname, '..', 'public', 'js', 'bike-race-core.ts'));
 const args = process.argv.slice(2);
 const only = args.filter(a => !a.startsWith('--'));
 const bikeArg = (args.find(a => a.startsWith('--bike=')) || '').slice(7);

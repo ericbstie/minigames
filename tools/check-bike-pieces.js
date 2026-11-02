@@ -5,8 +5,8 @@
 //     and that each ramp clears a gap and lands
 // Usage: node tools/check-bike-pieces.js [--verbose]
 'use strict';
-const C = require('../public/js/bike-race-core.js');
-const P = require('../public/js/bike-race-pieces.js');
+const C = require('../public/js/bike-race-core.ts');
+const P = require('../public/js/bike-race-pieces.ts');
 
 const verbose = process.argv.includes('--verbose');
 let failed = 0, passed = 0;

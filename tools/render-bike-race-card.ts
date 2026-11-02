@@ -22,7 +22,7 @@ const server = Bun.serve({
         '<script src="core.js"></script><script src="art.js"></script></body>',
       { headers: { 'Content-Type': 'text/html' } },
     ),
-    '/core.js': Bun.file(join(JS, 'bike-race-core.js')),
+    '/core.js': new Response(Bun.file(join(JS, 'bike-race-core.ts')), { headers: { 'Content-Type': 'text/javascript' } }),
     '/art.js': Bun.file(join(JS, 'bike-race-art.js')),
   },
 });

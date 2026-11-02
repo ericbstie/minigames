@@ -3,7 +3,7 @@
 // No DOM access, so Node can load it (tools/check-bike-pieces.js). The browser gets it as window.BikeRacePieces.
 (function (root, factory) {
   const isNode = typeof module === 'object' && module.exports;
-  const api = factory(isNode ? require('./bike-race-core.js') : root.BikeRaceCore);
+  const api = factory(isNode ? require('./bike-race-core') : root.BikeRaceCore);
   if (isNode) module.exports = api;
   else root.BikeRacePieces = api;
 })(typeof self !== 'undefined' ? self : this, function (C) {
