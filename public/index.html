@@ -159,6 +159,23 @@
         </svg>
         <span class="outlined" id="cd-coins">0</span>
       </div>
+      <div class="cd-boss" id="cd-boss" hidden aria-live="polite">
+        <div class="cd-boss-name outlined" id="cd-boss-name"></div>
+        <div class="cd-boss-when" id="cd-boss-when"></div>
+        <div class="cd-boss-bar"><i id="cd-boss-fill"></i></div>
+      </div>
+      <div class="cd-boss-dir" id="cd-boss-dir" hidden>
+        <i></i>
+        <svg viewBox="0 0 100 100" aria-hidden="true">
+          <path
+            d="M22 70 L18 32 L36 48 L50 24 L64 48 L82 32 L78 70 Z"
+            fill="#ffd34a"
+            stroke="#7a1712"
+            stroke-width="6"
+            stroke-linejoin="round"
+          />
+        </svg>
+      </div>
       <div class="cd-toast outlined" id="cd-toast" aria-live="polite"></div>
       <div class="cd-joy" id="cd-joy" hidden><div class="cd-knob"></div></div>
 
@@ -168,7 +185,8 @@
           <p>
             Enemies march on the castle from their camps and keep getting stronger. Collect the coins they drop and
             spend them on the pads. Outposts on the border push it out: a camp the border reaches is cleared, and the
-            enemy falls back further out, tougher and richer.
+            enemy falls back further out, tougher and richer. Every three minutes a boss comes, with a warning first:
+            beat it for a shower of coins.
           </p>
           <div class="btns">
             <button class="b sky outlined" id="cd-resume" type="button">Keep playing</button>

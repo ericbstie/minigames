@@ -169,6 +169,11 @@ const GOLD_BOYS = [
   { n: 2, speed: 8.5, cap: 80 },
   { n: 3, speed: 9.5, cap: 150 },
 ];
+// Bosses: every BOSS_EVERY seconds of play a boss marches on the castle from one of the open camps, with a warning
+// BOSS_WARN seconds before. One comes at a time: while one is still on the field, the next waits.
+const BOSS_EVERY = 180,
+  BOSS_WARN = 20;
+const BOSS_NAMES = ['the Red Warlord', 'the Frost Jarl', 'the Bog Troll', 'the Cinder Lord']; // by the biome of its camp
 const RECRUIT: [cost: number, people: number][] = [
   [6, 1],
   [14, 3],
@@ -277,6 +282,20 @@ const UNIT = {
     barW: 2.2,
     atk: 1.8,
     shadow: 2.5,
+  },
+  // never in a group: one comes on its own every few minutes (BOSS_EVERY)
+  boss: {
+    hp: 160,
+    dmg: 14,
+    value: 100,
+    speed: 1.15,
+    r: 1.9,
+    scale: 3.4,
+    cost: 0,
+    bar: 8.2,
+    barW: 3.6,
+    atk: 2.4,
+    shadow: 4.6,
   },
 };
 const PAL = [
@@ -714,6 +733,49 @@ function giantGeo(g: Palette['giants'][number]): Geo {
     vc(B(0.06, 0.3, 0.06), g.nose, T(0, 1.46, 0.36)),
     vc(Cy(0.06, 0.06, 1.2, 6), g.handle, T(0.68, 1.55, 0.25, 0.9, 0, 0)),
     vc(B(0.46, 0.4, 0.4), g.head, T(0.68, 1.85, -0.25, 0.9, 0, 0)),
+  ]);
+}
+// the boss: a hulking warlord in its biome's colours, with spiked shoulders, a horned helm under a gold crown,
+// burning eyes, a cape and a great hammer
+function bossGeo(P: Palette): Geo {
+  const b = P.brute,
+    skin = P.giants[0].skin,
+    gold = '#f5b81c';
+  return merge([
+    vc(B(0.3, 0.42, 0.34), b.legs, T(-0.24, 0.21, 0)),
+    vc(B(0.3, 0.42, 0.34), b.legs, T(0.24, 0.21, 0)),
+    vc(B(0.36, 0.14, 0.44), b.dark, T(-0.24, 0.07, 0.04)),
+    vc(B(0.36, 0.14, 0.44), b.dark, T(0.24, 0.07, 0.04)),
+    vc(B(1.0, 1.15, 0.06), b.dark, T(0, 1.0, -0.46, 0.14, 0, 0)),
+    vc(Cy(0.5, 0.48, 0.42, 12), b.dark, T(0, 0.6, 0)),
+    vc(Cy(0.6, 0.5, 0.78, 12), b.body, T(0, 1.16, 0)),
+    vc(Cy(0.53, 0.53, 0.11, 12), b.trim, T(0, 0.83, 0)),
+    vc(B(0.24, 0.18, 0.08), gold, T(0, 0.83, 0.52)),
+    vc(S(0.32, 10, 7), b.light, T(-0.64, 1.46, 0)),
+    vc(S(0.32, 10, 7), b.light, T(0.64, 1.46, 0)),
+    vc(Co(0.08, 0.34, 6), b.horn, T(-0.74, 1.78, 0, 0, 0, 0.5)),
+    vc(Co(0.08, 0.34, 6), b.horn, T(0.74, 1.78, 0, 0, 0, -0.5)),
+    vc(Co(0.07, 0.28, 6), b.horn, T(-0.62, 1.74, -0.2, -0.4, 0, 0.3)),
+    vc(Co(0.07, 0.28, 6), b.horn, T(0.62, 1.74, -0.2, -0.4, 0, -0.3)),
+    vc(Cy(0.16, 0.14, 0.66, 8), skin, T(-0.72, 1.08, 0.1, 0.3, 0, 0.2)),
+    vc(Cy(0.16, 0.14, 0.66, 8), skin, T(0.72, 1.12, 0.16, -0.6, 0, -0.2)),
+    vc(S(0.18, 8, 6), skin, T(-0.78, 0.8, 0.22)),
+    vc(S(0.18, 8, 6), skin, T(0.74, 0.98, 0.44)),
+    vc(Cy(0.33, 0.36, 0.46, 12), b.light, T(0, 1.8, 0.02)),
+    vc(S(0.33, 12, 6, 0, Math.PI * 2, 0, Math.PI / 2), b.light, T(0, 2.03, 0.02)),
+    vc(B(0.44, 0.09, 0.06), b.visor, T(0, 1.82, 0.34)),
+    vc(B(0.1, 0.06, 0.04), '#ffe14a', T(-0.11, 1.82, 0.37)),
+    vc(B(0.1, 0.06, 0.04), '#ffe14a', T(0.11, 1.82, 0.37)),
+    vc(Co(0.1, 0.6, 6), b.horn, T(-0.44, 2.16, 0, 0, 0, 1.0)),
+    vc(Co(0.1, 0.6, 6), b.horn, T(0.44, 2.16, 0, 0, 0, -1.0)),
+    vc(Cy(0.27, 0.25, 0.15, 10), gold, T(0, 2.28, 0.02)),
+    ...[0, 1, 2, 3, 4, 5].map((i) =>
+      vc(Co(0.07, 0.22, 5), gold, T(Math.sin(i * 1.0472) * 0.25, 2.46, 0.02 + Math.cos(i * 1.0472) * 0.25)),
+    ),
+    vc(S(0.06, 6, 5), '#d8262e', T(0, 2.3, 0.28)),
+    vc(Cy(0.065, 0.065, 1.8, 6), b.handle, T(0.74, 1.3, 0.56, 0.6, 0, 0)),
+    vc(B(0.62, 0.46, 0.46), b.blade, T(0.74, 2.04, 1.07, 0.6, 0, 0)),
+    vc(B(0.66, 0.1, 0.5), gold, T(0.74, 2.04, 1.07, 0.6, 0, 0)),
   ]);
 }
 function kingGeo(): Geo {
@@ -2033,6 +2095,15 @@ interface Spawn {
   kind: UnitKind;
   t: number;
 }
+// The bosses: when the next one comes, the front it comes from (picked when the warning goes up), how many have come
+// and how many have been beaten
+interface Bosses {
+  next: number;
+  front: string | null;
+  came: number;
+  slain: number;
+  flareT: number; // the red smoke over its camp while the warning is up (not saved)
+}
 // a spot for an outpost, beside a front's road
 interface Site extends XZ {
   rx: number;
@@ -2219,6 +2290,7 @@ interface Game {
   spawnT: number;
   spawnQueue: Spawn[];
   nextPath: number;
+  boss: Bosses;
   kills: number;
   input: { x: number; z: number };
   padIn: Pad | null;
@@ -2255,7 +2327,15 @@ interface UI {
   pause: HTMLElement;
   over: HTMLElement;
   overText: HTMLElement;
+  w?: number; // the size of the game on the screen, in CSS pixels
+  h?: number;
+  boss: HTMLElement;
+  bossName: HTMLElement;
+  bossWhen: HTMLElement;
+  bossFill: HTMLElement;
+  bossDir: HTMLElement;
   lastCoins?: number;
+  bossKey?: string;
 }
 
 let started = false; // the renderer and the world are made (the first time the game opens)
@@ -3183,6 +3263,7 @@ function buildWorld() {
     W.emesh['brute' + t] = inst(bruteGeo(P.brute), vmat, big ? 180 : 110);
     W.emesh['giant' + t] = inst(giantGeo(P.giants[0]), vmat, 50);
     if (P.giants[1]) W.emesh['giantR' + t] = inst(giantGeo(P.giants[1]), vmat, 50);
+    W.emesh['boss' + t] = inst(bossGeo(P), vmat, 2);
   }
   W.ekeys = Object.keys(W.emesh);
   // blob shadows under units (cheap ground contact)
@@ -3727,6 +3808,7 @@ function newGame() {
     spawnT: 0.2,
     spawnQueue: [],
     nextPath: 0,
+    boss: { next: BOSS_EVERY, front: null, came: 0, slain: 0, flareT: 0 },
     kills: 0,
     input: { x: 0, z: 0 },
     padIn: null,
@@ -4874,6 +4956,90 @@ function updateSpawns(dt: number): void {
   }
 }
 
+// ----- bosses: BOSS_WARN seconds before one is due the warning goes up, naming it and the camp it comes from (one of
+// the open fronts, picked then), and red smoke rises over that camp. Then it marches down the front's road like the
+// rest, only slowly, and it hits walls and the castle very hard. Beaten, it bursts into a shower of coins.
+const liveBoss = () => G.enemies.find((e) => e.kind === 'boss' && e.hp > 0) ?? null;
+const bossTitle = (theme: Biome) => BOSS_NAMES[theme][0].toUpperCase() + BOSS_NAMES[theme].slice(1);
+const bossFront = () => (G.boss.front ? G.fronts.find((f) => f.id === G.boss.front)! : null);
+function updateBoss(dt: number): void {
+  const B = G.boss;
+  if (liveBoss()) {
+    B.next = Math.max(B.next, G.t + BOSS_WARN);
+    return;
+  }
+  if (!B.front && G.t >= B.next - BOSS_WARN) {
+    const open = G.fronts.filter(frontOpen);
+    if (!open.length) return;
+    const f = open[Math.floor(G.rand() * open.length)];
+    B.front = f.id;
+    B.next = Math.max(B.next, G.t + 1);
+    shockwave(f.camp.x, f.camp.z, 8, '#ff3b30');
+  }
+  const f = bossFront();
+  if (!f) return;
+  if ((B.flareT -= dt) <= 0 && world.fx.length < 200) {
+    B.flareT = 0.35;
+    const c = f.camp;
+    smoke(c.x + (Math.random() - 0.5) * 3, 2.5, c.z + (Math.random() - 0.5) * 3, '#d2352b', 1.8);
+  }
+  if (G.t >= B.next) spawnBoss(f);
+}
+function spawnBoss(f: Front): void {
+  const B = G.boss,
+    e = spawnEnemy('boss', f),
+    c = f.camp;
+  e.side = 0;
+  B.came++;
+  B.front = null;
+  B.next = G.t + BOSS_EVERY;
+  shockwave(c.x, c.z, 10, '#ff3b30');
+  dust(c.x, c.z, 3, 14);
+  puff(c.x, 2, c.z, '#d2352b', 10);
+  bigText(`${bossTitle(e.theme)}!`, c.x, 9, c.z);
+  toast(`${bossTitle(e.theme)} marches on the castle!`);
+}
+// a boss's blow lands: the ground shakes
+function stomp(e: Enemy): void {
+  const x = e.x + Math.sin(e.yaw) * 2.2,
+    z = e.z + Math.cos(e.yaw) * 2.2;
+  shockwave(x, z, 6, '#ffffff');
+  dust(x, z, 1.4, 8);
+  if (Math.hypot(G.king.x - e.x, G.king.z - e.z) < 30) G.shake = Math.max(G.shake, 0.3);
+}
+// a boss beaten: its reward flies out of it as a shower of coins
+function bossDown(e: Enemy): void {
+  G.boss.slain++;
+  const n = 30;
+  for (let i = 0; i < n; i++) {
+    const a = Math.random() * Math.PI * 2,
+      s = 2 + Math.random() * 4.5;
+    G.coinsOnGround.push({
+      x: e.x,
+      z: e.z,
+      y: 2,
+      vx: Math.cos(a) * s,
+      vz: Math.sin(a) * s,
+      vy: 7 + Math.random() * 5,
+      v: e.value / n,
+      spin: Math.random() * 6,
+      rest: false,
+      age: 0,
+      gone: false,
+      claimed: null,
+    });
+  }
+  puff(e.x, 2, e.z, '#ffffff', 20);
+  dust(e.x, e.z, 2.6, 14);
+  shockwave(e.x, e.z, 10, '#ffd84a');
+  pillar(e.x, e.z, 14);
+  burst(e.x, 4, e.z, 30, '#ffd84a');
+  bigText('Boss beaten!', e.x, 9, e.z);
+  floatText(`+${Math.round(e.value)}`, e.x, 7, e.z, '#ffd84a', true);
+  toast(`You beat ${BOSS_NAMES[e.theme]}! Grab the coins.`);
+  if (Math.hypot(G.king.x - e.x, G.king.z - e.z) < 40) G.shake = Math.max(G.shake, 0.45);
+}
+
 // spatial hash for enemies
 const CELL = 3,
   grid = new Map<number, Enemy[]>();
@@ -4963,7 +5129,7 @@ function updateEnemies(dt: number): void {
     cs = G.castle;
   for (const e of G.enemies) {
     if (e.hp <= 0) continue;
-    e.bob += dt * (e.kind === 'knight' ? 9 : 6);
+    e.bob += dt * (e.kind === 'knight' ? 9 : e.kind === 'boss' ? 3.5 : 6);
     e.lunge = Math.max(0, e.lunge - dt * 3);
     e.hitFlash = Math.max(0, e.hitFlash - dt * 6);
     e.atk -= dt;
@@ -4976,6 +5142,7 @@ function updateEnemies(dt: number): void {
           e.atk = UNIT[e.kind].atk;
           e.lunge = 1;
           hitWall(e.seg!, e.dmg);
+          if (e.kind === 'boss') stomp(e);
         }
         continue;
       }
@@ -4985,6 +5152,7 @@ function updateEnemies(dt: number): void {
         e.atk = UNIT[e.kind].atk;
         e.lunge = 1;
         hitCastle(e.dmg, e.x, e.z);
+        if (e.kind === 'boss') stomp(e);
       }
       continue;
     }
@@ -5105,6 +5273,7 @@ function damageEnemy(e: Enemy, dmg: number): void {
   e.hitFlash = 1;
   if (e.hp <= 0) {
     G.kills++;
+    if (e.kind === 'boss') return bossDown(e);
     puff(e.x, 0.8 * e.scale, e.z, '#ffffff', e.kind === 'knight' ? 6 : e.kind === 'brute' ? 10 : 16);
     dropCoins(e.x, e.z, e.value);
   }
@@ -6274,6 +6443,51 @@ function updateHud(force?: boolean): void {
   }
   ui.coins.classList.toggle('spend', G.spentFlash > 0);
   ui.coins.classList.toggle('gain', G.spentFlash <= 0 && G.gainFlash > 0);
+  updateBossHud();
+}
+// The boss at the top of the screen: the warning with the time left before it comes, then its name and health. While
+// it (or the camp it is coming from) is off the screen, a marker at the edge points the way.
+function updateBossHud(): void {
+  const e = G.over ? null : liveBoss(),
+    f = G.over || e ? null : bossFront(),
+    theme = e ? e.theme : f ? f.camp.theme : 0;
+  const key = e
+    ? `fight:${theme}:${Math.ceil((e.hp / e.max) * 200)}`
+    : f
+      ? `warn:${theme}:${Math.ceil(Math.max(0, G.boss.next - G.t))}`
+      : '';
+  if (key !== ui.bossKey) {
+    ui.bossKey = key;
+    ui.boss.hidden = !key;
+    ui.root.classList.toggle('cd-bossing', !!key);
+    ui.boss.classList.toggle('warn', !!f);
+    if (e) {
+      ui.bossName.textContent = bossTitle(theme);
+      ui.bossFill.style.width = `${Math.max(0, (e.hp / e.max) * 100)}%`;
+    } else if (f) {
+      ui.bossName.textContent = `${bossTitle(theme)} is coming`;
+      ui.bossWhen.textContent = `from ${placeName(theme)} in ${clock(Math.max(0, Math.ceil(G.boss.next - G.t)))}`;
+    }
+  }
+  const at = e || (f && f.camp);
+  let off = false;
+  if (at) {
+    const v = tmpV.set(at.x, 2, at.z).project(camera);
+    off = Math.abs(v.x) > 0.94 || Math.abs(v.y) > 0.9;
+    if (off) {
+      // from the middle of the screen toward it, stopped at the edge (below the coins and the boss at the top)
+      const w = ui.w || 1,
+        h = ui.h || 1,
+        dx = (v.x * w) / 2,
+        dy = (-v.y * h) / 2,
+        k = Math.min((w / 2 - 46) / Math.abs(dx || 1e-6), (h / 2 - 46) / Math.abs(dy || 1e-6));
+      const x = w / 2 + dx * k,
+        y = Math.max(h / 2 + dy * k, 150);
+      ui.bossDir.style.transform = `translate(${x.toFixed(1)}px, ${y.toFixed(1)}px)`;
+      ui.bossDir.style.setProperty('--a', Math.atan2(dy, dx).toFixed(3) + 'rad');
+    }
+  }
+  if (ui.bossDir.hidden === off) ui.bossDir.hidden = !off;
 }
 // messages at the top of the screen, one after the other
 function toast(msg: string): void {
@@ -6323,9 +6537,11 @@ function overText(g: Game, t: number, best: number): string {
     t > best
       ? `You held out for ${clock(t)}, your longest yet.`
       : `You held out for ${clock(t)}. Your longest is ${clock(best)}.`;
-  return g.outposts
-    ? `${held} Your border reached ${Math.round(g.reach)} paces out, with ${g.outposts} outpost${g.outposts > 1 ? 's' : ''}.`
-    : held;
+  const border = g.outposts
+    ? ` Your border reached ${Math.round(g.reach)} paces out, with ${g.outposts} outpost${g.outposts > 1 ? 's' : ''}.`
+    : '';
+  const bosses = g.boss.slain ? ` You beat ${g.boss.slain} boss${g.boss.slain > 1 ? 'es' : ''}.` : '';
+  return held + border + bosses;
 }
 
 // ------------------------------------------------------------------ saving ----
@@ -6420,6 +6636,11 @@ const SavedWorld = Schema.Struct({
   spawnT: Num,
   nextPath: Count,
   queue: Schema.Array(Schema.Tuple([Schema.Literals(FRONT_IDS), Schema.Literals(UNIT_KINDS), Num])), // front, kind, wait
+  // when the next boss comes, the front it comes from once the warning is up, how many have come and been beaten (a
+  // game saved before there were bosses has none of this)
+  boss: Schema.optionalKey(
+    Schema.Struct({ next: Num, front: Schema.NullOr(Schema.Literals(FRONT_IDS)), came: Count, slain: Count }),
+  ),
   routes: Schema.Array(SavedRoad),
   enemies: Schema.Array(SavedEnemy),
   ground: Schema.Array(Schema.Tuple([Num, Num, Num, Num])), // coins on the ground: x, z, value, age
@@ -6439,6 +6660,8 @@ const SavedWorld = Schema.Struct({
       w.fronts.every((f, i) => f.id === FRONT_IDS[i]) &&
       new Set(w.outposts.map((o) => o.idx)).size === w.outposts.length &&
       w.outposts.every((o) => o.idx < w.siteSeq) &&
+      w.queue.every(([, kind]) => kind !== 'boss') &&
+      w.enemies.filter((e) => e.kind === 'boss').length <= 1 &&
       w.enemies.every(
         (e) =>
           e.route < w.routes.length &&
@@ -6512,6 +6735,7 @@ function snapshot(): SavedWorld {
     spawnT: G.spawnT,
     nextPath: G.nextPath,
     queue: G.spawnQueue.map((q) => [q.f.id, q.kind, q.t]),
+    boss: { next: G.boss.next, front: G.boss.front, came: G.boss.came, slain: G.boss.slain },
     enemies: G.enemies
       .filter((e) => e.hp > 0)
       .map((e) => ({
@@ -6710,6 +6934,8 @@ function restoreGame(w: SavedWorld): void {
   G.spawnT = w.spawnT;
   G.nextPath = w.nextPath;
   G.spawnQueue = w.queue.map(([id, kind, t]) => ({ f: G.fronts.find((f) => f.id === id)!, kind, t }));
+  // the bosses (a game from before there were any meets its first a minute from now, or at the usual time)
+  Object.assign(G.boss, w.boss ?? { next: Math.max(BOSS_EVERY, w.t + 60) });
   G.coinsOnGround = w.ground.map(([x, z, v, age]) => ({
     x,
     z,
@@ -6868,6 +7094,7 @@ function step(dt: number): void {
   else if (cs.hp < cs.max) cs.hp = Math.min(cs.max, cs.hp + cs.max * 0.01 * dt);
   keyInput();
   updateSpawns(dt);
+  updateBoss(dt);
   rebuildGrid();
   updateTroop(dt);
   updateEnemies(dt);
@@ -6901,6 +7128,8 @@ function resize(): void {
     w = Math.max(1, r.width),
     h = Math.max(1, r.height);
   renderer.setSize(w, h, false);
+  ui.w = w;
+  ui.h = h;
   camera.aspect = w / h;
   camera.updateProjectionMatrix();
   // landscape shows about 33 units of ground top to bottom, portrait about 25 across
@@ -6921,6 +7150,11 @@ function setup(): void {
     pause: document.getElementById('cd-pausemenu')!,
     over: document.getElementById('cd-over')!,
     overText: document.getElementById('cd-over-text')!,
+    boss: document.getElementById('cd-boss')!,
+    bossName: document.getElementById('cd-boss-name')!,
+    bossWhen: document.getElementById('cd-boss-when')!,
+    bossFill: document.getElementById('cd-boss-fill')!,
+    bossDir: document.getElementById('cd-boss-dir')!,
   };
   initRenderer();
   buildWorld();
@@ -7078,6 +7312,10 @@ function debug() {
         segs: f.segs.length,
       })),
     claims: () => G.claims.map((c) => ({ x: c.x, z: c.z, r: c.r })),
+    BOSS_EVERY,
+    BOSS_WARN,
+    // the boss on the field, if there is one
+    boss: () => liveBoss(),
     borderDist: (x: number, z: number) => borderDist(G.claims, x, z),
     terrain: () => ({
       chunks: world.terrain.chunks.size,
