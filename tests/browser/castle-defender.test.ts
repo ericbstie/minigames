@@ -845,6 +845,208 @@ describe('A saved game the game cannot carry on from', () => {
   });
 });
 
+/** The boss panel at the top of the screen, as it reads */
+const bossPanel = (page: Page) =>
+  page.eval(() => {
+    const el = document.getElementById('cd-boss')!;
+    return {
+      shown: !el.hidden,
+      warn: el.classList.contains('warn'),
+      name: document.getElementById('cd-boss-name')!.textContent,
+      when: document.getElementById('cd-boss-when')!.textContent,
+      health: document.getElementById('cd-boss-fill')!.style.width,
+    };
+  });
+
+describe('Bosses', () => {
+  beforeAll(async () => {
+    page = await open();
+  });
+  afterAll(() => page.close());
+
+  test('the first boss is due 3 minutes in, and nothing shows before its warning', async () => {
+    const s = await dbg(page, (d) => {
+      d.advance(10);
+      return [d.BOSS_EVERY, d.G.boss.next, d.G.boss.front, !!d.boss()];
+    });
+    expect(s).toEqual([180, 180, null, false]);
+    await frames(page, 2);
+    expect((await bossPanel(page)).shown).toBe(false);
+  });
+
+  let front = '';
+  test('a warning goes up before it comes: which boss, the camp it comes from and the time left', async () => {
+    const w = await dbg(page, (d) => {
+      const G = d.G;
+      G.boss.next = G.t + d.BOSS_WARN + 1;
+      d.advance(1.5);
+      const f = G.fronts.find((f) => f.id === G.boss.front);
+      return { front: G.boss.front, open: f?.open, boss: !!d.boss() };
+    });
+    expect(w.front).not.toBeNull();
+    expect(w.open).toBe(true);
+    expect(w.boss).toBe(false);
+    front = w.front!;
+    await frames(page, 2);
+    const panel = await bossPanel(page);
+    expect(panel.shown).toBe(true);
+    expect(panel.warn).toBe(true);
+    expect(panel.name).toMatch(/^The [A-Z][a-z]+ [A-Z][a-z]+ is coming$/);
+    expect(panel.when).toMatch(/^from the [A-Za-z ]+ in 0:(19|20)$/);
+    await shot(page, 'boss-warning');
+  });
+
+  test('then it marches from that camp: far stronger than the others, its name and health at the top', async () => {
+    const b = await dbg(
+      page,
+      (d, id) => {
+        const G = d.G,
+          f = G.fronts.find((f) => f.id === id)!;
+        d.advance(d.BOSS_WARN);
+        const e = d.boss();
+        const others = G.enemies.filter((o) => o !== e).map((o) => o.max);
+        return {
+          boss: !!e,
+          fromCamp: e ? Math.hypot(e.x - f.road[0]![0], e.z - f.road[0]![1]) : -1,
+          route: e?.route === f.road,
+          strength: e ? e.max / Math.max(...others) : 0,
+          came: G.boss.came,
+          front: G.boss.front,
+          next: G.boss.next - G.t,
+        };
+      },
+      front,
+    );
+    expect(b.boss).toBe(true);
+    expect(b.route).toBe(true);
+    expect(b.fromCamp).toBeLessThan(8);
+    expect(b.strength).toBeGreaterThan(10);
+    expect(b.came).toBe(1);
+    expect(b.front).toBeNull();
+    expect(b.next).toBeGreaterThan(175);
+    await frames(page, 2);
+    const panel = await bossPanel(page);
+    expect(panel.shown).toBe(true);
+    expect(panel.warn).toBe(false);
+    expect(panel.name).toMatch(/^The [A-Z][a-z]+ [A-Z][a-z]+$/);
+    expect(panel.health).toBe('100%');
+  });
+
+  test('while it is on the field no other boss comes', async () => {
+    const s = await dbg(page, (d) => {
+      const G = d.G,
+        due = G.boss.next;
+      G.boss.next = G.t;
+      d.advance(2);
+      const got = [G.boss.front, G.boss.came, G.boss.next - G.t >= d.BOSS_WARN - 0.1];
+      G.boss.next = due;
+      return got;
+    });
+    expect(s).toEqual([null, 1, true]);
+  });
+
+  test('the king and his troop can fight it: its health goes down at the top', async () => {
+    const hp = await dbg(page, (d) => {
+      const e = d.boss()!;
+      d.teleport(e.x - 3, e.z);
+      d.advance(2);
+      return e.hp / e.max;
+    });
+    expect(hp).toBeLessThan(1);
+    await frames(page, 2);
+    expect(parseFloat((await bossPanel(page)).health)).toBeLessThan(100);
+    await shot(page, 'boss-fight');
+  });
+
+  test('a boss on the field is saved, and comes back after a reload', async () => {
+    await page.click('#cd-pause-btn');
+    const before = await dbg(page, (d) => {
+      d.save();
+      const e = d.boss()!;
+      return [e.x, e.z, e.hp, e.max, e.dmg, e.value, e.mkey, d.G.boss.next, d.G.boss.came];
+    });
+    await page.reload();
+    await reopened(page);
+    const after = await dbg(page, (d) => {
+      const e = d.boss()!;
+      return [e.x, e.z, e.hp, e.max, e.dmg, e.value, e.mkey, d.G.boss.next, d.G.boss.came];
+    });
+    expect(after).toEqual(before);
+    expect((await bossPanel(page)).shown).toBe(true);
+    await page.click('#cd-resume');
+  });
+
+  test('beaten, it bursts into a shower of coins worth its reward, and the panel goes', async () => {
+    const r = await dbg(page, (d) => {
+      const G = d.G,
+        e = d.boss()!,
+        value = e.value;
+      d.teleport(e.x - 3, e.z);
+      e.hp = 1;
+      for (let i = 0; i < 60 && d.boss(); i++) d.advance(1 / 30);
+      const shower = G.coinsOnGround.filter((c) => c.v === value / 30);
+      return { gone: !d.boss(), slain: G.boss.slain, value, coins: shower.length };
+    });
+    expect(r.gone).toBe(true);
+    expect(r.slain).toBe(1);
+    expect(r.value).toBeGreaterThan(100);
+    expect(r.coins).toBe(30);
+    await frames(page, 2);
+    expect((await bossPanel(page)).shown).toBe(false);
+    await shot(page, 'boss-beaten');
+  });
+
+  test('the next boss is due 3 minutes after the last one came', async () => {
+    const next = await dbg(page, (d) => d.G.boss.next - d.G.t);
+    expect(next).toBeGreaterThan(150);
+    expect(next).toBeLessThanOrEqual(180);
+  });
+
+  test('the warning is saved too, and a reload shows it again', async () => {
+    await page.click('#cd-pause-btn');
+    const before = await dbg(page, (d) => {
+      const G = d.G;
+      G.boss.next = G.t + d.BOSS_WARN - 5;
+      d.advance(0.5);
+      d.save();
+      return [G.boss.front, G.boss.next];
+    });
+    expect(before[0]).not.toBeNull();
+    await page.reload();
+    await reopened(page);
+    expect(await dbg(page, (d) => [d.G.boss.front, d.G.boss.next])).toEqual(before);
+    const panel = await bossPanel(page);
+    expect([panel.shown, panel.warn]).toEqual([true, true]);
+  });
+
+  test('when the castle falls, the panel says how many bosses were beaten', async () => {
+    await page.click('#cd-resume');
+    expect(await fall(page, 400)).toBe(true);
+    expect(await overPanel(page)).toBe(true);
+    expect(await overText(page)).toMatch(/ You beat 1 boss\.$/);
+    expect((await bossPanel(page)).shown).toBe(false);
+  });
+
+  test('a game saved before there were bosses carries on, with its first boss a minute away', async () => {
+    const good = await open();
+    await dbg(good, (d) => {
+      d.advance(20);
+      d.G.t = 300;
+      d.save();
+    });
+    const { boss: _, ...old } = JSON.parse((await savedWorld(good))!);
+    good.close();
+    const back = await open({ storage: { [WORLD]: JSON.stringify(old) } });
+    expect(await dbg(back, (d) => [d.G.t, d.G.paused, d.G.boss.next, d.G.boss.came])).toEqual([300, true, 360, 0]);
+    expect(back.errors).toEqual([]);
+    back.close();
+  });
+
+  test('no errors in the page', () => {
+    expect(page.errors).toEqual([]);
+  });
+});
+
 describe('The forge: weapon after weapon, bazookas last', () => {
   beforeAll(async () => {
     page = await open();

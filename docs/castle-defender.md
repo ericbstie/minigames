@@ -92,6 +92,20 @@ The blast's flash, ring and smoke are kept small, as a troop with bazookas fires
 A pad draws its price centred under its icon, smaller when it is too wide for the pad, and from 100,000 as three
 figures and k, M, B or T (`priceLabel`: 115k, 1.15M, 34.9B).
 
+## Bosses
+
+Every 3 minutes of play (`BOSS_EVERY`, from when the last one came) a boss marches on the castle from one of the
+open camps. 20 seconds before (`BOSS_WARN`) a red panel at the top of the screen names it and the camp it comes from,
+with the time left, and red smoke rises over that camp. Then it walks down that front's road like the rest, only
+slowly, and the panel shows its name and health instead. While it, or the camp it is coming from, is off the screen, a
+red marker with a crown at the edge of the screen points the way.
+
+A boss is its own unit (`UNIT.boss`): a hulking warlord in the colours of its camp's biome, about 10 times a giant's
+hit points and 3 times its blow, grown with time and camp tier like every other enemy. Its blows shake the ground. It
+is named after its biome (`BOSS_NAMES`: the Red Warlord, the Frost Jarl, the Bog Troll, the Cinder Lord). Beaten, it
+bursts into a shower of 30 coins worth its reward (100 times a knight's coins); the game-over panel says how many were
+beaten. Only one comes at a time: while one is on the field, the next waits, and comes 20 seconds after it falls.
+
 ## Opening and leaving
 
 The game is a `Game` for the hub (`game`, at the end of `castle-defender.ts`; [development.md](development.md) has
@@ -119,14 +133,16 @@ falls the save is removed, so the next visit starts a new game.
 towers, cannons and their aim, the gold hut and its boys), each stretch of wall's hit points, the claims, every
 front (its road, the stretches added as it fell back, whether and when it opened, its timers and its camp), the
 ruins, the outposts and their field cannons, the coins paid into pads, the enemies (each with the road it walks,
-stored once for all who share it) and the groups about to set off, and the coins on the ground. Arrows, cannon balls,
+stored once for all who share it, a boss among them) and the groups about to set off, when the next boss comes (and
+from where, once its warning is up), and the coins on the ground. Arrows, cannon balls,
 dust and floating numbers start again empty. Coins flying to the king are added to his, and coins paid into a spot
 for an outpost go back to him: `refreshFrontier` works the spots out again from the border, in the same places.
 
 `restoreGame` starts a new game and sets it up as saved, putting each building up at its level straight away (no
 dust, no celebration) through the same helpers the purchases use (`makeForge`, `makeCannon`, `makeGoldHut`,
 `outpostPad`). The `SavedWorld` Schema checks every field and that the save fits this game (six wall towers,
-every stretch of wall, the five fronts in order, enemies on roads that are there, looks their kind has); a save that
+every stretch of wall, the five fronts in order, enemies on roads that are there, looks their kind has, one boss at
+most). A game saved before there were bosses meets its first a minute after it carries on. A save that
 doesn't fit starts a new game, and `castle.bestTime` is a key of its own, so it is kept either way. A save that
 fits but still can't be set up (a mistake in this code) is reported, removed, and a new game starts. A save from
 before there were bazookas (the forge at machine guns, maybe with +1s on them) fits: the forge offers bazookas next,
@@ -141,6 +157,10 @@ open world held about 11:00 to 11:45 with the same player. Building outposts las
 and rushing them before weapons (`expand`) falls before 5 minutes, just as rushing the old outer towers did. So
 pushing out costs no survival time and is the way the world opens up. Enemies from a camp 2 tiers out have about
 2.6 times the hit points and 2.1 times the coins of ones from home.
+
+With bosses the bot held 11:21, 11:48 and 11:11 (12:19 and 11:01 without them, the same day) and beat every boss that
+came, three a game, without the castle losing hit points to one: the 3:00 boss falls at the walls within about a
+minute of coming, most of it the walk in, and its 900 or so coins buy the next weapon early.
 
 Doubling the weapon prices (with bazookas) took that to about 10:50 to 11:10, with 9 or 10 outposts and the border
 about 115 paces out, once the player counts the forge half as much as before so the weapons still come in the same
@@ -159,5 +179,5 @@ bun tools/play-castle-defender.ts 15 balanced --check    # a headless play-throu
 `mise run test` runs both tests with all the others. The play-through is not a test: run it by hand after a
 balance change. `KEEP_SHOTS=1` keeps the browser test's screenshots in `.shots/`.
 `CastleDefender._debug()` in the page gives the tests the game state, a `teleport(x, z)` (which also lets the king
-past the border), an `advance(seconds)` that runs the game faster than real time, `buy(padId)`, and lists of the
-pads, outpost spots, fronts and claims.
+past the border), an `advance(seconds)` that runs the game faster than real time, `buy(padId)`, lists of the
+pads, outpost spots, fronts and claims, and the boss on the field (`boss()`; set `G.boss.next` to bring one sooner).

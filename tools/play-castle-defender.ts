@@ -224,6 +224,7 @@ function minute() {
       .map((c) => c.level)
       .join(''),
     reach: Math.round(G.reach),
+    bosses: `${G.boss.slain}/${G.boss.came}`, // beaten / come
     camps: d
       .fronts()
       .filter((f) => f.open)
