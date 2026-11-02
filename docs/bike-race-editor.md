@@ -5,8 +5,7 @@ ride it, and save it on the phone.
 
 ## Track pieces
 
-`public/js/bike-race-pieces.ts` (an ES module, and `window.BikeRacePieces` in the page through
-`bike-race-globals.ts`) has the pieces, the edits the editor makes to them, and `buildCustomLevel`, which turns a
+`public/js/bike-race-pieces.ts` has the pieces, the edits the editor makes to them, and `buildCustomLevel`, which turns a
 saved level into a level the simulation in `bike-race-core.ts` can ride. It has no DOM code. Its types describe the
 saved format (`LevelData`, `Piece`, `Finish`, `SavedLevels`) and what the editor works with (`Geom`, `PieceEnd`,
 `Cursor`, `CustomLevel`, ...).
@@ -96,9 +95,9 @@ Built-in levels set none of these, and `bun tools/check-bike-levels.ts` gives ex
 
 ## The editor screen
 
-`public/js/bike-race-editor.js` (`window.BikeRaceEditor`) is the editor's screens. It loads after `bike-race.js`,
-which gives it `BikeRace.editor` (start a ride on a level, switch screens, toasts) and draws the editor on the
-game's canvas while the `editor` view is up (`BikeRaceEditor.frame`).
+`public/js/bike-race-editor.ts` is the editor's screens. `bike-race.ts` imports it, hands it an `EditorApi` with
+`connect()` at load (start a ride on a level, switch screens, toasts), tells it which view is up (`onView`) and has
+it draw on the game's canvas while the `editor` view is up (`frame`).
 
 - **Level editor** on the home menu opens **My levels**: a card per level with a picture of the track, the name (tap
   to rename), the piece count and best time, and Play, Edit and Delete (tap twice). **New level** starts one.
