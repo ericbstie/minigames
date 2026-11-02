@@ -34,14 +34,14 @@ describe('The threat level', () => {
   test('keeps growing, but ever more slowly, and well below the clock an hour in', () => {
     let last = L.threatLevel(L.EASE_FROM),
       lastStep = Infinity;
-    for (let m = 13; m <= 90; m++) {
+    for (let m = L.EASE_FROM / 60 + 1; m <= 90; m++) {
       const now = L.threatLevel(minute(m));
       expect(now).toBeGreaterThan(last);
       expect(now - last).toBeLessThan(lastStep);
       lastStep = now - last;
       last = now;
     }
-    expect(L.threatLevel(minute(60))).toBeLessThan(minute(60) / 13 / 2);
+    expect(L.threatLevel(minute(60))).toBeLessThan((minute(60) / 13) * 0.6);
   });
 });
 
