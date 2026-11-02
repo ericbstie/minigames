@@ -699,7 +699,8 @@ describe('The first land past the border: shops', () => {
       const lot = d.shops().find((s) => s.lv === 0)!;
       d.buy(lot.id);
       d.advance(10);
-      d.G.pads.find((p) => p.id === d.shops().find((s) => s.lv === 0)?.id)!.paid = 9;
+      // a few coins paid towards its next level (there may be no lot left for sale to pay into)
+      d.G.pads.find((p) => p.id === lot.id)!.paid = 9;
     });
     await page.click('#cd-pause-btn');
     const before = await everything(page);
@@ -728,6 +729,285 @@ describe('The first land past the border: shops', () => {
     for (const key of Object.keys(before) as (keyof typeof before)[])
       if (key !== 'towers' && key !== 'pads' && key !== 'clear') expect(after[key], key).toEqual(before[key]);
     await shot(page, 'shops-after-reload');
+  });
+
+  test('no errors in the page', () => {
+    expect(page.errors).toEqual([]);
+  });
+});
+
+describe('The second land: treasure and relics', () => {
+  type Dig = ReturnType<CastleDebug['digs']>[number];
+  let mark: Dig;
+  beforeAll(async () => {
+    page = await open();
+    await dbg(page, (d) => {
+      const w = window as unknown as Helpers;
+      w.__pushOut = () => {
+        const vis = d.pads().map((p) => p.id);
+        const spots = d.sites().filter((s) => vis.includes(s.id));
+        if (!spots.length) return false;
+        d.buy(spots.reduce((a, b) => (Math.hypot(b.x - 4, b.z) > Math.hypot(a.x - 4, a.z) ? b : a)).id);
+        d.advance(0.5);
+        return true;
+      };
+      w.__quiet = () => {
+        d.G.enemies.length = 0;
+        d.G.spawnQueue.length = 0;
+        d.G.spawnT = 1e9;
+        d.G.centerT = 1e9;
+        d.G.boss.next = 1e9;
+        for (const f of d.G.fronts) f.timer = 1e9;
+      };
+    });
+  });
+  afterAll(() => page.close());
+
+  test('nothing to dig in the first land', async () => {
+    const got = await dbg(page, (d) => {
+      d.rich(1e7);
+      for (let i = 0; i < 4; i++) d.buy('recruit');
+      for (let i = 0; i < 6; i++) d.buy('tower' + i);
+      d.buy('cannon0');
+      d.buy('cannon1');
+      d.advance(0.5);
+      for (let n = 0; n < 8 && d.G.land < 1; n++) (window as unknown as Helpers).__pushOut();
+      d.advance(5);
+      return {
+        land: d.G.land,
+        reach: d.G.reach,
+        digs: d.digs().length,
+        hud: document.getElementById('cd-relics')!.children.length,
+      };
+    });
+    expect(got.land).toBe(1);
+    expect(got.reach).toBeLessThan(110);
+    expect([got.digs, got.hud]).toEqual([0, 0]);
+  });
+
+  test('past 110 paces the old battlefields open, with a mark to dig out towards the border', async () => {
+    const got = await dbg(page, (d) => {
+      for (let n = 0; n < 16 && d.G.reach < 110; n++) (window as unknown as Helpers).__pushOut();
+      d.advance(0.5);
+      const toast = document.getElementById('cd-toast')!.textContent ?? '';
+      return {
+        reach: d.G.reach,
+        land: d.G.land,
+        news: [toast, ...d.G.toastQ].some((m) => m.includes('New land: The old battlefields')),
+        digs: d.digs(),
+        border: d.digs().map((o) => d.borderDist(o.x, o.z)),
+      };
+    });
+    expect(got.reach).toBeGreaterThanOrEqual(110);
+    expect(got.land).toBe(2);
+    expect(got.news).toBe(true);
+    expect(got.digs.length).toBe(1);
+    mark = got.digs[0]!;
+    expect(got.border[0]).toBeLessThan(-4);
+    expect(Math.hypot(mark.x - 4, mark.z)).toBeGreaterThanOrEqual(50);
+  });
+
+  test('the way to the mark shows at the edge of the screen while it is off it', async () => {
+    const shown = await dbg(page, (d) => {
+      (window as unknown as Helpers).__quiet();
+      d.teleport(4, 2);
+      d.G.free = false;
+      d.advance(0.2);
+      return !document.getElementById('cd-dig-dir')!.hidden;
+    });
+    expect(shown).toBe(true);
+  });
+
+  test('standing on it digs; a moment is not enough, then a chest comes up with a relic', async () => {
+    const got = await dbg(
+      page,
+      (d, m) => {
+        d.teleport(m.x + 0.5, m.z);
+        d.G.free = false;
+        d.advance(d.DIG_SECONDS / 2);
+        const half = { digs: d.digs(), relics: d.G.relics.slice() };
+        d.advance(d.DIG_SECONDS / 2 + 0.3);
+        const found = d.G.relics.findIndex((lv) => lv > 0);
+        return {
+          half,
+          digs: d.digs().length,
+          relics: d.G.relics.slice(),
+          name: d.RELICS[found],
+          chests: d.G.chests.length,
+          hud: [...document.querySelectorAll('#cd-relics .cd-relic')].map((e) => e.getAttribute('aria-label')),
+        };
+      },
+      mark,
+    );
+    expect(got.half.digs.length).toBe(1);
+    expect(got.half.digs[0]!.dug).toBeGreaterThan(0);
+    expect(got.half.relics.every((lv) => lv === 0)).toBe(true);
+    expect(got.digs).toBe(0);
+    expect(got.relics.filter((lv) => lv === 1).length).toBe(1);
+    expect(got.relics.reduce((a, b) => a + b, 0)).toBe(1);
+    expect(got.chests).toBe(1);
+    expect(got.hud).toEqual([got.name]);
+    // nothing left to point the way to
+    await frames(page, 2);
+    expect(await page.eval(() => document.getElementById('cd-dig-dir')!.hidden)).toBe(true);
+    await shot(page, 'relic-dug');
+  });
+
+  test('a new mark comes every 45 seconds, and no more than two wait at once', async () => {
+    const got = await dbg(page, (d) => {
+      d.teleport(4, 2);
+      d.G.free = false;
+      const next = d.G.digNext - d.G.t;
+      d.advance(next - 1);
+      const before = d.digs().length;
+      d.advance(2);
+      const after = d.digs().length;
+      d.advance(200);
+      return { next, before, after, later: d.digs().length };
+    });
+    expect(got.next).toBeGreaterThan(1);
+    expect(got.next).toBeLessThanOrEqual(45);
+    expect([got.before, got.after, got.later]).toEqual([0, 1, 2]);
+  });
+
+  test('every relic does what it says', async () => {
+    const got = await dbg(page, (d) => {
+      const G = d.G;
+      (window as unknown as Helpers).__quiet();
+      d.setRelics([0, 0, 0, 0, 0]);
+      // the War Drum: everything reloads faster
+      const reload = () => {
+        G.king.cd = 5;
+        d.advance(0.1, 0.1);
+        return 5 - G.king.cd;
+      };
+      const drum = [reload()];
+      d.relic(0);
+      drum.push(reload());
+      // the Giant's Bone: walls and castle get more hit points, each keeping the share it had
+      const seg = G.segs.find((s) => s.alive)!;
+      seg.hp = seg.max / 2;
+      const bone = { wall: [seg.hp, seg.max], castle: G.castle.max };
+      d.relic(2);
+      const boneAfter = { wall: [seg.hp, seg.max], castle: G.castle.max };
+      return { drum, bone, boneAfter, relics: G.relics.slice() };
+    });
+    expect(got.drum[0]).toBeCloseTo(0.1, 5);
+    expect(got.drum[1]).toBeCloseTo(0.12, 5);
+    expect(got.boneAfter.wall[1]).toBeCloseTo(got.bone.wall[1]! * 1.5, 3);
+    expect(got.boneAfter.wall[0]).toBeCloseTo(got.bone.wall[0]! * 1.5, 3);
+    expect(got.boneAfter.castle).toBeCloseTo(got.bone.castle * 1.5, 3);
+    expect(got.relics).toEqual([1, 0, 1, 0, 0]);
+  });
+
+  test('the Frost Heart slows the enemy, the Storm Horn strikes the toughest, the Ember Crown burns', async () => {
+    const got = await dbg(page, (d) => {
+      const G = d.G;
+      for (const f of G.fronts) f.timer = 0;
+      G.spawnT = G.centerT = 0;
+      d.teleport(4, 2);
+      G.free = false;
+      let walker = null as (typeof G.enemies)[number] | null;
+      for (let i = 0; i < 400 && !walker; i++) {
+        d.advance(0.5);
+        walker = G.enemies.find((e) => e.state === 'path' && d.borderDist(e.x, e.z) > 3) ?? null;
+      }
+      if (!walker) throw new Error('no enemy on its way');
+      // how far one on its way, alone (no crowd pushing it about, none setting off), walks in a moment, for its speed
+      const e = walker,
+        others = G.enemies.filter((o) => o !== e);
+      G.enemies = [e];
+      G.spawnQueue.length = 0;
+      G.spawnT = G.centerT = 1e9;
+      for (const f of G.fronts) f.timer = 1e9;
+      const walk = () => {
+        const [x, z] = [e.x, e.z];
+        d.advance(0.3, 1 / 30);
+        return Math.hypot(e.x - x, e.z - z) / 0.3 / e.speed;
+      };
+      const pace = [walk()];
+      d.relic(1);
+      pace.push(walk());
+      G.enemies.push(...others);
+      // the Storm Horn: lightning at the toughest enemy near the border
+      d.relic(3);
+      G.stormT = 1 / 60;
+      const near = G.enemies.filter((o) => o.hp > 0 && d.borderDist(o.x, o.z) < 12 && o.kind !== 'boss');
+      const top = near.reduce((a, b) => (b.hp > a.hp ? b : a));
+      const was = top.hp;
+      d.advance(1 / 30, 1 / 30);
+      // (as hard as 25 hits of the weapon, with what the shops bring)
+      const struck = (was - top.hp) / (d.weaponDmg() * 25 * G.might);
+      // the Ember Crown: an enemy that falls hurts the ones around it, with a share of its hit points
+      d.relic(4);
+      const [a, b] = G.enemies.filter((o) => o.hp > 0 && o.kind !== 'boss');
+      b!.x = a!.x + 1;
+      b!.z = a!.z;
+      b!.hp = 1e12;
+      d.advance(1 / 30, 1 / 30);
+      const hpB = b!.hp;
+      d.hurt(a!, a!.hp + 1, true);
+      const embers = G.embers.length;
+      d.advance(1 / 30, 1 / 30);
+      // (as hard as two hits of the weapon, at the first level)
+      const burnt = (hpB - b!.hp) / (d.weaponDmg() * 2 * G.might);
+      return { pace, struck, embers, burnt, relics: G.relics.slice() };
+    });
+    expect(got.pace[0]).toBeGreaterThan(0.6);
+    expect(got.pace[1]! / got.pace[0]!).toBeGreaterThan(0.75);
+    expect(got.pace[1]! / got.pace[0]!).toBeLessThan(0.97);
+    expect(got.struck).toBeGreaterThan(0.99);
+    expect(got.embers).toBe(1);
+    expect(got.burnt).toBeGreaterThan(0.99);
+    expect(got.relics).toEqual([1, 1, 1, 1, 1]);
+    await shot(page, 'relics-five');
+  });
+
+  test('relics, the marks waiting and how far one is dug are saved, and a reload brings them back', async () => {
+    await dbg(page, (d) => {
+      (window as unknown as Helpers).__quiet();
+      const m = d.digs()[0]!;
+      d.teleport(m.x, m.z);
+      d.G.free = false;
+      d.advance(1);
+      d.teleport(m.x + 10, m.z);
+      d.G.free = false;
+      d.advance(0.1);
+    });
+    await page.click('#cd-pause-btn');
+    const before = await everything(page);
+    expect(before.treasure.digs.some(([, , dug]) => dug! > 0.5)).toBe(true);
+    expect(before.relicHud).toBe(5);
+    await dbg(page, (d) => d.save());
+    await page.reload();
+    await reopened(page);
+    const after = await everything(page);
+    expect(after.treasure).toEqual(before.treasure);
+    expect(after.castle).toEqual(before.castle);
+    expect(after.walls).toEqual(before.walls);
+    expect(after.relicHud).toBe(5);
+  });
+
+  test('once every relic is at its top level, no more marks come', async () => {
+    const got = await dbg(page, (d) => {
+      const G = d.G;
+      G.enemies.length = 0;
+      G.spawnQueue.length = 0;
+      G.spawnT = G.centerT = G.boss.next = 1e9;
+      for (const f of G.fronts) f.timer = 1e9;
+      for (let n = 0; n < 20; n++) d.relic();
+      const top = G.relics.slice();
+      for (const m of d.digs()) {
+        d.teleport(m.x, m.z);
+        G.free = false;
+        d.advance(4);
+      }
+      d.advance(300);
+      return { top, relics: G.relics.slice(), digs: d.digs().length };
+    });
+    expect(got.top).toEqual([3, 3, 3, 3, 3]);
+    expect(got.relics).toEqual([3, 3, 3, 3, 3]);
+    expect(got.digs).toBe(0);
   });
 
   test('no errors in the page', () => {
@@ -950,6 +1230,8 @@ const everything = (page: Page) =>
       ground: G.coinsOnGround.map((c) => [c.x, c.z, c.v]),
       land: [G.land, G.lotSeq],
       shops: G.shops.map((s) => [s.idx, s.x, s.z, s.yaw, s.kind, s.lv, s.lot, Math.round(s.till.value)]),
+      treasure: { relics: G.relics, digs: G.digs.map((o) => [o.x, o.z, o.dug]), next: G.digNext },
+      relicHud: document.getElementById('cd-relics')!.children.length,
     };
   });
 const WORLD = 'castle.world.v1';
@@ -1105,6 +1387,11 @@ describe('A saved game the game cannot carry on from', () => {
         JSON.stringify({ ...saved, fronts: [...saved.fronts, { ...saved.fronts[0], id: 'o7' }] }),
       ],
       ['a wall tower at a level there is none of', JSON.stringify({ ...saved, towers: [9, 0, 0, 0, 0, 0] })],
+      ['a relic at a level there is none of', JSON.stringify({ ...saved, relics: [0, 9, 0, 0, 0] })],
+      [
+        'more marks to dig than there can be',
+        JSON.stringify({ ...saved, digs: [1, 2, 3].map((x) => ({ at: [x, 50], dug: 0 })) }),
+      ],
       [
         'a shop at a level there is none of',
         JSON.stringify({
@@ -1123,15 +1410,23 @@ describe('A saved game the game cannot carry on from', () => {
       expect(page.errors, why).toEqual([]);
       page.close();
     }
-    // and the good one carries on, as does one saved before there were lands and shops
-    const { land: _land, lotSeq: _lotSeq, shops: _shops, ...older } = saved;
+    // and the good one carries on, as does one saved before there were lands, shops and relics
+    const {
+      land: _land,
+      lotSeq: _lotSeq,
+      shops: _shops,
+      relics: _relics,
+      digs: _digs,
+      digNext: _digNext,
+      ...older
+    } = saved;
     for (const ok of [saved, older]) {
       const back = await open({ storage: { [WORLD]: JSON.stringify(ok) } });
       expect(await dbg(back, (d) => [Math.round(d.G.t), d.G.paused, d.G.land])).toEqual([Math.round(saved.t), true, 0]);
       expect(back.errors).toEqual([]);
       back.close();
     }
-  });
+  }, 300_000); // a page for every kind of junk: more than the usual two minutes
 });
 
 /** The boss panel at the top of the screen, as it reads */

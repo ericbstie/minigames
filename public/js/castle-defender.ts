@@ -55,6 +55,21 @@ import {
   closestOnRoad,
   tradeMight,
   TRADE,
+  DIG_SECONDS,
+  DIG_EVERY,
+  DIG_MAX,
+  RELICS,
+  RELIC,
+  RELIC_MAX,
+  STORM_EVERY,
+  STORM_HIT,
+  EMBER,
+  EMBER_R,
+  haste,
+  chill,
+  sturdy,
+  pickRelic,
+  digsLeft,
 } from './castle-defender-lands';
 import { GameHub, type Game as HubGame } from './hub';
 import { animate, forget, listen, load, type PageServices, run, runSync, save } from './page';
@@ -1504,6 +1519,28 @@ const SHOP_GEOS = Object.fromEntries(
     return [kind, fn];
   }),
 ) as Record<Biome, GeoFn>;
+// a treasure chest, half open, for the moment it comes up out of the ground
+function chestGeo(): Geo {
+  const p = [
+    vc(B(1.5, 0.8, 1.0), '#8a5a2e', T(0, 0.4, 0)),
+    vc(B(1.56, 0.12, 1.06), '#f2b52a', T(0, 0.1, 0)),
+    vc(B(1.56, 0.12, 1.06), '#f2b52a', T(0, 0.74, 0)),
+    // the lid, open on its hinge at the back
+    vc(B(1.5, 0.16, 1.0), '#9a6634', T(0, 0.8 + Math.sin(1.1) * 0.5, -0.5 + Math.cos(1.1) * 0.5, -1.1, 0, 0)),
+    vc(B(1.3, 0.3, 0.8), '#ffd84a', T(0, 0.75, 0)), // the gold inside
+    vc(B(0.22, 0.28, 0.06), '#f2b52a', T(0, 0.55, 0.52)),
+  ];
+  for (const x of [-0.5, 0.5]) p.push(vc(B(0.12, 0.82, 1.06), '#f2b52a', T(x, 0.41, 0)));
+  return merge(p);
+}
+// a shovel stuck in the ground, its blade at the origin, leaning back from the camera
+function shovelGeo(): Geo {
+  return merge([
+    vc(B(0.5, 0.62, 0.07), '#aab3bb', T(0, 0.22, -0.9)),
+    vc(Cy(0.06, 0.06, 1.7, 6), '#8a5a2e', T(0, 1.32, -0.9)),
+    vc(B(0.44, 0.1, 0.1), '#6b4630', T(0, 2.17, -0.9)),
+  ]);
+}
 function treeGeo(seed: number, wood = '#6b4630'): Geo {
   const R = mulberry(seed),
     p = [vc(Co(0.32, 4.2, 6), wood, T(0, 2.1, 0))];
@@ -2562,6 +2599,12 @@ interface Game {
   shops: Shop[];
   lotSeq: number;
   might: number; // how much harder than its weapon everything of the king's hits (shops)
+  relics: number[]; // the level of each relic dug up (RELICS), 0 for one not found yet
+  digs: Dig[]; // marks on the ground waiting to be dug
+  digNext: number; // when the next one shows
+  stormT: number; // till the Storm Horn's next lightning
+  embers: Ember[]; // fallen enemies about to burst into flames (Ember Crown)
+  chests: Chest[]; // chests come up out of the ground, for a moment
   posts: Post[];
   toastQ: string[];
   toastT: number;
@@ -2590,8 +2633,11 @@ interface UI {
   bossWhen: HTMLElement;
   bossFill: HTMLElement;
   bossDir: HTMLElement;
+  digDir: HTMLElement;
+  relics: HTMLElement;
   lastCoins?: number;
   bossKey?: string;
+  relicKey?: string;
 }
 
 let started = false; // the renderer and the world are made (the first time the game opens)
@@ -4074,6 +4120,7 @@ function newGame() {
       scene.remove(p.mesh);
       p.tex.dispose();
     }
+    for (const d of G.digs) dropDig(d);
   }
   const W = world;
   const tower = ([x, z]: Pt, up: Pt, outer: boolean, idx: number): Tower => ({
@@ -4154,6 +4201,12 @@ function newGame() {
     shops: [],
     lotSeq: 0,
     might: 1,
+    relics: RELICS.map(() => 0),
+    digs: [],
+    digNext: 0,
+    stormT: STORM_EVERY,
+    embers: [],
+    chests: [],
     posts: [],
     toastQ: [],
     toastT: 0,
@@ -4299,7 +4352,7 @@ function rebuildWalls(dt = 0) {
   G.wallsAnim = moving;
 }
 function setTowerWalls(t: Tower): void {
-  const max = WALL_TIERS[t.level - 1].hp;
+  const max = WALL_TIERS[t.level - 1].hp * sturdy(G.relics[RELIC.bone]);
   for (const s of G.segs)
     if (s.owner === t.idx) {
       s.tier = t.level;
@@ -4500,7 +4553,7 @@ function recruit() {
   } else celebrate(RECRUIT_PAD[0], RECRUIT_PAD[1], 1.2, false);
 }
 function castleMaxHp(): number {
-  return 5000 * (1 + 0.12 * G.towers.reduce((s, t) => s + (t.outer ? 0 : t.level), 0));
+  return 5000 * (1 + 0.12 * G.towers.reduce((s, t) => s + (t.outer ? 0 : t.level), 0)) * sturdy(G.relics[RELIC.bone]);
 }
 function weapon(forTower: boolean) {
   let t = G.tier;
@@ -5022,6 +5075,10 @@ function openLand(i: number): void {
     for (const t of G.towers) if (t.outer && t.built) addLot(t);
     refreshFrontier(); // outpost spots keep clear of the lots
   }
+  if (i === 1) {
+    G.digNext = G.t;
+    toast('Ride to an X and stay on it to dig.');
+  }
 }
 
 // ------------------------------------------------------------------ shops ----
@@ -5189,6 +5246,269 @@ function updateShops(dt: number): void {
       tl.taking = false;
     }
   }
+}
+
+// --------------------------------------------------------------- treasure ----
+// Once the second land is open a mark shows on the ground now and then, out towards the border (DIG_EVERY, DIG_MAX in
+// castle-defender-lands.ts). The king stands on it to dig: a chest comes up with a relic in it, or the next level of
+// one he has, and what the relic does starts at once. A dig left half done keeps most of what was dug.
+interface Dig {
+  x: number;
+  z: number;
+  dug: number; // seconds dug so far
+  mesh: BasicMesh;
+  tex: THREE.CanvasTexture;
+  shovel: THREE.Mesh;
+  key: string;
+  glint: number;
+  puff: number;
+}
+interface Ember {
+  x: number;
+  z: number;
+  dmg: number;
+}
+interface Chest {
+  o: THREE.Mesh;
+  t: number;
+}
+const DIG_ON = 1.8; // how close to the middle of the mark the king digs
+let digPlane: THREE.PlaneGeometry | null = null;
+function updateDigs(dt: number): void {
+  if (G.land >= 2) {
+    if (G.digs.length >= DIG_MAX || digsLeft(G.relics) <= G.digs.length)
+      G.digNext = Math.max(G.digNext, G.t + DIG_EVERY);
+    else if (G.t >= G.digNext) G.digNext = G.t + (addDig() ? DIG_EVERY : 5);
+  }
+  const k = G.king;
+  for (const d of G.digs.slice()) {
+    const digging = Math.hypot(k.x - d.x, k.z - d.z) < DIG_ON && !G.over;
+    // the shovel stands in the mark, and digs while the king is on it
+    d.shovel.rotation.x = digging ? -0.35 + 0.35 * Math.sin(d.dug * 14) : -0.25;
+    d.shovel.position.y = digging ? 0.15 * Math.abs(Math.sin(d.dug * 7)) : 0;
+    if (digging) {
+      d.dug += dt;
+      if ((d.puff -= dt) <= 0) {
+        d.puff = 0.3;
+        dust(d.x, d.z, 0.7, 3);
+        G.shake = Math.max(G.shake, 0.05);
+      }
+      if (d.dug >= DIG_SECONDS) {
+        digUp(d);
+        continue;
+      }
+    } else d.dug = Math.max(0, d.dug - dt * 0.25);
+    if ((d.glint -= dt) <= 0) {
+      d.glint = 1.3;
+      burst(d.x, 0.4, d.z, 2, '#fff2a0');
+    }
+    drawDig(d);
+  }
+  for (const c of G.chests.slice()) {
+    c.t += dt;
+    const up = easeOutBack(Math.min(1, c.t / 0.4)),
+      down = Math.max(0, (c.t - 2.6) / 0.5);
+    c.o.position.y = (-1.1 + 1.1 * up - 1.3 * down) * 1.3;
+    c.o.rotation.y += dt * 1.5;
+    if (c.t >= 3.1) {
+      scene.remove(c.o);
+      G.chests.splice(G.chests.indexOf(c), 1);
+    }
+  }
+}
+// a mark at `at`, or somewhere out towards the border; null when there is no room
+function addDig(at?: Pt): Dig | null {
+  const p = at || digSpot();
+  if (!p) return null;
+  const [x, z] = p,
+    tex = makePadTexture();
+  digPlane ||= new THREE.PlaneGeometry(4.2, 4.2);
+  const mesh = new THREE.Mesh(
+    digPlane,
+    new THREE.MeshBasicMaterial({ map: tex, transparent: true, depthWrite: false }),
+  );
+  mesh.rotation.set(-Math.PI / 2, 0, Math.PI / 4); // so the X reads as an X from where the camera looks
+  mesh.position.set(x, 0.07, z);
+  mesh.renderOrder = 2;
+  scene.add(mesh);
+  const shovel = new THREE.Mesh(geoFor(shovelGeo, 1), world.vmat);
+  shovel.position.set(x, 0, z);
+  shovel.rotation.order = 'YXZ';
+  shovel.rotation.y = Math.PI / 4;
+  shovel.scale.setScalar(1.3);
+  shovel.castShadow = true;
+  scene.add(shovel);
+  const d: Dig = { x, z, dug: 0, mesh, tex, shovel, key: '', glint: Math.random(), puff: 0 };
+  G.digs.push(d);
+  keepClear(x, z, 2.6);
+  drawDig(d);
+  return d;
+}
+function dropDig(d: Dig): void {
+  scene.remove(d.mesh, d.shovel);
+  d.mesh.material.dispose();
+  d.tex.dispose();
+}
+// somewhere in the land the outposts claimed, well away from home, with room around it
+function digSpot(): Pt | null {
+  const out = G.claims.slice(1),
+    min = Math.max(50, G.reach * 0.6);
+  for (let i = 0; i < 80 && out.length; i++) {
+    const c = out[Math.floor(Math.random() * out.length)],
+      a = Math.random() * Math.PI * 2,
+      r = c.r * Math.sqrt(Math.random());
+    const x = c.x + Math.cos(a) * r,
+      z = c.z + Math.sin(a) * r;
+    if (Math.hypot(x - HOME.x, z - HOME.z) >= min && digFree(x, z)) return [x, z];
+  }
+  return null;
+}
+function digFree(x: number, z: number): boolean {
+  if (borderDist(G.claims, x, z) > -4 || x < cliffMinX(z) + 3 || (Math.abs(x) < HX + 5 && Math.abs(z) < HZ + 5))
+    return false;
+  if (pushOutOfMesas(x, z, 2.5)[0] !== x) return false;
+  if (
+    world.terrain.roads.some((r) => pathDist(x, z, r.pts) < 3) ||
+    G.fronts.some((f) => f.open && pathDist(x, z, f.road) < 3)
+  )
+    return false;
+  if ((G.obs || []).some(([ox, oz, r]) => Math.hypot(ox - x, oz - z) < r + 2.2)) return false;
+  const away = (list: readonly { x: number; z: number }[], r: number) =>
+    !list.some((o) => Math.hypot(o.x - x, o.z - z) < r);
+  return (
+    away(G.towers, 5) &&
+    away(G.cannons, 5) &&
+    away(G.pads, 4.5) &&
+    away(G.shops, 7) &&
+    away(G.ruins, 6) &&
+    away(G.digs, 10) &&
+    away(
+      G.fronts.map((f) => f.camp),
+      9,
+    )
+  );
+}
+// the mark: loose earth with a red X on it, and a ring that fills as the king digs
+function drawDig(d: Dig): void {
+  const frac = Math.min(1, d.dug / DIG_SECONDS),
+    key = String(Math.floor(frac * 40));
+  if (key === d.key) return;
+  d.key = key;
+  const g = (d.tex.image as HTMLCanvasElement).getContext('2d')!;
+  g.clearRect(0, 0, 256, 256);
+  g.fillStyle = 'rgba(96,60,32,0.6)';
+  g.beginPath();
+  g.ellipse(128, 128, 88, 80, 0.3, 0, Math.PI * 2);
+  g.fill();
+  g.lineCap = 'round';
+  for (const [w, c] of [
+    [38, INK],
+    [24, '#e8322a'],
+  ] as const) {
+    g.lineWidth = w;
+    g.strokeStyle = c;
+    g.beginPath();
+    g.moveTo(82, 82);
+    g.lineTo(174, 174);
+    g.moveTo(174, 82);
+    g.lineTo(82, 174);
+    g.stroke();
+  }
+  g.lineWidth = 14;
+  g.strokeStyle = 'rgba(255,255,255,0.45)';
+  g.beginPath();
+  g.arc(128, 128, 112, 0, Math.PI * 2);
+  g.stroke();
+  if (frac > 0) {
+    g.strokeStyle = '#22d81c';
+    g.beginPath();
+    g.arc(128, 128, 112, -Math.PI / 2, -Math.PI / 2 + frac * Math.PI * 2);
+    g.stroke();
+  }
+  d.tex.needsUpdate = true;
+}
+const ROMAN = ['', '', ' II', ' III'];
+function digUp(d: Dig, i = pickRelic(G.relics, Math.random())): void {
+  G.digs.splice(G.digs.indexOf(d), 1);
+  dropDig(d);
+  unkeepClear(d.x, d.z);
+  dust(d.x, d.z, 1.4, 8);
+  if (i < 0 || G.relics[i] >= RELIC_MAX) return;
+  const R = RELICS[i],
+    lv = ++G.relics[i];
+  // the chest comes up just past the mark (up the screen from the king, so he doesn't hide it)
+  const cx = d.x - 1.6,
+    cz = d.z - 1.6,
+    o = new THREE.Mesh(geoFor(chestGeo, 1), world.vmat);
+  o.position.set(cx, -1.1, cz);
+  o.scale.setScalar(1.3);
+  o.castShadow = true;
+  scene.add(o);
+  G.dispose.push(o);
+  G.chests.push({ o, t: 0 });
+  celebrate(cx, cz, 1.6, true);
+  burst(cx, 1.6, cz, 18, R.colour);
+  bigText(R.name + ROMAN[lv], cx, 4.6, cz);
+  toast(`${R.name}${ROMAN[lv]}: ${R.what(lv)}!`);
+  if (i === RELIC.bone) setSturdy();
+  updateRelicHud();
+}
+// the Giant's Bone: walls and castle keep the same share of their hit points as they get more
+function setSturdy(): void {
+  const k = sturdy(G.relics[RELIC.bone]);
+  for (const s of G.segs) {
+    if (!s.tier) continue;
+    const max = WALL_TIERS[s.tier - 1].hp * k;
+    if (s.max > 0) s.hp *= max / s.max;
+    s.max = max;
+  }
+  const cs = G.castle,
+    max = castleMaxHp();
+  if (cs.max > 0) cs.hp *= max / cs.max;
+  cs.max = max;
+}
+// the Storm Horn's lightning and the Ember Crown's flames
+function updateRelics(dt: number): void {
+  const storm = G.relics[RELIC.storm];
+  if (storm && (G.stormT -= dt) <= 0) {
+    G.stormT = STORM_EVERY;
+    const hit = G.enemies
+      .filter((e) => e.hp > 0 && borderDist(G.claims, e.x, e.z) < 12)
+      .sort((a, b) => b.hp - a.hp)
+      .slice(0, storm);
+    for (const e of hit) {
+      lightning(e.x, e.z);
+      damageEnemy(e, weapon(false).dmg * STORM_HIT);
+    }
+  }
+  if (G.embers.length) {
+    // the ones these flames bring down burst next frame, so a crowd goes up one after the other
+    const now = G.embers.splice(0, 40);
+    for (const b of now) {
+      if (world.fx.length < 160) boom(b.x, b.z);
+      for (const o of enemiesNear(b.x, b.z, EMBER_R, near)) damageEnemy(o, b.dmg);
+    }
+  }
+}
+function lightning(x: number, z: number): void {
+  const m = new THREE.Mesh(
+    world.pillarGeo,
+    new THREE.MeshBasicMaterial({
+      map: world.pillarTex,
+      color: '#cfeaff',
+      transparent: true,
+      opacity: 0.9,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false,
+      side: THREE.DoubleSide,
+    }),
+  );
+  m.position.set(x, 0, z);
+  scene.add(m);
+  world.fx.push({ o: m, t: 0, dur: 0.35, kind: 'pillar', s0: 0.5, h: 30 });
+  shockwave(x, z, 2.4, '#9fd8ff');
+  burst(x, 1, z, 5, '#cfeeff');
+  G.shake = Math.max(G.shake, 0.08);
 }
 
 // a new game: only the first roads, every chunk redecorated, the hand-placed decor back
@@ -5731,13 +6051,14 @@ const near: Enemy[] = [];
 // battered down first; the king, his archers and the gold boys are never targeted.
 function updateEnemies(dt: number): void {
   const wallsUp = G.wallsUp,
-    cs = G.castle;
+    cs = G.castle,
+    slow = chill(G.relics[RELIC.frost]); // the Frost Heart
   for (const e of G.enemies) {
     if (e.hp <= 0) continue;
-    e.bob += dt * (e.kind === 'knight' ? 9 : e.kind === 'boss' ? 3.5 : 6);
+    e.bob += dt * slow * (e.kind === 'knight' ? 9 : e.kind === 'boss' ? 3.5 : 6);
     e.lunge = Math.max(0, e.lunge - dt * 3);
     e.hitFlash = Math.max(0, e.hitFlash - dt * 6);
-    e.atk -= dt;
+    e.atk -= dt * slow;
     if (e.state === 'wall') {
       if (!e.seg!.alive) {
         e.state = 'path';
@@ -5789,7 +6110,7 @@ function updateEnemies(dt: number): void {
       }
     }
     e.yaw += angleDiff(Math.atan2(dx, dz), e.yaw) * Math.min(1, dt * 8);
-    const step = Math.min(d, e.speed * dt);
+    const step = Math.min(d, e.speed * slow * dt);
     const nx = e.x + (dx / d) * step,
       nz = e.z + (dz / d) * step;
     if (wallsUp && !inside(e.x, e.z) && inside(nx, nz)) {
@@ -5872,12 +6193,15 @@ function hitCastle(dmg: number, x: number, z: number): void {
     gameOver();
   }
 }
-function damageEnemy(e: Enemy, dmg: number): void {
+// a hit on an enemy: everything of the king's hits harder with the shops (G.might); a raw hit (tests) doesn't
+function damageEnemy(e: Enemy, dmg: number, raw = false): void {
   if (e.hp <= 0) return;
-  e.hp -= dmg * G.might;
+  e.hp -= raw ? dmg : dmg * G.might;
   e.hitFlash = 1;
   if (e.hp <= 0) {
     G.kills++;
+    const ember = G.relics[RELIC.ember];
+    if (ember) G.embers.push({ x: e.x, z: e.z, dmg: weapon(false).dmg * EMBER * ember });
     if (e.kind === 'boss') return bossDown(e);
     puff(e.x, 0.8 * e.scale, e.z, '#ffffff', e.kind === 'knight' ? 6 : e.kind === 'brute' ? 10 : 16);
     dropCoins(e.x, e.z, e.value);
@@ -6248,9 +6572,10 @@ function fire(sx: number, sy: number, sz: number, w: Weapon, target: Enemy): voi
 function updateShooting(dt: number): void {
   const k = G.king,
     w = weapon(false),
-    melee = w.kind === 'melee';
+    melee = w.kind === 'melee',
+    hdt = dt * haste(G.relics[RELIC.drum]); // the War Drum: everything reloads faster
   // king
-  k.cd -= dt;
+  k.cd -= hdt;
   if (k.cd <= 0) {
     const e = nearestEnemy(k.x, k.z, melee ? w.range + 1.2 : w.range);
     if (e) {
@@ -6261,7 +6586,7 @@ function updateShooting(dt: number): void {
   }
   // troop
   for (const f of G.followers) {
-    f.cd -= dt;
+    f.cd -= hdt;
     f.atkT = Math.max(0, f.atkT - dt);
     if (f.cd > 0) continue;
     const e = nearestEnemy(f.x, f.z, w.range);
@@ -6281,7 +6606,7 @@ function updateShooting(dt: number): void {
       dmg = tw.dmg * (1 + 0.3 * (t.level - 1));
     while (t.cd.length < lv.archers) t.cd.push(Math.random());
     for (let i = 0; i < lv.archers; i++) {
-      t.cd[i] -= dt;
+      t.cd[i] -= hdt;
       if (t.cd[i] > 0) continue;
       const e = nearestEnemy(t.x, t.z, range);
       if (e) {
@@ -6295,7 +6620,7 @@ function updateShooting(dt: number): void {
   // cannons
   for (const c of G.cannons) {
     if (!c.built) continue;
-    c.cd -= dt;
+    c.cd -= hdt;
     const e = nearestEnemy(c.x, c.z, 18 + c.level);
     if (e) c.yaw += angleDiff(Math.atan2(e.x - c.x, e.z - c.z), c.yaw) * Math.min(1, dt * 6);
     if (c.cd <= 0 && e) {
@@ -7197,6 +7522,8 @@ function updateHud(force?: boolean): void {
   ui.coins.classList.toggle('spend', G.spentFlash > 0);
   ui.coins.classList.toggle('gain', G.spentFlash <= 0 && G.gainFlash > 0);
   updateBossHud();
+  updateDigHud();
+  updateRelicHud();
 }
 // The boss at the top of the screen: the warning with the time left before it comes, then its name and health. While
 // it (or the camp it is coming from) is off the screen, a marker at the edge points the way.
@@ -7222,7 +7549,10 @@ function updateBossHud(): void {
       ui.bossWhen.textContent = `from ${placeName(theme)} in ${clock(Math.max(0, Math.ceil(G.boss.next - G.t)))}`;
     }
   }
-  const at = e || (f && f.camp);
+  pointTo(ui.bossDir, e || (f && f.camp));
+}
+// a marker at the edge of the screen pointing the way to `at` while it is off the screen
+function pointTo(el: HTMLElement, at: XZ | null | false): void {
   let off = false;
   if (at) {
     const v = tmpV.set(at.x, 2, at.z).project(camera);
@@ -7236,11 +7566,47 @@ function updateBossHud(): void {
         k = Math.min((w / 2 - 46) / Math.abs(dx || 1e-6), (h / 2 - 46) / Math.abs(dy || 1e-6));
       const x = w / 2 + dx * k,
         y = Math.max(h / 2 + dy * k, 150);
-      ui.bossDir.style.transform = `translate(${x.toFixed(1)}px, ${y.toFixed(1)}px)`;
-      ui.bossDir.style.setProperty('--a', Math.atan2(dy, dx).toFixed(3) + 'rad');
+      el.style.transform = `translate(${x.toFixed(1)}px, ${y.toFixed(1)}px)`;
+      el.style.setProperty('--a', Math.atan2(dy, dx).toFixed(3) + 'rad');
     }
   }
-  if (ui.bossDir.hidden === off) ui.bossDir.hidden = !off;
+  if (el.hidden === off) el.hidden = !off;
+}
+// the relics found, under the coins, and the way to the nearest mark to dig while it is off the screen
+const RELIC_ICONS = [
+  // a war drum and its sticks
+  '<path d="M26 22l22 16M74 22L52 38" stroke-width="8"/><path d="M20 42v26c0 7 13 12 30 12s30-5 30-12V42"/><ellipse cx="50" cy="42" rx="30" ry="11"/>',
+  // a frozen heart
+  '<path d="M50 84C20 64 12 46 22 33c10-12 24-6 28 4 4-10 18-16 28-4 10 13 2 31-28 51z"/><path d="M50 40v26M39 47l22 12M61 47L39 59" stroke-width="5"/>',
+  // a bone
+  '<path d="M28 18a10 10 0 0 0-10 16 10 10 0 0 0 14 6l28 28a10 10 0 0 0 6 14 10 10 0 0 0 16-10 10 10 0 0 0-6-16L40 28a10 10 0 0 0-12-10z"/>',
+  // a lightning bolt
+  '<path d="M58 8L24 56h22l-8 36 38-50H54z"/>',
+  // a crown of flames
+  '<path d="M18 76l-4-40 18 14 6-30 12 22 12-22 6 30 18-14-4 40z"/>',
+];
+function updateRelicHud(): void {
+  const key = G.relics.join('');
+  if (key === ui.relicKey) return;
+  ui.relicKey = key;
+  ui.relics.innerHTML = G.relics
+    .map((lv, i) =>
+      lv
+        ? `<span class="cd-relic" role="img" aria-label="${RELICS[i].name}${ROMAN[lv]}"><svg viewBox="0 0 100 100" ` +
+          `fill="${RELICS[i].colour}" stroke="${INK}" stroke-width="6" stroke-linejoin="round" ` +
+          `stroke-linecap="round" aria-hidden="true">${RELIC_ICONS[i]}</svg>` +
+          (lv > 1 ? `<b class="outlined">${lv}</b>` : '') +
+          '</span>'
+        : '',
+    )
+    .join('');
+}
+function updateDigHud(): void {
+  const k = G.king;
+  let best: Dig | null = null;
+  for (const d of G.over ? [] : G.digs)
+    if (!best || Math.hypot(d.x - k.x, d.z - k.z) < Math.hypot(best.x - k.x, best.z - k.z)) best = d;
+  pointTo(ui.digDir, best);
 }
 // messages at the top of the screen, one after the other
 function toast(msg: string): void {
@@ -7406,6 +7772,11 @@ const SavedWorld = Schema.Struct({
       }),
     ),
   ),
+  // the relics dug up (a level for each), the marks waiting to be dug (and how long they have been dug) and when the
+  // next one shows; saves from before the treasure have none
+  relics: Schema.optionalKey(Schema.Array(UpTo(RELIC_MAX))),
+  digs: Schema.optionalKey(Schema.Array(Schema.Struct({ at: SavedPt, dug: Num }))),
+  digNext: Schema.optionalKey(Num),
   paid: Schema.Record(Schema.String, Num), // coins paid into a pad so far, by its id
   spawnT: Num,
   nextPath: Count,
@@ -7445,6 +7816,9 @@ const SavedWorld = Schema.Struct({
       w.enemies.filter((e) => e.kind === 'boss').length <= 1 &&
       new Set((w.shops ?? []).map((o) => o.idx)).size === (w.shops ?? []).length &&
       (w.shops ?? []).every((o) => o.idx < (w.lotSeq ?? 0) && o.lot > 0 && o.till >= 0) &&
+      (w.relics ?? []).length <= RELICS.length &&
+      (w.digs ?? []).length <= DIG_MAX &&
+      (w.digs ?? []).every((o) => o.dug >= 0) &&
       w.enemies.every(
         (e) =>
           e.route < w.routes.length &&
@@ -7538,6 +7912,9 @@ function snapshot(): SavedWorld {
       lot: o.lot,
       till: o.till.value,
     })),
+    relics: G.relics.slice(),
+    digs: G.digs.map((o) => ({ at: [o.x, o.z], dug: o.dug })),
+    digNext: G.digNext,
     paid: Object.fromEntries(G.pads.filter((p) => p.paid > 0 && !spots.includes(p.site!)).map((p) => [p.id, p.paid])),
     spawnT: G.spawnT,
     nextPath: G.nextPath,
@@ -7576,6 +7953,8 @@ function snapshot(): SavedWorld {
 function restoreGame(w: SavedWorld): void {
   newGame();
   const W = world;
+  // the relics first: the Giant's Bone sets the walls' and the castle's hit points
+  G.relics = RELICS.map((_, i) => w.relics?.[i] ?? 0);
   // the spots for outposts on the first border go: they are worked out again at the end
   for (const t of G.towers.filter((o) => o.outer)) dropSite(t);
   G.t = w.t;
@@ -7618,7 +7997,7 @@ function restoreGame(w: SavedWorld): void {
     for (const s of G.segs)
       if (s.owner === i) {
         s.tier = lv;
-        s.max = WALL_TIERS[lv - 1].hp;
+        s.max = WALL_TIERS[lv - 1].hp * sturdy(G.relics[RELIC.bone]);
       }
   }
   for (const [i, s] of G.segs.entries()) {
@@ -7739,6 +8118,8 @@ function restoreGame(w: SavedWorld): void {
     sh.till.value = Math.min(o.till, sh.lv ? tillCap(sh) : 0);
   }
   setMight();
+  for (const o of w.digs ?? []) addDig(o.at)!.dug = Math.min(o.dug, DIG_SECONDS * 0.9);
+  G.digNext = w.digNext ?? G.t + DIG_EVERY;
   refreshPosts();
   G.castle.max = castleMaxHp();
   G.castle.hp = Math.min(w.castle, G.castle.max);
@@ -7943,11 +8324,13 @@ function step(dt: number): void {
   rebuildGrid();
   updateShooting(dt);
   updateProjectiles(dt);
+  updateRelics(dt);
   // remove the dead
   G.enemies = G.enemies.filter((e) => e.hp > 0);
   updateCoins(dt);
   updateGold(dt);
   updateShops(dt);
+  updateDigs(dt);
   updatePads(dt);
   updateLands();
   for (const s of G.segs) {
@@ -7999,6 +8382,8 @@ function setup(): void {
     bossWhen: document.getElementById('cd-boss-when')!,
     bossFill: document.getElementById('cd-boss-fill')!,
     bossDir: document.getElementById('cd-boss-dir')!,
+    digDir: document.getElementById('cd-dig-dir')!,
+    relics: document.getElementById('cd-relics')!,
   };
   initRenderer();
   buildWorld();
@@ -8171,6 +8556,23 @@ function debug() {
         lot: s.lot,
         till: { x: s.till.x, z: s.till.z, value: s.till.value, cap: s.lv ? tillCap(s) : 0 },
       })),
+    // the marks waiting to be dug, and a new one now (at a spot, or wherever there is room)
+    digs: () => G.digs.map((o) => ({ x: o.x, z: o.z, dug: o.dug })),
+    dig: (at?: Pt) => !!addDig(at),
+    // dig up the next relic (or the one at index `i`) without riding out to a mark
+    relic(i?: number) {
+      digUp(addDig([G.king.x, G.king.z])!, i);
+    },
+    setRelics(levels: number[]) {
+      G.relics = levels.slice();
+      setSturdy();
+      updateRelicHud();
+    },
+    // a hit on an enemy, as a weapon gives it (or a raw one, as it comes), and how hard the weapon hits
+    hurt: damageEnemy,
+    weaponDmg: () => weapon(false).dmg,
+    RELICS: RELICS.map((r) => r.name),
+    DIG_SECONDS,
     // keep the lands shut (or open them again): the play-through's control run
     lockLands(on = true) {
       G.lockLands = on;

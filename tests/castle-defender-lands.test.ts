@@ -80,6 +80,51 @@ describe('Shops', () => {
   });
 });
 
+describe('Relics', () => {
+  const none = L.RELICS.map(() => 0);
+  test('the first digs bring each relic once, whatever the luck', () => {
+    for (const r of [0, 0.3, 0.99]) {
+      const have = none.slice();
+      for (let n = 0; n < L.RELICS.length; n++) {
+        const i = L.pickRelic(have, r);
+        expect(have[i]).toBe(0);
+        have[i]++;
+      }
+      expect(have).toEqual(L.RELICS.map(() => 1));
+    }
+  });
+  test('then they level up, to RELIC_MAX, and then there are none left', () => {
+    const have = L.RELICS.map(() => 1);
+    let digs = 0;
+    for (let i = L.pickRelic(have, 0.5); i >= 0; i = L.pickRelic(have, (digs * 0.37) % 1)) {
+      expect(have[i]).toBeLessThan(L.RELIC_MAX);
+      have[i]++;
+      digs++;
+    }
+    expect(digs).toBe(L.RELICS.length * (L.RELIC_MAX - 1));
+    expect(have).toEqual(L.RELICS.map(() => L.RELIC_MAX));
+  });
+  test('there are as many digs as relic levels', () => {
+    expect(L.digsLeft(none)).toBe(L.RELICS.length * L.RELIC_MAX);
+    expect(L.digsLeft([3, 1, 0, 2, 3])).toBe(0 + 2 + 3 + 1 + 0);
+    expect(L.digsLeft([])).toBe(L.RELICS.length * L.RELIC_MAX);
+  });
+  test('each level does more', () => {
+    for (let lv = 1; lv <= L.RELIC_MAX; lv++) {
+      expect(L.haste(lv)).toBeGreaterThan(L.haste(lv - 1));
+      expect(L.chill(lv)).toBeLessThan(L.chill(lv - 1));
+      expect(L.chill(lv)).toBeGreaterThan(0.5);
+      expect(L.sturdy(lv)).toBeGreaterThan(L.sturdy(lv - 1));
+    }
+    expect([L.haste(0), L.chill(0), L.sturdy(0)]).toEqual([1, 1, 1]);
+  });
+  test('every relic says what it does at every level', () => {
+    for (const r of L.RELICS) for (let lv = 1; lv <= L.RELIC_MAX; lv++) expect(r.what(lv).length).toBeGreaterThan(10);
+    expect(L.RELICS[L.RELIC.storm].what(1)).toContain('an enemy');
+    expect(L.RELICS[L.RELIC.storm].what(3)).toContain('3 enemies');
+  });
+});
+
 describe('The nearest point of a road', () => {
   const road: Pt[] = [
     [0, 0],

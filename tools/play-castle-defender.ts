@@ -6,7 +6,8 @@
 //   strategy: balanced (buys the cheapest pad it can afford, outposts a little later), turtle (outposts last),
 //             expand (outposts first)
 //   --check: fail unless the castle holds 9 minutes and the border has been pushed out by 5 outposts (balanced)
-//   --no-lands: the lands past the first border never open (no shops...), to compare with the game before them
+//   --no-lands: the lands past the first border never open (no shops, no treasure...), to compare with the game
+//               before them
 // It serves the site itself, like the browser tests, and needs Chrome or Chromium installed.
 import { openPage, startSite } from '../tests/support/browser';
 
@@ -102,7 +103,15 @@ function bot(strategy: string): void {
     let tx = 24,
       tz = 0;
     B.goal = 'wait';
-    if (want) {
+    // a mark to dig comes first: the nearest one, ridden to and stood on till the chest comes up
+    const dig = (d.digs ? d.digs() : []).sort(
+      (a, b) => Math.hypot(a.x - k.x, a.z - k.z) - Math.hypot(b.x - k.x, b.z - k.z),
+    )[0];
+    if (dig) {
+      tx = dig.x;
+      tz = dig.z;
+      B.goal = 'dig';
+    } else if (want) {
       tx = want.x;
       tz = want.z;
       B.goal = want.id;
@@ -265,6 +274,7 @@ function minute() {
     bosses: `${G.boss.slain}/${G.boss.came}`, // beaten / come
     land: G.land ?? 0,
     shops: (G.shops ?? []).map((s) => s.lv).join(''),
+    relics: (G.relics ?? []).join(''),
     camps: d
       .fronts()
       .filter((f) => f.open)
