@@ -243,11 +243,17 @@ theirs are tougher, standing out past the border, and sending their groups less 
 
 **The threat level.** The enemy's strength follows a threat level, `threatLevel(t)` in
 `castle-defender-lands.ts`: hit points grow 1.1 times and blows 1.06 times a level, and groups get bigger and come
-sooner. Up to 12 minutes it is the clock's, a level every 13 seconds, which makes the enemy about 55% tougher every
-minute; after that it keeps growing, ever more slowly (`EASE_FROM`, `EASE_K`). The game from before the lands fell by
-12 minutes whatever it had built, so easing off after that can't make that game last longer, and only what the
+sooner. Up to 19 minutes it is the clock's, a level every 13 seconds, which makes the enemy about 55% tougher every
+minute; after that it keeps growing, ever more slowly (`EASE_FROM`, `EASE_K`). The game from before the lands falls
+at about 19:40 whatever it has built (19:45 and 19:39 on main with bazookas and the outposts as centers, both times to
+the boss that comes at 18 minutes), so easing off after that can't make that game last longer, and only what the
 lands bring can keep the castle standing into the easier stretch. `--no-lands` checks it: with the lands shut the
-play-through falls when the game before them did.
+play-through fell at 19:58.
+
+With the shops the bot held 22:56, 22:48 and 22:46 (a fourth fell at 4:48, before any land had opened, so in the game as it was
+before them). The market roads open at about 6:15; the
+bot buys 9 to 12 shops by the end, most of them to level 2 to 5, which beats the boss at 18 minutes, and falls to the
+one at 21. It still ends with 2 to 8 million coins it has nothing to spend on.
 
 ## Checks
 
