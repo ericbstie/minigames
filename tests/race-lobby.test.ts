@@ -5,12 +5,17 @@ import { describe, expect, test } from 'bun:test';
 import { Effect, Layer, Logger } from 'effect';
 import { TestClock } from 'effect/testing';
 import type { ServerMessage, ServerMessageOf } from '../public/js/bike-race-protocol';
-import { type Conn, type Player, RACE_LIMIT, RaceLobby } from '../server/race';
+import { type Conn, MAX_RIDERS, type Player, RACE_LIMIT, RaceLobby } from '../server/race';
+
+let devices = 0;
 
 class TestConn implements Conn {
   player: Player | null = null;
   closed = false;
   readonly inbox: ServerMessage[] = [];
+
+  // each connection on a device of its own, unless a test says otherwise
+  constructor(readonly device = `device ${++devices}`) {}
 
   send(msg: ServerMessage) {
     return Effect.sync(() => void this.inbox.push(msg));
@@ -226,13 +231,92 @@ describe('messages', () => {
         const { a, b } = yield* twoInARoom(lobby);
         yield* lobby.receive(a, { t: 'start' });
         yield* seconds(3);
-        for (const p of [[], [1, 2, 3, 4, 5, 6, 7, 8, 9], [1, Infinity], 'x'])
+        // a pose is six numbers: no fewer (the others would read NaN) and no more
+        for (const p of [[], [1, 2], [1, 2, 3, 4, 5], [1, 2, 3, 4, 5, 6, 7], [1, 2, 3, 4, 5, Infinity], 'x'])
           yield* lobby.receive(a, { t: 'state', p });
         expect(b.take('state')).toEqual([]);
-        yield* lobby.receive(a, { t: 'state', p: [1, 2], c: 'later' });
-        expect(b.take('state')).toEqual([{ t: 'state', id: a.player!.id, p: [1, 2] }]);
+        yield* lobby.receive(a, { t: 'state', p: [1, 2, 3, 4, 5, 6], c: 'later' });
+        expect(b.take('state')).toEqual([{ t: 'state', id: a.player!.id, p: [1, 2, 3, 4, 5, 6] }]);
         for (const time of [0, -1, RACE_LIMIT + 60, 'fast']) yield* lobby.receive(a, { t: 'finish', time });
         expect(b.take('finished')).toEqual([]);
+      }),
+    ));
+});
+
+describe('what one rider or device can do', () => {
+  test('a name loses control characters and text-direction overrides', () =>
+    run((lobby) =>
+      Effect.gen(function* () {
+        const c = new TestConn();
+        // C0, DEL, C1 (U+009B starts a terminal escape), a bidi override and isolate, a line separator
+        yield* lobby.receive(c, { t: 'hello', name: 'A\u001b[31mn\u009b2Jn\u202eA\u2066\u2028x\u200f' });
+        yield* lobby.receive(c, { t: 'create', level: 'clover-1' });
+        expect(c.room()?.players[0]?.name).toBe('A[31mn2JnAx');
+      }),
+    ));
+
+  test('a room needs a track the games know', () =>
+    run((lobby) =>
+      Effect.gen(function* () {
+        const c = new TestConn();
+        yield* lobby.receive(c, { t: 'hello', name: 'Cy' });
+        for (const level of ['clover-99', 'nowhere-1', 'clover-', 'CLOVER-1']) {
+          yield* lobby.receive(c, { t: 'create', level });
+          expect(c.take('error')).toEqual([{ t: 'error', msg: 'Pick a track first.' }]);
+        }
+        expect(lobby.rooms.size).toBe(0);
+        yield* lobby.receive(c, { t: 'create', level: 'moon-6' });
+        expect(c.room()?.level).toBe('moon-6');
+        // and the host can only change it to another real one
+        yield* lobby.receive(c, { t: 'level', level: 'moon-7' });
+        yield* lobby.receive(c, { t: 'level', level: 'ember-2' });
+        expect(c.take('room').map((m) => m.level)).toEqual(['ember-2']);
+      }),
+    ));
+
+  test('one device keeps 16 riders at most, counting the ones keeping their place', () =>
+    run((lobby) =>
+      Effect.gen(function* () {
+        const conns = Array.from({ length: 16 }, () => new TestConn('laptop'));
+        for (const c of conns) yield* lobby.receive(c, { t: 'hello', name: 'Me' });
+        expect(conns.every((c) => c.take('welcome').length === 1)).toBe(true);
+        // the 17th is told and closed
+        const extra = new TestConn('laptop');
+        yield* lobby.receive(extra, { t: 'hello', name: 'Me' });
+        expect(extra.take('error')).toEqual([
+          { t: 'error', msg: 'Too many riders from this device. Try again in a minute.' },
+        ]);
+        expect(extra.closed).toBe(true);
+        expect(extra.player).toBeNull();
+        // another device is fine
+        const phone = new TestConn('phone');
+        yield* lobby.receive(phone, { t: 'hello', name: 'Pip' });
+        expect(phone.take('welcome')).toHaveLength(1);
+        // a rider who drops out keeps their place (and the count) for 45 s
+        yield* lobby.dropped(conns[0]!);
+        const again = new TestConn('laptop');
+        yield* lobby.receive(again, { t: 'hello', name: 'Me' });
+        expect(again.closed).toBe(true);
+        // but coming back with the key is the same rider, not another one
+        const back = new TestConn('laptop');
+        yield* lobby.receive(back, { t: 'hello', name: 'Me', key: conns[0]!.player!.key });
+        expect(back.take('welcome')).toMatchObject([{ resumed: true }]);
+        yield* lobby.dropped(back);
+        yield* seconds(45);
+        const later = new TestConn('laptop');
+        yield* lobby.receive(later, { t: 'hello', name: 'Me' });
+        expect(later.take('welcome')).toHaveLength(1);
+      }),
+    ));
+
+  test(`the server keeps ${MAX_RIDERS} riders at most`, () =>
+    run((lobby) =>
+      Effect.gen(function* () {
+        for (let i = 0; i < MAX_RIDERS; i++) yield* lobby.receive(new TestConn(), { t: 'hello', name: 'R' });
+        const extra = new TestConn();
+        yield* lobby.receive(extra, { t: 'hello', name: 'R' });
+        expect(extra.take('error')).toEqual([{ t: 'error', msg: 'This race server is full. Try again in a minute.' }]);
+        expect(extra.closed).toBe(true);
       }),
     ));
 });

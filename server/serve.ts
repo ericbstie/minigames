@@ -38,7 +38,7 @@ import {
 } from 'effect';
 import index from '../public/index.html';
 import type { ServerMessage } from '../public/js/bike-race-protocol';
-import { type Conn, type Player, RaceLobby, RaceSettings, type RaceTimes } from './race';
+import { type Conn, type Player, RaceLobby, type RaceLimits, RaceSettings, type RaceTimes } from './race';
 
 const ROOT = join(import.meta.dir, '..');
 const CERT_DIR = join(ROOT, '.cert');
@@ -52,7 +52,8 @@ const MAX_BODY = 64 * 1024;
 const MAX_MESSAGE = 16 * 1024; // one race message
 const MAX_BUFFER = 512 * 1024; // unsent bytes before a connection counts as stuck and is dropped
 const MAX_PER_SECOND = 90; // race messages a connection may send each second (poses go 20 times a second)
-const MAX_CONNECTIONS = 300;
+const MAX_COMMANDS = 20; // of those, the ones that aren't poses (a hello or a list costs the server far more)
+const MAX_CONNECTIONS = 300; // and settings.perDevice from one device (RaceSettings in server/race.ts)
 const MAX_POSTED = 60; // messages in one POST
 
 export interface ServerOptions {
@@ -91,6 +92,27 @@ export const ArrayLog = (lines: string[]) =>
 
 // ---------- connections ----------
 
+/**
+ * The device an address belongs to, for the limits per device: an IPv4 address as it is, and an IPv6 address by its
+ * first 64 bits, as a device picks the rest of its address itself (and can pick a new one whenever it likes).
+ */
+export function deviceOf(address: string): string {
+  const v4 = /^(?:::ffff:)?(\d{1,3}(?:\.\d{1,3}){3})$/i.exec(address);
+  if (v4) return v4[1]!;
+  if (!address.includes(':')) return address;
+  const [head = '', tail] = address.toLowerCase().split('%')[0]!.split('::');
+  const left = head ? head.split(':') : [];
+  const right = tail ? tail.split(':') : [];
+  const groups =
+    tail === undefined ? left : [...left, ...Array(Math.max(0, 8 - left.length - right.length)).fill('0'), ...right];
+  return (
+    groups
+      .slice(0, 4)
+      .map((g) => g.replace(/^0+(?=.)/, ''))
+      .join(':') + '::/64'
+  );
+}
+
 // A race connection: a WebSocket, or an event stream with POSTs. Both carry the same JSON messages.
 abstract class RaceConn implements Conn {
   player: Player | null = null;
@@ -98,17 +120,25 @@ abstract class RaceConn implements Conn {
   lastIn = 0; // ms, by Effect's clock
   private second = 0;
   private count = 0;
+  private commands = 0;
 
-  /** Notes a message in, and says whether the connection is still within its messages a second */
-  readonly allow = Effect.map(Clock.currentTimeMillis, (ms) => {
-    const second = Math.floor(ms / 1000);
-    if (second !== this.second) {
-      this.second = second;
-      this.count = 0;
-    }
-    this.lastIn = ms;
-    return ++this.count <= MAX_PER_SECOND;
-  });
+  constructor(readonly device: string) {}
+
+  /**
+   * Notes a message in (a pose, or anything else), and says whether the connection is still within its messages a
+   * second. Everything counts, even a message that turns out not to be one.
+   */
+  allow(pose: boolean): Effect.Effect<boolean> {
+    return Effect.map(Clock.currentTimeMillis, (ms) => {
+      const second = Math.floor(ms / 1000);
+      if (second !== this.second) {
+        this.second = second;
+        this.count = this.commands = 0;
+      }
+      this.lastIn = ms;
+      return ++this.count <= MAX_PER_SECOND && (pose || ++this.commands <= MAX_COMMANDS);
+    });
+  }
 
   readonly heard = Effect.map(Clock.currentTimeMillis, (ms) => void (this.lastIn = ms));
 
@@ -117,12 +147,13 @@ abstract class RaceConn implements Conn {
 }
 
 interface SocketData {
+  device: string;
   conn: SocketConn | null;
 }
 
 class SocketConn extends RaceConn {
   constructor(private readonly ws: Bun.ServerWebSocket<SocketData>) {
-    super();
+    super(ws.data.device);
   }
 
   override send(msg: ServerMessage): Effect.Effect<void> {
@@ -147,8 +178,11 @@ class StreamConn extends RaceConn {
   waiting = 0; // bytes in the outbox
   onClose: Effect.Effect<void> = Effect.void;
 
-  constructor(private readonly outbox: Queue.Queue<string, Cause.Done>) {
-    super();
+  constructor(
+    device: string,
+    private readonly outbox: Queue.Queue<string, Cause.Done>,
+  ) {
+    super(device);
   }
 
   raw(text: string): Effect.Effect<void> {
@@ -208,6 +242,30 @@ const sameOrigin = (req: Request): boolean => {
   }
 };
 
+/**
+ * A race request is for this server, not for another site's name that a DNS rebinding attack has pointed at it (a
+ * page from that site would pass the Origin check, as its Origin and Host are both the attacker's name). Public
+ * names are refused: only an IP address, localhost and the names under it, a name that only means something on a
+ * local network (one word, or under .local, .lan, .home.arpa or .internal), or the HOST the server listens on.
+ */
+export const localHost = (req: Request, listening: string): boolean => {
+  const host = req.headers.get('host');
+  if (!host) return false;
+  let name: string;
+  try {
+    name = new URL(`http://${host}`).hostname.toLowerCase();
+  } catch {
+    return false;
+  }
+  return (
+    name === listening.toLowerCase() ||
+    name.startsWith('[') ||
+    /^\d{1,3}(\.\d{1,3}){3}$/.test(name) ||
+    !name.includes('.') ||
+    /(^|\.)(localhost|local|lan|home\.arpa|internal)$/.test(name)
+  );
+};
+
 const parseJson = Schema.decodeUnknownOption(Schema.fromJsonString(Schema.Unknown));
 // A POST carries one message or a list of them
 const parsePosted = Schema.decodeUnknownOption(
@@ -221,7 +279,10 @@ const text = (status: number, body = '', headers: Record<string, string> = {}) =
 
 const makeServer = (opts: ServerOptions) =>
   Effect.gen(function* () {
+    const port = opts.port ?? 8000;
+    const hostname = opts.hostname ?? '127.0.0.1';
     const lobby = yield* RaceLobby;
+    const { perDevice } = yield* RaceSettings;
     // Bun calls back outside any fiber; these run effects with the services the server was built with. A fiber runs
     // straight away as far as it can, so messages from one connection reach the lobby in the order they came.
     const context = yield* Effect.context<never>();
@@ -229,28 +290,47 @@ const makeServer = (opts: ServerOptions) =>
     const runPromise = Effect.runPromiseWith(context);
     const conns = new Set<RaceConn>();
     const streams = new Map<string, StreamConn>();
+    const perDeviceOpen = new Map<string, number>(); // connections open from each device
 
-    // A message counts towards the connection's limit once it is at least an object
+    // Whatever a connection sends counts towards its limit, a message or not; a message that fits goes to the lobby
     const message = (conn: RaceConn, msg: unknown) =>
-      Predicate.isObject(msg)
-        ? Effect.flatMap(conn.allow, (ok) => (ok ? lobby.receive(conn, msg) : Effect.void))
-        : Effect.void;
+      Effect.flatMap(conn.allow(Predicate.isObject(msg) && msg.t === 'state'), (ok) =>
+        ok && Predicate.isObject(msg) ? lobby.receive(conn, msg) : Effect.void,
+      );
+
+    const opened = (conn: RaceConn) => {
+      conns.add(conn);
+      perDeviceOpen.set(conn.device, (perDeviceOpen.get(conn.device) ?? 0) + 1);
+    };
 
     const gone = (conn: RaceConn) =>
       Effect.suspend(() => {
-        conns.delete(conn);
+        if (conns.delete(conn)) {
+          const n = (perDeviceOpen.get(conn.device) ?? 1) - 1;
+          if (n > 0) perDeviceOpen.set(conn.device, n);
+          else perDeviceOpen.delete(conn.device);
+        }
         return lobby.dropped(conn);
       });
 
-    const openStream = (req: Request) =>
+    // Why a new race connection from this request is refused, if it is
+    const refusal = (req: Request, device: string): Response | null => {
+      if (!sameOrigin(req)) return text(403, 'Wrong origin\n');
+      if (!localHost(req, hostname)) return text(403, 'Unknown host\n');
+      if (conns.size >= MAX_CONNECTIONS) return text(503, 'Too many riders\n');
+      if ((perDeviceOpen.get(device) ?? 0) >= perDevice) return text(429, 'Too many connections from this device\n');
+      return null;
+    };
+
+    const openStream = (req: Request, device: string) =>
       Effect.gen(function* () {
-        const conn = new StreamConn(yield* Queue.unbounded<string, Cause.Done>());
+        const conn = new StreamConn(device, yield* Queue.unbounded<string, Cause.Done>());
         yield* conn.heard;
         conn.onClose = Effect.suspend(() => {
           streams.delete(conn.sid);
           return gone(conn);
         });
-        conns.add(conn);
+        opened(conn);
         streams.set(conn.sid, conn);
         yield* conn.send({ t: 'conn', sid: conn.sid });
         const body = Stream.toReadableStreamWith(conn.body(), context, {
@@ -265,20 +345,22 @@ const makeServer = (opts: ServerOptions) =>
     const posted = (req: Request) =>
       Effect.gen(function* () {
         if (req.method !== 'POST') return text(405, '', { Allow: 'POST' });
-        if (!sameOrigin(req)) return text(403);
+        if (!sameOrigin(req) || !localHost(req, hostname)) return text(403);
         const sid = new URL(req.url).searchParams.get('sid') ?? '';
         const conn = streams.get(sid);
         if (!conn || conn.closed) return text(410, 'That stream is closed\n');
-        const body = parsePosted(yield* Effect.promise(() => req.text()));
-        if (Option.isNone(body)) return text(400);
-        const msgs = Array.isArray(body.value) ? body.value : [body.value];
+        // a body that can't be read (the phone went away halfway) is the phone's problem, not the server's
+        const read = yield* Effect.option(Effect.tryPromise(() => req.text()));
+        const body = Option.flatMap(read, parsePosted);
+        // a POST counts as one message at least, whatever it holds
+        const msgs = Option.match(body, { onNone: () => [], onSome: (v) => (Array.isArray(v) ? v : [v]) });
         yield* conn.heard;
+        if (!msgs.length) yield* message(conn, undefined);
         for (const m of msgs.slice(0, MAX_POSTED)) yield* message(conn, m);
+        if (Option.isNone(body)) return text(400);
         return new Response(null, { status: 204, headers: { 'Cache-Control': 'no-store' } });
       });
 
-    const port = opts.port ?? 8000;
-    const hostname = opts.hostname ?? '127.0.0.1';
     const server = yield* Effect.acquireRelease(
       Effect.try({
         try: () =>
@@ -296,24 +378,31 @@ const makeServer = (opts: ServerOptions) =>
               '/ws': (req, server) => {
                 const upgrade = (req.headers.get('upgrade') ?? '').toLowerCase();
                 if (req.method !== 'GET' || upgrade !== 'websocket') return text(400, 'Expected a WebSocket\n');
-                if (!sameOrigin(req)) return text(403, 'Wrong origin\n');
-                if (conns.size >= MAX_CONNECTIONS) return text(503, 'Too many riders\n');
-                if (server.upgrade(req, { data: { conn: null } })) return undefined;
+                const device = deviceOf(server.requestIP(req)?.address ?? '');
+                const refused = refusal(req, device);
+                if (refused) return refused;
+                if (server.upgrade(req, { data: { device, conn: null } })) return undefined;
                 return text(400, 'Expected a WebSocket\n');
               },
 
               '/net/events': (req, server) => {
                 if (req.method !== 'GET') return text(405, '', { Allow: 'GET' });
-                if (!sameOrigin(req)) return text(403, 'Wrong origin\n');
-                if (conns.size >= MAX_CONNECTIONS) return text(503, 'Too many riders\n');
+                const device = deviceOf(server.requestIP(req)?.address ?? '');
+                const refused = refusal(req, device);
+                if (refused) return refused;
                 server.timeout(req, 0); // the stream stays open; IDLE decides when it has gone quiet for too long
-                return runPromise(openStream(req));
+                return runPromise(openStream(req, device));
               },
 
               '/net/send': (req) => runPromise(posted(req)),
             },
 
             fetch: () => text(404, 'Not found\n'),
+            // whatever went wrong stays in the server's log, not in a page for whoever asked
+            error: (e) => {
+              console.error(e);
+              return text(500, 'Something went wrong\n');
+            },
 
             websocket: {
               data: {} as SocketData,
@@ -324,13 +413,12 @@ const makeServer = (opts: ServerOptions) =>
               sendPings: false, // a connection that says nothing for IDLE seconds is dropped, as the game pings every 5 s
               open(ws) {
                 ws.data.conn = new SocketConn(ws);
-                conns.add(ws.data.conn);
+                opened(ws.data.conn);
               },
               message(ws, data) {
                 const conn = ws.data.conn;
-                if (typeof data !== 'string' || !conn) return;
-                const msg = parseJson(data);
-                if (Option.isSome(msg)) runFork(message(conn, msg.value));
+                if (!conn) return;
+                runFork(message(conn, typeof data === 'string' ? Option.getOrUndefined(parseJson(data)) : undefined));
               },
               close(ws) {
                 const conn = ws.data.conn;
@@ -347,18 +435,19 @@ const makeServer = (opts: ServerOptions) =>
     return SiteServer.of({ port: server.port! });
   });
 
-/** The site and the race server, with the race timings and share address from RaceSettings */
+/** The site and the race server, with the race timings, limits and share address from RaceSettings */
 export const serverLayer = (opts: ServerOptions = {}) =>
   Layer.effect(SiteServer, makeServer(opts)).pipe(Layer.provide(RaceLobby.layer));
 
-/** The race timings and share address for serverLayer; any left out keep their defaults */
-export const settingsLayer = (settings: Partial<RaceTimes & { share: string }>) =>
+/** The race timings, limits and share address for serverLayer; any left out keep their defaults */
+export const settingsLayer = (settings: Partial<RaceTimes & RaceLimits & { share: string }>) =>
   Layer.effect(
     RaceSettings,
     Effect.map(RaceSettings, (defaults) => ({
       countdown: settings.countdown ?? defaults.countdown,
       ending: settings.ending ?? defaults.ending,
       away: settings.away ?? defaults.away,
+      perDevice: settings.perDevice ?? defaults.perDevice,
       share: settings.share ?? defaults.share,
     })),
   );

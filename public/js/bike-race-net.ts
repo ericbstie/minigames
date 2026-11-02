@@ -29,7 +29,6 @@ import {
   Scope,
   type Types,
 } from 'effect';
-import type { Pose } from './bike-race-core';
 import * as Protocol from './bike-race-protocol';
 import { type ClientMessageOut, StreamOpened } from './bike-race-protocol';
 import { run, runSync, SessionSaves } from './page';
@@ -55,13 +54,8 @@ export type RoomMessage = Types.DeepMutable<Protocol.RoomMessage>;
 export type CountdownMessage = Types.DeepMutable<Protocol.CountdownMessage>;
 /** What the game sends (the protocol's forgiving fields may be left out) */
 export type ClientMessage = ClientMessageOut;
-/**
- * Another racer's pose and race clock. The protocol lets a pose of 1 to 8 numbers through; the game reads the six of
- * the core's Pose, which is what every game sends.
- */
-type RacerStateMessage = Omit<Types.DeepMutable<typeof Protocol.RacerState.Type>, 'p'> & { p: Pose };
-/** What the race server sends */
-export type ServerMessage = Exclude<Types.DeepMutable<Protocol.ServerMessage>, { t: 'state' }> | RacerStateMessage;
+/** What the race server sends (another racer's pose is the six numbers of the core's Pose) */
+export type ServerMessage = Types.DeepMutable<Protocol.ServerMessage>;
 /** One kind of server message, e.g. ServerMessageOf<'room'> */
 export type ServerMessageOf<T extends ServerMessage['t']> = Extract<ServerMessage, { t: T }>;
 /** Net's own message when its status changes */

@@ -300,21 +300,29 @@ The game connects when Multiplayer opens, and drops the connection when you leav
   (`reconnectSchedule`), and then it is offline. `welcome` hands out a key, kept in sessionStorage, and `hello`
   sends it back, so the server gives the rider their place back if they return within 45 s (`AWAY`). The same key
   from a second connection takes over and the first gets `replaced`.
-- The server refuses a WebSocket or stream from a page on another site (the Origin must match the Host).
+- The server refuses a WebSocket or stream from a page on another site (the Origin must match the Host), and one
+  asked for by a public host name (the Host must be an IP address, `localhost`, a local network name or `HOST`), so
+  a website using DNS rebinding can't race either.
+- Limits, so one device can't spoil it for the others: 300 connections in all and 16 from one device (an IPv6
+  address counts by its first 64 bits), 1000 riders kept in all and 16 from one device (a dropped rider counts until
+  their 45 s are up), 200 rooms, and 90 messages a second from a connection, of which 20 may be something other than
+  a pose. A connection over its limit is refused (429), a rider over theirs gets an `error` saying so, and messages over
+  a connection's limit are dropped. The tests change the per-device limit with the `perDevice` option of
+  `startSite`. docs/security-audit.md has the reasons.
 
 ### Messages
 
 All are JSON objects with a type in `t`.
 
-| The game sends                         |                                                                                                     |
-| -------------------------------------- | --------------------------------------------------------------------------------------------------- |
-| `hello` name, paint, bike, key         | first, and again when the name, paint or bike changes                                               |
-| `list`                                 | asks for the open rooms (every 3 s in the lobby)                                                    |
-| `create` level · `join` code · `leave` | rooms                                                                                               |
-| `level` level · `start`                | host only                                                                                           |
-| `state` p, c                           | the pose `[x, y, angle, wheel spin, lean, flags]` (flags: 1 crashed, 2 finished) and the race clock |
-| `finish` time · `retire`               | crossed the line, or gave up the race but stays in the room                                         |
-| `ping` c                               | answered with `pong`                                                                                |
+| The game sends                         |                                                                                                               |
+| -------------------------------------- | ------------------------------------------------------------------------------------------------------------- |
+| `hello` name, paint, bike, key         | first, and again when the name, paint or bike changes                                                         |
+| `list`                                 | asks for the open rooms (every 3 s in the lobby)                                                              |
+| `create` level · `join` code · `leave` | rooms (the level has to be one of the game's tracks)                                                          |
+| `level` level · `start`                | host only                                                                                                     |
+| `state` p, c                           | the pose, exactly `[x, y, angle, wheel spin, lean, flags]` (flags: 1 crashed, 2 finished), and the race clock |
+| `finish` time · `retire`               | crossed the line, or gave up the race but stays in the room                                                   |
+| `ping` c                               | answered with `pong`                                                                                          |
 
 | The server sends                                               |                                                                                                                                                                   |
 | -------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- |

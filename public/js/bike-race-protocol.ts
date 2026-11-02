@@ -18,9 +18,14 @@ export { CODE_LETTERS };
 
 const isNumber = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v);
 
-/** No control characters, trimmed, at most 16 characters, and "Rider" if nothing is left */
+// Control characters (C0, DEL and C1, where U+009B starts a terminal escape sequence), line and paragraph
+// separators, and the marks and overrides that change the direction of text: none of them belongs in a name that
+// goes into the server's log and onto everyone else's screen.
+const NOT_IN_NAMES = /[\x00-\x1f\x7f-\x9f\u061c\u200e\u200f\u2028-\u202e\u2066-\u2069]/g;
+
+/** No control or text-direction characters, trimmed, at most 16 characters, and "Rider" if nothing is left */
 export function cleanName(v: unknown): string {
-  const name = Array.from((typeof v === 'string' ? v : '').replace(/[\x00-\x1f\x7f]/g, '').trim())
+  const name = Array.from((typeof v === 'string' ? v : '').replace(NOT_IN_NAMES, '').trim())
     .slice(0, MAX_NAME)
     .join('');
   return name || 'Rider';
@@ -43,8 +48,15 @@ const MaybeNumber = forgiving(Schema.UndefinedOr(Schema.Finite), (v) => (isNumbe
 
 // ---------- what the game sends ----------
 
-/** A pose: [x, y, angle, wheel spin, lean, flags] (flags: 1 crashed, 2 finished); a few more numbers are let through */
-export const Pose = Schema.Array(Schema.Finite).check(Schema.isMinLength(1), Schema.isMaxLength(8));
+/** A pose: [x, y, angle, wheel spin, lean, flags] (flags: 1 crashed, 2 finished), six numbers and no others */
+export const Pose = Schema.Tuple([
+  Schema.Finite,
+  Schema.Finite,
+  Schema.Finite,
+  Schema.Finite,
+  Schema.Finite,
+  Schema.Finite,
+]);
 
 /** Asks for a pong; c comes back as it was sent, to time the round trip */
 export const Ping = Schema.Struct({
