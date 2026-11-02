@@ -41,6 +41,21 @@ import {
   type RoadPoint,
   type XZ,
 } from './castle-defender-world';
+import {
+  LANDS,
+  landsReached,
+  threatLevel,
+  SHOP_KINDS,
+  SHOP_MAX,
+  TILL_SECONDS,
+  lotPrice,
+  shopUpPrice,
+  shopRate,
+  landWealth,
+  closestOnRoad,
+  tradeMight,
+  TRADE,
+} from './castle-defender-lands';
 import { GameHub, type Game as HubGame } from './hub';
 import { animate, forget, listen, load, type PageServices, run, runSync, save } from './page';
 
@@ -1386,6 +1401,109 @@ function goldHutGeo(lv: number): Geo {
   }
   return merge(p);
 }
+// A shop, its door facing +z, with its till (a tray the coins heap up on) in front at z = SHOP_TILL, all made at
+// SHOP_SCALE (so the till is SHOP_TILL * SHOP_SCALE out from the middle). It grows with
+// its level: crates and a bigger sign, an upper floor, a side room, then a turret with a flag and gold trim. What it
+// sells sets its colours and a thing or two by the door (a chimney, pelts, herb pots, a furnace stack).
+const SHOP_TILL = 3.1,
+  SHOP_SCALE = 1.2;
+function shopGeo(kind: Biome, lv: number): Geo {
+  const k = SHOP_KINDS[kind],
+    up = lv >= 3,
+    wallH = up ? 2.9 : 1.8,
+    top = 0.2 + wallH,
+    p = [vc(B(3.9, 0.2, 3.1), '#8a8178', T(0, 0.1, 0)), vc(B(3.4, wallH, 2.6), k.wall, T(0, 0.2 + wallH / 2, 0))];
+  // beams at the corners, the door and windows
+  for (const [x, z] of [
+    [1, 1],
+    [1, -1],
+    [-1, 1],
+    [-1, -1],
+  ])
+    p.push(vc(B(0.16, wallH, 0.16), k.trim, T(x * 1.68, 0.2 + wallH / 2, z * 1.28)));
+  p.push(
+    vc(B(0.75, 1.25, 0.08), k.trim, T(0, 0.82, 1.31)),
+    vc(S(0.05, 6, 5), '#f5b81c', T(0.24, 0.85, 1.37)),
+    vc(B(0.7, 0.55, 0.08), '#2b3640', T(-1.05, 1.15, 1.31)),
+    vc(B(0.7, 0.55, 0.08), '#2b3640', T(1.05, 1.15, 1.31)),
+  );
+  if (up) {
+    p.push(vc(B(3.5, 0.14, 2.7), k.trim, T(0, 2.0, 0)));
+    for (const x of [-1.05, 0, 1.05]) p.push(vc(B(0.6, 0.5, 0.08), '#2b3640', T(x, 2.55, 1.31)));
+  }
+  // the roof, ridge along x, and the striped awning over the front
+  p.push(vc(gable(3.4, 1.35, 4.0), k.roof, T(0, top, 0, 0, Math.PI / 2, 0)));
+  for (let i = 0; i < 6; i++)
+    p.push(vc(B(0.6, 0.07, 0.95), k.awning[i % 2], T(-1.5 + i * 0.6, 1.72, 1.68, 0.42, 0, 0)));
+  p.push(vc(B(3.7, 0.12, 0.1), k.awning[0], T(0, 1.52, 2.1)));
+  // the sign over the awning
+  const sw = lv >= 2 ? 1.7 : 1.25;
+  p.push(
+    vc(B(sw, 0.55, 0.1), k.sign, T(0, top - 0.1, 1.36)),
+    vc(B(sw + 0.14, 0.08, 0.12), k.trim, T(0, top + 0.2, 1.36)),
+    vc(Cy(0.17, 0.17, 0.06, 12), lv >= 5 ? '#ffc83a' : k.trim, T(0, top - 0.1, 1.42, Math.PI / 2, 0, 0)),
+  );
+  // the till: a low tray in front, framed
+  p.push(vc(B(2.3, 0.14, 2.0), '#7a5536', T(0, 0.07, SHOP_TILL)));
+  for (const [x, z, w, d] of [
+    [0, -1, 2.4, 0.1],
+    [0, 1, 2.4, 0.1],
+    [-1.15, 0, 0.1, 2.1],
+    [1.15, 0, 0.1, 2.1],
+  ] as const)
+    p.push(vc(B(w, 0.22, d), '#5e3f26', T(x, 0.13, SHOP_TILL + z)));
+  // what the shop sells, by the door
+  if (kind === BIOME.canyon)
+    p.push(
+      vc(B(0.55, 1.5, 0.55), '#9a4a36', T(1.1, top + 0.55, -0.55)),
+      vc(B(0.65, 0.12, 0.65), '#6a3326', T(1.1, top + 1.3, -0.55)),
+    );
+  else if (kind === BIOME.frozen)
+    for (const [x, c] of [
+      [-1.3, '#8a5a36'],
+      [1.3, '#d9cbb2'],
+    ] as const)
+      p.push(vc(B(0.55, 0.75, 0.06), c, T(x + (x < 0 ? -0.5 : 0.5), 0.95, 0.9, 0, x < 0 ? -0.5 : 0.5, 0)));
+  else if (kind === BIOME.mire)
+    for (const x of [-1.5, 1.5])
+      p.push(vc(Cy(0.22, 0.17, 0.3, 8), '#8a5a36', T(x, 0.35, 1.75)), vc(S(0.3, 8, 6), '#5fa83a', T(x, 0.68, 1.75)));
+  else
+    p.push(
+      vc(Cy(0.36, 0.44, 2.2, 8), '#3e3633', T(-1.0, top + 0.6, -0.6)),
+      vc(Cy(0.3, 0.3, 0.08, 8), k.sign, T(-1.0, top + 1.72, -0.6)),
+    );
+  // level 2: crates and a barrel beside the shop
+  if (lv >= 2)
+    p.push(
+      vc(B(0.7, 0.7, 0.7), '#a0703e', T(2.25, 0.55, 0.6, 0, 0.3, 0)),
+      vc(B(0.5, 0.5, 0.5), '#8a5a36', T(2.3, 1.15, 0.55, 0, -0.2, 0)),
+      vc(Cy(0.3, 0.3, 0.75, 10), '#7a5234', T(2.2, 0.57, -0.5)),
+    );
+  // level 4: a side room with its own roof
+  if (lv >= 4)
+    p.push(
+      vc(B(1.6, 1.6, 2.0), k.wall, T(-2.45, 1.0, -0.2)),
+      vc(gable(2.3, 0.9, 1.9), k.roof, T(-2.45, 1.8, -0.2)),
+      vc(B(0.5, 0.45, 0.08), '#2b3640', T(-2.45, 1.15, 0.82)),
+    );
+  // level 5: a little turret with a flag, and gold along the ridge
+  if (lv >= 5)
+    p.push(
+      vc(Cy(0.5, 0.55, 1.4, 8), k.wall, T(1.4, top + 1.0, -0.5)),
+      vc(Co(0.7, 0.8, 8), '#e0b13a', T(1.4, top + 2.1, -0.5)),
+      vc(B(4.05, 0.1, 0.16), '#e0b13a', T(0, top + 1.36, 0)),
+      ...flag(1.4, top + 2.4, -0.5, k.awning[0], 1.2),
+    );
+  return merge(p).scale(SHOP_SCALE, SHOP_SCALE, SHOP_SCALE);
+}
+// one geometry function per kind of shop, so the cache (by function name) keeps them apart
+const SHOP_GEOS = Object.fromEntries(
+  Object.keys(SHOP_KINDS).map((kind) => {
+    const fn = (lv: number) => shopGeo(+kind as Biome, lv);
+    Object.defineProperty(fn, 'name', { value: 'shopGeo' + kind });
+    return [kind, fn];
+  }),
+) as Record<Biome, GeoFn>;
 function treeGeo(seed: number, wood = '#6b4630'): Geo {
   const R = mulberry(seed),
     p = [vc(Co(0.32, 4.2, 6), wood, T(0, 2.1, 0))];
@@ -1758,6 +1876,37 @@ const ICONS = {
     g.fill();
     g.stroke();
   },
+  // a shop with a striped awning and a coin on its sign: a lot for sale, or its next level
+  shop(g) {
+    g.strokeStyle = INK;
+    g.lineWidth = 7;
+    g.fillStyle = '#f4ede2';
+    g.beginPath();
+    g.rect(-40, -14, 80, 56);
+    g.fill();
+    g.stroke();
+    g.fillStyle = '#b9472e';
+    g.beginPath();
+    g.moveTo(-50, -14);
+    g.lineTo(0, -50);
+    g.lineTo(50, -14);
+    g.closePath();
+    g.fill();
+    g.stroke();
+    for (let i = 0; i < 4; i++) {
+      g.fillStyle = i % 2 ? '#f4ede2' : '#e23b3b';
+      g.fillRect(-44 + i * 22, -10, 22, 16);
+    }
+    g.beginPath();
+    g.rect(-44, -10, 88, 16);
+    g.stroke();
+    g.fillStyle = '#5e3f26';
+    g.beginPath();
+    g.rect(-10, 16, 20, 26);
+    g.fill();
+    g.stroke();
+    iconPath(g, ICONS.coin, 0, -28, 0.3);
+  },
   up(g) {
     g.fillStyle = '#7dff6a';
     g.strokeStyle = INK;
@@ -2080,6 +2229,20 @@ interface Gold {
   b: Building | null;
   boys: GoldBoy[];
 }
+// a lot for sale beside an outpost, and once bought (lv 1 and up) the shop on it, filling its till
+interface Shop {
+  idx: number;
+  x: number;
+  z: number;
+  yaw: number; // the way its door faces (the till stands in front of it)
+  kind: Biome;
+  lv: number;
+  lot: number; // what the lot cost (or costs): its levels are priced from it
+  till: { x: number; z: number; value: number; acc: number; taking: boolean };
+  side: Pt; // where its pad goes once it is built (it starts on the lot)
+  b: Building | null;
+  pad?: Pad;
+}
 interface Coin {
   x: number;
   z: number;
@@ -2394,6 +2557,11 @@ interface Game {
   siteSeq: number;
   rand: () => number;
   reach: number;
+  land: number; // how many of the lands past the first border have opened (LANDS)
+  lockLands?: boolean; // the lands stay shut (the play-through's control run)
+  shops: Shop[];
+  lotSeq: number;
+  might: number; // how much harder than its weapon everything of the king's hits (shops)
   posts: Post[];
   toastQ: string[];
   toastT: number;
@@ -3363,7 +3531,7 @@ function buildWorld() {
     followerR: RANKS.slice(1).map((r) => inst(followerGeo(C.hair, r.top), vmat, SQUAD_MAX)),
     weapons: WEAPONS.map((_, t) => inst(weaponGeo(t), vmat, 160)),
     ghost: inst(followerGeo(), ghostMat, 8, false),
-    coin: inst(new THREE.CylinderGeometry(0.36, 0.36, 0.1, 18), coinMats, 1900),
+    coin: inst(new THREE.CylinderGeometry(0.36, 0.36, 0.1, 18), coinMats, 2600),
     bill: inst(
       new THREE.BoxGeometry(1.0, BILL_H, 0.5),
       [billSide, billSide, billFace, billFace, billSide, billSide],
@@ -3982,6 +4150,10 @@ function newGame() {
     siteSeq: 0,
     rand: mulberry((Math.random() * 2147483647) | 0),
     reach: CLAIM_HOME,
+    land: 0,
+    shops: [],
+    lotSeq: 0,
+    might: 1,
     posts: [],
     toastQ: [],
     toastT: 0,
@@ -4627,7 +4799,26 @@ function siteFree(x: number, z: number): boolean {
     G.cannons.some((c) => Math.hypot(c.x - x, c.z - z) < 7)
   )
     return false;
-  if (G.pads && G.pads.some((p) => !(p.site && !p.site.built) && Math.hypot(p.x - x, p.z - z) < 5.5)) return false;
+  // (a shop's pad moves beside it when it is built: it counts there all along)
+  if (
+    G.pads &&
+    G.pads.some((p) => !(p.site && !p.site.built) && !p.id.startsWith('shop') && Math.hypot(p.x - x, p.z - z) < 5.5)
+  )
+    return false;
+  // nor may the pad an outpost or a field cannon has towards home (4.4 in) land on a shop or its pad
+  const hl = Math.hypot(HOME.x - x, HOME.z - z) || 1,
+    ux = x + ((HOME.x - x) / hl) * 4.4,
+    uz = z + ((HOME.z - z) / hl) * 4.4;
+  if (
+    G.shops.some(
+      (s) =>
+        Math.hypot(s.x - x, s.z - z) < 8 ||
+        Math.hypot(s.side[0] - x, s.side[1] - z) < 5.5 ||
+        Math.hypot(s.x - ux, s.z - uz) < 6 ||
+        Math.hypot(s.side[0] - ux, s.side[1] - uz) < 5,
+    )
+  )
+    return false;
   return (
     !G.fronts.some((f) => Math.hypot(f.camp.x - x, f.camp.z - z) < 7) &&
     !G.ruins.some((c) => Math.hypot(c.x - x, c.z - z) < 6)
@@ -4722,6 +4913,7 @@ function buildOutpost(t: Tower): void {
     G.pads.push(pad);
     keepClear(x, z, 4);
   }
+  if (G.land >= 1) addLot(t);
   refreshFrontier(); // a spot the field cannon took moves along
   if (G.outposts === 1) {
     openFront('S');
@@ -4815,6 +5007,190 @@ function unkeepClear(x: number, z: number): void {
     dirtyArea(c.x - c.r, c.z - c.r, c.x + c.r, c.z + c.r);
   }
 }
+// ------------------------------------------------------------------ lands ----
+// The first time the border reaches a land's distance from home (LANDS, castle-defender-lands.ts) the land opens:
+// a banner says what has come, and it shows up. The first land brings shops, a lot for sale beside each outpost.
+function updateLands(): void {
+  if (G.lockLands) return;
+  const n = landsReached(G.reach);
+  while (G.land < n) openLand(G.land++);
+}
+function openLand(i: number): void {
+  const L = LANDS[i];
+  toast(`New land: ${L.name}. ${L.news}!`);
+  if (i === 0) {
+    for (const t of G.towers) if (t.outer && t.built) addLot(t);
+    refreshFrontier(); // outpost spots keep clear of the lots
+  }
+}
+
+// ------------------------------------------------------------------ shops ----
+// A lot for sale stands LOT_OFF from the road its outpost watches, further in towards the castle, its door (and
+// till) facing the road. Its pad sells the shop, then its levels; the shop fills its till, and the king empties it
+// by riding over it.
+const LOT_OFF = 8,
+  SHOP_PAD: Pt = [5.7, 1.0], // where the upgrade pad goes, beside the shop (in its own frame)
+  TILL_PILE = 30; // coins in a full till's heap
+// where the coins go in a till's heap, from the middle out: x, z, how far out, and a little jitter
+const PILE: [x: number, z: number, r: number, j: number][] = Array.from({ length: TILL_PILE }, (_, i) => {
+  const a = i * 2.39996,
+    r = 0.2 * Math.sqrt(i + 0.5);
+  return [Math.cos(a) * r, Math.sin(a) * r, r, (i * 0.37) % 1];
+});
+const shopH = (lv: number) => ((lv >= 3 ? 4.6 : 3.5) + (lv >= 5 ? 1.6 : 0)) * SHOP_SCALE;
+// a point in a shop's own frame (x across its front, z out of its door) on the ground
+const shopPt = (s: { x: number; z: number; yaw: number }, lx: number, lz: number): Pt => [
+  s.x + lx * Math.cos(s.yaw) + lz * Math.sin(s.yaw),
+  s.z - lx * Math.sin(s.yaw) + lz * Math.cos(s.yaw),
+];
+const tillCap = (s: Shop) => shopRate(s.lot, s.lv, landWealth(s.x, s.z)) * TILL_SECONDS;
+// a lot for sale by outpost `t`, if there is room on the way in along its road
+function addLot(t: Tower): void {
+  let road: Pt[] | null = null,
+    near: ReturnType<typeof closestOnRoad> | null = null;
+  for (const f of G.fronts) {
+    if (!f.open) continue;
+    const c = closestOnRoad(f.road, t.x, t.z);
+    if (!near || c.d < near.d) [road, near] = [f.road, c];
+  }
+  if (!road || !near || near.d > 12) return;
+  const side = Math.sign((t.x - near.x) * near.dz - (t.z - near.z) * near.dx) || 1;
+  for (let k = 0; k < 14; k++) {
+    const p = pointAlong(road, near.at + 6 + k * 3);
+    if (!p) return;
+    for (const sd of [-side, side]) {
+      const x = p.x + p.dz * sd * LOT_OFF,
+        z = p.z - p.dx * sd * LOT_OFF,
+        yaw = Math.atan2(p.x - x, p.z - z),
+        [px, pz] = shopPt({ x, z, yaw }, SHOP_PAD[0], SHOP_PAD[1]);
+      // the lot, and the spot beside it where its pad goes once the shop is built
+      const near = (list: readonly XZ[], r: number) => list.some((o) => Math.hypot(o.x - px, o.z - pz) < r);
+      if (!lotFree(x, z) || near(G.pads, 5) || near(G.towers, 4.5) || near(G.cannons, 4.5)) continue;
+      if ((G.obs || []).some(([ox, oz, r]) => Math.hypot(ox - px, oz - pz) < r + 2)) continue;
+      const s = addShop(G.lotSeq++, x, z, yaw, biomeAt(x, z), 0);
+      s.lot = lotPrice(s.idx);
+      s.pad!.cost = s.pad!.price();
+      bigText('For sale', x, 4, z);
+      return;
+    }
+  }
+}
+function lotFree(x: number, z: number): boolean {
+  if (borderDist(G.claims, x, z) > -5 || x < cliffMinX(z) + 4 || (Math.abs(x) < HX + 7 && Math.abs(z) < HZ + 7))
+    return false;
+  if (pushOutOfMesas(x, z, 4.5)[0] !== x) return false;
+  if (
+    world.terrain.roads.some((r) => pathDist(x, z, r.pts) < 5.2) ||
+    G.fronts.some((f) => f.open && pathDist(x, z, f.road) < 5.2)
+  )
+    return false;
+  if ((G.obs || []).some(([ox, oz, r]) => Math.hypot(ox - x, oz - z) < r + 4)) return false;
+  if (
+    G.towers.some((t) => Math.hypot(t.x - x, t.z - z) < 8) ||
+    G.cannons.some((c) => Math.hypot(c.x - x, c.z - z) < 8) ||
+    G.pads.some((p) => Math.hypot(p.x - x, p.z - z) < 8) ||
+    G.shops.some((s) => Math.hypot(s.x - x, s.z - z) < 11)
+  )
+    return false;
+  return (
+    !G.fronts.some((f) => Math.hypot(f.camp.x - x, f.camp.z - z) < 10) &&
+    !G.ruins.some((c) => Math.hypot(c.x - x, c.z - z) < 9)
+  );
+}
+// a lot (level 0) or a shop, with its pad, the ground kept clear for it
+function addShop(idx: number, x: number, z: number, yaw: number, kind: Biome, lot: number): Shop {
+  const [tx, tz] = shopPt({ x, z, yaw }, 0, SHOP_TILL * SHOP_SCALE);
+  const s: Shop = {
+    idx,
+    x,
+    z,
+    yaw,
+    kind,
+    lv: 0,
+    lot,
+    till: { x: tx, z: tz, value: 0, acc: 0, taking: false },
+    side: shopPt({ x, z, yaw }, SHOP_PAD[0], SHOP_PAD[1]),
+    b: null,
+  };
+  G.shops.push(s);
+  const side = s.side;
+  const pad = createPad({
+    id: 'shop' + idx,
+    x,
+    z,
+    posFn: () => (s.lv ? side : [s.x, s.z]),
+    visible: () => s.lv < SHOP_MAX,
+    cost: () => (s.lv ? shopUpPrice(s.lot, s.lv) : s.lot),
+    iconFn: () =>
+      s.lv
+        ? (c) => {
+            ICONS.shop(c);
+            iconPath(c, ICONS.up, 40, 30, 0.6);
+          }
+        : ICONS.shop,
+    lv: () => s.lv,
+    buy: () => buyShop(s),
+  });
+  pad.cost = pad.price();
+  s.pad = pad;
+  G.pads.push(pad);
+  keepClear(x, z, 5);
+  return s;
+}
+const makeShop = (s: Shop) => makeBuilding(s.x, s.z, s.yaw, SHOP_GEOS[s.kind], s.lv, 0, shopH(s.lv));
+function buyShop(s: Shop): void {
+  const name = SHOP_KINDS[s.kind].name;
+  if (!s.lv) {
+    s.lv = 1;
+    s.b = makeShop(s);
+    celebrate(s.x, s.z, shopH(1), false);
+    bigText(name, s.x, 5.5, s.z);
+    if (G.shops.filter((o) => o.lv).length === 1)
+      toast('Shops make your army stronger. Ride over a till to take its coins.');
+  } else {
+    s.lv++;
+    upgradeBuilding(s.b!, s.lv);
+    s.b!.h = shopH(s.lv);
+    bigText(`${name}, level ${s.lv}`, s.x, 6, s.z);
+  }
+  setMight();
+  floatText(`+${Math.round(TRADE * 100)}% damage`, s.x, 4.2, s.z, '#7dff6a', true);
+  for (const f of G.followers) burst(f.x, 1, f.z, 3, '#ffd84a');
+  refreshObstacles();
+}
+const setMight = () => (G.might = tradeMight(G.shops.map((o) => o.lv)));
+// the tills fill, up to what they hold, and the king empties the one he rides over
+function updateShops(dt: number): void {
+  const k = G.king;
+  for (const s of G.shops) {
+    if (!s.lv) continue;
+    const tl = s.till,
+      cap = tillCap(s);
+    if (tl.value < cap) tl.value = Math.min(cap, tl.value + (cap / TILL_SECONDS) * dt);
+    if (tl.value >= 1 && Math.abs(k.x - tl.x) < 2.4 && Math.abs(k.z - tl.z) < 2.4 && !G.over) {
+      if (!tl.taking) floatText(`+${Math.floor(tl.value)}`, tl.x, 2.2, tl.z, '#ffd84a');
+      tl.taking = true;
+      tl.acc += Math.max(60, tl.value * 3) * dt;
+      const take = Math.min(Math.floor(tl.acc), Math.floor(tl.value));
+      if (take > 0) {
+        tl.acc -= take;
+        tl.value -= take;
+        G.flying.push({
+          x: tl.x + (Math.random() - 0.5) * 1.2,
+          y: 0.5,
+          z: tl.z + (Math.random() - 0.5) * 1.2,
+          t: 0,
+          v: take,
+          to: 'king',
+        });
+      }
+    } else {
+      tl.acc = 0;
+      tl.taking = false;
+    }
+  }
+}
+
 // a new game: only the first roads, every chunk redecorated, the hand-placed decor back
 function resetWorld() {
   const TR = world.terrain;
@@ -4963,6 +5339,11 @@ function refreshObstacles() {
   }
   for (const c of G.cannons) if (c.built) o.push([c.x, c.z, [1.5, 1.8, 2.0, 2.0, 2.1][c.level - 1]]);
   for (const t of G.towers) if (t.built && t.outer) o.push([t.x, t.z, t.level >= 5 ? 2.0 : 1.5]);
+  for (const s of G.shops) {
+    if (!s.lv) continue;
+    o.push([s.x, s.z, 2.5]);
+    if (s.lv >= 4) o.push([...shopPt(s, -2.94, -0.24), 1.4]);
+  }
   const gd = G.gold;
   if (gd.built) {
     o.push([GOLD_HUT[0], GOLD_HUT[1], 2.0]);
@@ -5074,8 +5455,10 @@ function updateBorder(dt: number): void {
 // ---------------------------------------------------------------- enemies ----
 // Difficulty rises smoothly with time; there are no waves. Groups are bought
 // from a budget that grows over time, and the mix shifts from many small
-// knights toward fewer, bigger brutes and giants.
-const level = () => G.t / 13;
+// knights toward fewer, bigger brutes and giants. The level is the clock's (one
+// every 13 seconds) for the first 19 minutes and grows ever more slowly after
+// (`threatLevel`, castle-defender-lands.ts).
+const level = () => threatLevel(G.t);
 function spawnEnemy(kind: UnitKind, f: Front): Enemy {
   const L = level(),
     u = UNIT[kind],
@@ -5491,7 +5874,7 @@ function hitCastle(dmg: number, x: number, z: number): void {
 }
 function damageEnemy(e: Enemy, dmg: number): void {
   if (e.hp <= 0) return;
-  e.hp -= dmg;
+  e.hp -= dmg * G.might;
   e.hitFlash = 1;
   if (e.hp <= 0) {
     G.kills++;
@@ -6655,6 +7038,16 @@ function syncScene(dt: number): void {
     if (f.bill) billAt(f.x, f.y, f.z, 0.3, f.t * 6);
     else if (c < 1780) coinAt(f.x, f.y, f.z, 0.3, f.t * 6);
   }
+  for (const s of G.shops) {
+    const tl = s.till;
+    if (!s.lv || tl.value < 1) continue;
+    const pn = Math.min(TILL_PILE, Math.ceil((TILL_PILE * tl.value) / tillCap(s))),
+      H = 0.06 + (0.5 * pn) / TILL_PILE;
+    for (let i = 0; i < pn && c < 2200; i++) {
+      const [ox, oz, r, j] = PILE[i];
+      coinAt(tl.x + ox, 0.26 + Math.max(0, H * (1 - r / 1.2)) + j * 0.05, tl.z + oz, (j - 0.5) * 0.5, j * 6);
+    }
+  }
   const bills = stackBills(),
     coins = stackCoins(),
     bx = k.x - Math.sin(k.yaw) * 0.55,
@@ -6667,7 +7060,7 @@ function syncScene(dt: number): void {
       s = sway(h);
     billAt(bx + Math.sin(k.yaw) * s, by + h, bz + Math.cos(k.yaw) * s, 0, k.yaw + (((i * 0.37) % 1) - 0.5) * 0.16);
   }
-  for (let i = 0; i < coins && c < 1890; i++) {
+  for (let i = 0; i < coins && c < 2590; i++) {
     const h = bills * BILL_STEP + 0.05 + i * 0.1,
       s = sway(h);
     coinAt(bx + Math.sin(k.yaw) * s, by + h, bz + Math.cos(k.yaw) * s, 0, i * 0.3);
@@ -6997,6 +7390,22 @@ const SavedWorld = Schema.Struct({
     Schema.Struct({ at: SavedPt, side: SavedPt, cost0: Num, level: UpTo(CANNON_MAX), yaw: Num }),
   ),
   siteSeq: Count,
+  // the lands opened, and the shops (level 0: a lot still for sale); saves from before the lands have none
+  land: Schema.optionalKey(UpTo(LANDS.length)),
+  lotSeq: Schema.optionalKey(Count),
+  shops: Schema.optionalKey(
+    Schema.Array(
+      Schema.Struct({
+        idx: Count,
+        at: SavedPt,
+        yaw: Num,
+        kind: UpTo(BIOME_NAMES.length - 1),
+        lv: UpTo(SHOP_MAX),
+        lot: Num,
+        till: Num, // coins in its till
+      }),
+    ),
+  ),
   paid: Schema.Record(Schema.String, Num), // coins paid into a pad so far, by its id
   spawnT: Num,
   nextPath: Count,
@@ -7034,6 +7443,8 @@ const SavedWorld = Schema.Struct({
       w.outposts.every((o) => o.idx < w.siteSeq) &&
       w.queue.every(([, kind]) => kind !== 'boss') &&
       w.enemies.filter((e) => e.kind === 'boss').length <= 1 &&
+      new Set((w.shops ?? []).map((o) => o.idx)).size === (w.shops ?? []).length &&
+      (w.shops ?? []).every((o) => o.idx < (w.lotSeq ?? 0) && o.lot > 0 && o.till >= 0) &&
       w.enemies.every(
         (e) =>
           e.route < w.routes.length &&
@@ -7116,6 +7527,17 @@ function snapshot(): SavedWorld {
       .filter((c) => c.field)
       .map((c) => ({ at: [c.x, c.z], side: c.side, cost0: c.cost0, level: c.level, yaw: c.yaw })),
     siteSeq: G.siteSeq,
+    land: G.land,
+    lotSeq: G.lotSeq,
+    shops: G.shops.map((o) => ({
+      idx: o.idx,
+      at: [o.x, o.z],
+      yaw: o.yaw,
+      kind: o.kind,
+      lv: o.lv,
+      lot: o.lot,
+      till: o.till.value,
+    })),
     paid: Object.fromEntries(G.pads.filter((p) => p.paid > 0 && !spots.includes(p.site!)).map((p) => [p.id, p.paid])),
     spawnT: G.spawnT,
     nextPath: G.nextPath,
@@ -7307,6 +7729,16 @@ function restoreGame(w: SavedWorld): void {
   }
   G.fieldCannons = w.fieldCannons.length;
   G.siteSeq = w.siteSeq;
+  // the lands opened, the lots for sale and the shops
+  G.land = Math.min(w.land ?? 0, LANDS.length);
+  G.lotSeq = w.lotSeq ?? 0;
+  for (const o of w.shops ?? []) {
+    const sh = addShop(o.idx, o.at[0], o.at[1], o.yaw, o.kind as Biome, o.lot);
+    sh.lv = o.lv;
+    if (sh.lv) sh.b = makeShop(sh);
+    sh.till.value = Math.min(o.till, sh.lv ? tillCap(sh) : 0);
+  }
+  setMight();
   refreshPosts();
   G.castle.max = castleMaxHp();
   G.castle.hp = Math.min(w.castle, G.castle.max);
@@ -7367,6 +7799,7 @@ function restoreGame(w: SavedWorld): void {
     if (b.onSwap) b.onSwap(b.lv);
   }
   refreshObstacles();
+  for (const p of G.pads) if (p.posFn) [p.x, p.z] = p.posFn();
   refreshFrontier();
   for (const p of G.pads) {
     if (p.posFn) [p.x, p.z] = p.posFn();
@@ -7514,7 +7947,9 @@ function step(dt: number): void {
   G.enemies = G.enemies.filter((e) => e.hp > 0);
   updateCoins(dt);
   updateGold(dt);
+  updateShops(dt);
   updatePads(dt);
+  updateLands();
   for (const s of G.segs) {
     if (s.hitT > 0) s.hitT -= dt;
     else if (s.alive && s.hp < s.max) s.hp = Math.min(s.max, s.hp + s.max * 0.006 * dt);
@@ -7725,6 +8160,21 @@ function debug() {
     BOSS_WARN,
     // the boss on the field, if there is one
     boss: () => liveBoss(),
+    // the lots and shops, and their tills
+    shops: () =>
+      G.shops.map((s) => ({
+        id: 'shop' + s.idx,
+        x: s.x,
+        z: s.z,
+        kind: s.kind,
+        lv: s.lv,
+        lot: s.lot,
+        till: { x: s.till.x, z: s.till.z, value: s.till.value, cap: s.lv ? tillCap(s) : 0 },
+      })),
+    // keep the lands shut (or open them again): the play-through's control run
+    lockLands(on = true) {
+      G.lockLands = on;
+    },
     borderDist: (x: number, z: number) => borderDist(G.claims, x, z),
     terrain: () => ({
       chunks: world.terrain.chunks.size,

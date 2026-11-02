@@ -17,6 +17,11 @@ type RGB = [number, number, number];
 type Terrain = ReturnType<CastleDebug['terrain']>;
 type Front = ReturnType<CastleDebug['fronts']>[number];
 type Site = ReturnType<CastleDebug['sites']>[number];
+// functions some checks put in the page for the ones after them
+interface Helpers {
+  __pushOut: () => boolean;
+  __quiet: () => void;
+}
 
 /** Castle Defender in a page, once a game is up (storage: localStorage items in place before it loads) */
 async function open({
@@ -499,6 +504,237 @@ describe('Playing', () => {
   });
 });
 
+describe('The first land past the border: shops', () => {
+  type Shop = ReturnType<CastleDebug['shops']>[number];
+  let shops: Shop[], first: Shop;
+  beforeAll(async () => {
+    page = await open();
+    await dbg(page, helpers);
+  });
+  afterAll(() => page.close());
+  // helpers in the page, for the checks below: build the outpost spot furthest out (if there is one), and clear the
+  // field of enemies for good, so nothing gets in the way
+  const helpers = (d: CastleDebug) => {
+    const w = window as unknown as Helpers;
+    w.__pushOut = () => {
+      const vis = d.pads().map((p) => p.id);
+      const spots = d.sites().filter((s) => vis.includes(s.id));
+      if (!spots.length) return false;
+      d.buy(spots.reduce((a, b) => (Math.hypot(b.x - 4, b.z) > Math.hypot(a.x - 4, a.z) ? b : a)).id);
+      d.advance(0.5);
+      return true;
+    };
+    w.__quiet = () => {
+      d.G.enemies.length = 0;
+      d.G.spawnQueue.length = 0;
+      d.G.spawnT = 1e9;
+      for (const f of d.G.fronts) f.timer = 1e9;
+    };
+  };
+  test('no lots for sale while the border is near home', async () => {
+    const got = await dbg(page, (d) => {
+      d.rich(1e6);
+      for (let i = 0; i < 4; i++) d.buy('recruit');
+      for (let i = 0; i < 6; i++) d.buy('tower' + i);
+      d.buy('cannon0');
+      d.buy('cannon1');
+      d.advance(0.5);
+      (window as unknown as Helpers).__pushOut();
+      return { reach: d.G.reach, outposts: d.G.outposts, land: d.G.land, shops: d.shops().length };
+    });
+    expect(got.outposts).toBe(1);
+    expect(got.reach).toBeLessThan(75);
+    expect([got.land, got.shops]).toEqual([0, 0]);
+  });
+
+  test('pushing the border past 75 paces opens the market roads, with a lot for sale by the outposts', async () => {
+    const got = await dbg(page, (d) => {
+      for (let n = 0; n < 8 && d.G.reach < 75; n++) (window as unknown as Helpers).__pushOut();
+      const toast = document.getElementById('cd-toast')!.textContent ?? '';
+      return {
+        reach: d.G.reach,
+        land: d.G.land,
+        outposts: d.G.outposts,
+        news: [toast, ...d.G.toastQ].some((m) => m.includes('New land: The market roads')),
+        shops: d.shops(),
+        pads: d.pads(),
+        border: d.shops().map((s) => d.borderDist(s.x, s.z)),
+      };
+    });
+    expect(got.reach).toBeGreaterThanOrEqual(75);
+    expect(got.land).toBe(1);
+    expect(got.news).toBe(true);
+    shops = got.shops;
+    expect(shops.length).toBeGreaterThanOrEqual(got.outposts - 1);
+    expect(shops.length).toBeLessThanOrEqual(got.outposts);
+    for (const [i, s] of shops.entries()) {
+      expect(s.lv).toBe(0);
+      expect(got.border[i]).toBeLessThan(-5);
+      const pad = got.pads.find((p) => p.id === s.id)!;
+      expect([pad.x, pad.z]).toEqual([s.x, s.z]);
+      expect(pad.cost).toBe(s.lot);
+      for (const o of shops) if (o !== s) expect(Math.hypot(o.x - s.x, o.z - s.z)).toBeGreaterThanOrEqual(11);
+    }
+    // the first lot is the cheapest, and each costs more than the one before
+    expect(shops.map((s) => s.lot)).toEqual(shops.map((s) => s.lot).sort((a, b) => a - b));
+  });
+
+  test('no lot is on a road', async () => {
+    const near = await dbg(page, (d) =>
+      d.shops().map((s) =>
+        Math.min(
+          ...d.G.fronts
+            .filter((f) => f.open)
+            .map((f) => {
+              let m = 1e9;
+              for (let i = 0; i < f.road.length - 1; i++) {
+                const [ax, az] = f.road[i]!,
+                  [bx, bz] = f.road[i + 1]!,
+                  L2 = (bx - ax) ** 2 + (bz - az) ** 2 || 1,
+                  t = Math.max(0, Math.min(1, ((s.x - ax) * (bx - ax) + (s.z - az) * (bz - az)) / L2));
+                m = Math.min(m, Math.hypot(s.x - ax - (bx - ax) * t, s.z - az - (bz - az) * t));
+              }
+              return m;
+            }),
+        ),
+      ),
+    );
+    for (const d of near) expect(d).toBeGreaterThanOrEqual(5.2);
+  });
+
+  test('buying a lot opens a shop of its biome, which fills its till up to what it holds', async () => {
+    first = shops[0]!;
+    const got = await dbg(
+      page,
+      (d, id) => {
+        (window as unknown as Helpers).__quiet();
+        d.buy(id);
+        d.teleport(4, 2);
+        d.G.free = false;
+        d.advance(20);
+        const s20 = d.shops().find((s) => s.id === id)!;
+        d.advance(100);
+        const s120 = d.shops().find((s) => s.id === id)!;
+        return { s20, s120, built: d.G.buildings.some((b) => b.fn.name.startsWith('shopGeo') && b.lv === 1) };
+      },
+      first.id,
+    );
+    expect(got.built).toBe(true);
+    expect(got.s20.lv).toBe(1);
+    expect(got.s20.kind).toBe(biomeAt(first.x, first.z));
+    // about 20 seconds' takings, and then full
+    expect(got.s20.till.value).toBeGreaterThan((got.s20.till.cap * 18) / 75);
+    expect(got.s20.till.value).toBeLessThan((got.s20.till.cap * 22) / 75);
+    expect(got.s120.till.value).toBe(got.s120.till.cap);
+    await shot(page, 'shop-till-full');
+  });
+
+  test('riding over the till takes its coins', async () => {
+    const got = await dbg(
+      page,
+      (d, id) => {
+        const s = d.shops().find((o) => o.id === id)!,
+          coins = d.G.coins;
+        d.teleport(s.till.x, s.till.z);
+        d.G.free = false;
+        d.advance(2);
+        return { gained: d.G.coins - coins, had: s.till.value, left: d.shops().find((o) => o.id === id)!.till.value };
+      },
+      first.id,
+    );
+    expect(got.gained).toBeGreaterThanOrEqual(got.had);
+    expect(got.left).toBeLessThan(got.had * 0.05);
+  });
+
+  test('each level makes it earn more, and it grows', async () => {
+    const got = await dbg(
+      page,
+      (d, id) => {
+        const rate = () => {
+          const s = d.shops().find((o) => o.id === id)!;
+          return s.till.cap / 75;
+        };
+        const rates = [rate()],
+          might = [d.G.might],
+          heights = [d.G.buildings.find((b) => b.fn.name.startsWith('shopGeo'))!.h];
+        for (let lv = 2; lv <= 5; lv++) {
+          d.buy(id);
+          d.advance(1.5);
+          rates.push(rate());
+          might.push(d.G.might);
+          heights.push(d.G.buildings.find((b) => b.fn.name.startsWith('shopGeo'))!.h);
+        }
+        return {
+          rates,
+          might,
+          heights,
+          lv: d.shops().find((o) => o.id === id)!.lv,
+          pad: d.pads().some((p) => p.id === id),
+        };
+      },
+      first.id,
+    );
+    expect(got.lv).toBe(5);
+    for (let i = 1; i < got.rates.length; i++) expect(got.rates[i]!).toBeGreaterThan(got.rates[i - 1]! * 2);
+    // the only shop: 10% more damage a level, from the first
+    expect(got.might.map((m) => Math.round(m * 100))).toEqual([110, 120, 130, 140, 150]);
+    expect(got.heights[4]).toBeGreaterThan(got.heights[0]!);
+    expect(got.pad).toBe(false); // nothing left to buy there
+    await shot(page, 'shop-top-level');
+  });
+
+  test('an outpost built later brings a lot of its own', async () => {
+    const got = await dbg(page, (d) => {
+      const before = d.shops().length,
+        outposts = d.G.outposts;
+      for (let n = 0; n < 3; n++) (window as unknown as Helpers).__pushOut();
+      return { lots: d.shops().length - before, outposts: d.G.outposts - outposts };
+    });
+    expect(got.outposts).toBeGreaterThan(0);
+    expect(got.lots).toBeGreaterThan(0);
+  });
+
+  test('the land and the shops are saved, and a reload brings them back', async () => {
+    await dbg(page, (d) => {
+      const lot = d.shops().find((s) => s.lv === 0)!;
+      d.buy(lot.id);
+      d.advance(10);
+      d.G.pads.find((p) => p.id === d.shops().find((s) => s.lv === 0)?.id)!.paid = 9;
+    });
+    await page.click('#cd-pause-btn');
+    const before = await everything(page);
+    expect(before.shops.filter((s) => s[5]).length).toBe(2);
+    await dbg(page, (d) => d.save());
+    await page.reload();
+    await reopened(page);
+    const after = await everything(page);
+    // (a spot for an outpost stays where it was while the border moves a little near it, and is worked out afresh
+    // from the border after a reload: it may come back up to 3 paces away, the same as a spot moving along)
+    const spots = (o: typeof before) => ({
+      towers: o.towers.filter((t) => !t.includes('true,false,0,-1]')),
+      pads: o.pads.filter((p) => !p.startsWith('["spot"')),
+      at: o.pads.filter((p) => p.startsWith('["spot"')).map((p) => JSON.parse(p) as [string, number, number, number]),
+    });
+    const [b, a] = [spots(before), spots(after)];
+    expect(a.towers).toEqual(b.towers);
+    expect(a.pads).toEqual(b.pads);
+    expect(a.at.length).toBe(b.at.length);
+    for (const [, x, z, cost] of b.at)
+      expect(a.at.some(([, x2, z2, c2]) => c2 === cost && Math.hypot(x2 - x, z2 - z) < 3)).toBe(true);
+    const clear = (o: typeof before) => o.clear.map((c) => JSON.parse(c) as { x: number; z: number; r: number });
+    expect(clear(after).length).toBe(clear(before).length);
+    for (const c of clear(before))
+      expect(clear(after).some((o) => o.r === c.r && Math.hypot(o.x - c.x, o.z - c.z) < 3)).toBe(true);
+    for (const key of Object.keys(before) as (keyof typeof before)[])
+      if (key !== 'towers' && key !== 'pads' && key !== 'clear') expect(after[key], key).toEqual(before[key]);
+    await shot(page, 'shops-after-reload');
+  });
+
+  test('no errors in the page', () => {
+    expect(page.errors).toEqual([]);
+  });
+});
+
 describe('A phone held upright', () => {
   beforeAll(async () => {
     page.close();
@@ -712,6 +948,8 @@ const everything = (page: Page) =>
           e.seg ? G.segs.indexOf(e.seg) : -1,
         ]),
       ground: G.coinsOnGround.map((c) => [c.x, c.z, c.v]),
+      land: [G.land, G.lotSeq],
+      shops: G.shops.map((s) => [s.idx, s.x, s.z, s.yaw, s.kind, s.lv, s.lot, Math.round(s.till.value)]),
     };
   });
 const WORLD = 'castle.world.v1';
@@ -867,6 +1105,14 @@ describe('A saved game the game cannot carry on from', () => {
         JSON.stringify({ ...saved, fronts: [...saved.fronts, { ...saved.fronts[0], id: 'o7' }] }),
       ],
       ['a wall tower at a level there is none of', JSON.stringify({ ...saved, towers: [9, 0, 0, 0, 0, 0] })],
+      [
+        'a shop at a level there is none of',
+        JSON.stringify({
+          ...saved,
+          lotSeq: 1,
+          shops: [{ idx: 0, at: [30, 3], yaw: 0, kind: 0, lv: 9, lot: 3000, till: 0 }],
+        }),
+      ],
     ];
     expect(saved.enemies.length).toBeGreaterThan(0);
     for (const [why, junk] of broken) {
@@ -877,11 +1123,14 @@ describe('A saved game the game cannot carry on from', () => {
       expect(page.errors, why).toEqual([]);
       page.close();
     }
-    // and the good one carries on
-    const back = await open({ storage: { [WORLD]: JSON.stringify(saved) } });
-    expect(await dbg(back, (d) => [Math.round(d.G.t), d.G.paused])).toEqual([Math.round(saved.t), true]);
-    expect(back.errors).toEqual([]);
-    back.close();
+    // and the good one carries on, as does one saved before there were lands and shops
+    const { land: _land, lotSeq: _lotSeq, shops: _shops, ...older } = saved;
+    for (const ok of [saved, older]) {
+      const back = await open({ storage: { [WORLD]: JSON.stringify(ok) } });
+      expect(await dbg(back, (d) => [Math.round(d.G.t), d.G.paused, d.G.land])).toEqual([Math.round(saved.t), true, 0]);
+      expect(back.errors).toEqual([]);
+      back.close();
+    }
   });
 });
 
