@@ -1,17 +1,26 @@
 // The page's one script: every game, and the hub that switches between them.
+import { Effect } from 'effect';
 import * as AntSort from './ant-sort';
 import * as BikeRace from './bike-race';
 import * as CastleDefender from './castle-defender';
-import { GameHub, registerGame } from './hub';
+import { GameHub, registerGame, route, showHideGame } from './hub';
+import { listen, run } from './page';
 import * as WaterSort from './water-sort';
 
-registerGame('ant', AntSort);
-registerGame('castle', CastleDefender);
-registerGame('ws', WaterSort);
-registerGame('br', BikeRace);
+registerGame('ant', showHideGame(AntSort));
+registerGame('castle', showHideGame(CastleDefender));
+registerGame('ws', showHideGame(WaterSort));
+registerGame('br', showHideGame(BikeRace));
 
-for (const card of document.querySelectorAll<HTMLElement>('.hub-card')) {
-  card.addEventListener('click', () => GameHub.open(card.dataset.game!));
-}
-window.addEventListener('hashchange', () => GameHub.route());
-GameHub.route();
+// The menu's cards and the address bar, for as long as the page is open
+run(
+  Effect.scoped(
+    Effect.gen(function* () {
+      for (const card of document.querySelectorAll<HTMLElement>('.hub-card'))
+        yield* listen(card, 'click', () => GameHub.open(card.dataset.game!));
+      yield* listen(window, 'hashchange', () => route);
+      yield* route;
+      return yield* Effect.never;
+    }),
+  ),
+);

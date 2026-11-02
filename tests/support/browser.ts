@@ -11,7 +11,9 @@
 // way a fresh browser profile would, and pages never see each other's saves.
 import { mkdirSync } from 'node:fs';
 import { join } from 'node:path';
-import { startServer, type ServerOptions } from '../../server/serve';
+import { Layer, ManagedRuntime } from 'effect';
+import type { RaceTimes } from '../../server/race';
+import { ArrayLog, type ServerOptions, serverLayer, SiteServer, settingsLayer } from '../../server/serve';
 
 export const SHOTS = join(import.meta.dir, '..', '..', '.shots');
 /** Set KEEP_SHOTS=1 to keep screenshots in .shots/ (ignored by git). */
@@ -27,17 +29,26 @@ export interface Site {
   stop(): void;
 }
 
+export type SiteOptions = ServerOptions & Partial<RaceTimes> & { share?: string };
+
 /** The real server (page and race server) on a free port, with whatever race timings a test wants. */
-export function startSite(opts: ServerOptions = {}): Site {
+export function startSite(opts: SiteOptions = {}): Site {
+  const { countdown, ending, away, share, ...server } = opts;
   const logs: string[] = [];
-  const server = startServer({ port: 0, development: false, log: (t) => logs.push(t), ...opts });
+  const runtime = ManagedRuntime.make(
+    serverLayer({ port: 0, development: false, ...server }).pipe(
+      Layer.provide(settingsLayer({ countdown, ending, away, share })),
+      Layer.provide(ArrayLog(logs)),
+    ),
+  );
+  const { port } = runtime.runSync(SiteServer);
   const scheme = opts.tls ? 'https' : 'http';
   return {
-    port: server.port!,
+    port,
     scheme,
     logs,
-    url: (path = '/', host = '127.0.0.1') => `${scheme}://${host}:${server.port}${path}`,
-    stop: () => void server.stop(true),
+    url: (path = '/', host = '127.0.0.1') => `${scheme}://${host}:${port}${path}`,
+    stop: () => void runtime.dispose(),
   };
 }
 

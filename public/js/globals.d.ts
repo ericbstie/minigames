@@ -1,13 +1,13 @@
 // What the page puts on window: the hub and the debug hooks the browser tests reach for. The games themselves are
 // modules and import each other. Shared by public/tsconfig.json and the root tsconfig.json, which checks the tests.
-import type { Game, GameHub } from './hub';
+import type { GameHub, ShowHide } from './hub';
 
 declare global {
   interface Window {
     GameHub: typeof GameHub;
 
     // Castle Defender
-    CastleDefender?: Game & { _debug(): import('./castle-defender').CastleDebug };
+    CastleDefender?: ShowHide & { _debug(): import('./castle-defender').CastleDebug };
 
     // Ant Sort: its state for the browser tests, and a speed beyond the 2x button for them (a software-rendered
     // browser draws a level at a few frames a second)
@@ -42,7 +42,7 @@ declare global {
 
     // Bike Race and its level editor: their state for the browser tests (the game reaches the editor through
     // imports, not these)
-    BikeRace?: Game & { editor: import('./bike-race').EditorApi; _debug(): import('./bike-race').BikeRaceDebug };
+    BikeRace?: ShowHide & { editor: import('./bike-race').EditorApi; _debug(): import('./bike-race').BikeRaceDebug };
     BikeRaceEditor?: {
       onView: typeof import('./bike-race-editor').onView;
       frame: typeof import('./bike-race-editor').frame;
