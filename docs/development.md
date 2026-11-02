@@ -5,18 +5,19 @@ mise installs the Bun version pinned in `mise.toml`, so `mise run <task>` is all
 
 ## Tasks
 
-| Task             | What it does                                                                                                                             |
-| ---------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
-| `mise run app`   | Serves the site and the Bike Race race server on http://localhost:8000. The page is rebuilt when a file changes and the browser reloads. |
-| `mise run phone` | The same over https on your Wi-Fi (port 8443), so phones get tilt. See [bike-race.md](bike-race.md).                                     |
-| `mise run build` | Builds the site into `dist/` for any static host. There is no race server there, so Bike Race offers computer riders.                    |
-| `mise run test`  | Every test, including the ones that play the games in a headless browser.                                                                |
-| `mise run check` | Type checks the server, tests and tools, then the browser code.                                                                          |
-| `mise run fmt`   | Formats everything with `bun fmt`.                                                                                                       |
-| `mise run ci`    | Formatting, types and tests: what a pull request has to pass.                                                                            |
+| Task             | What it does                                                                                                                                  |
+| ---------------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
+| `mise run app`   | Serves the site and the Bike Race race server on http://localhost:8000, the way https://minigames.ericbs.dev runs ([hosting.md](hosting.md)). |
+| `mise run dev`   | The same, with the page rebuilt when a file changes and the browser reloaded (Bun's development server, for this computer only).              |
+| `mise run phone` | The same over https on your Wi-Fi (port 8443), so phones get tilt. See [bike-race.md](bike-race.md).                                          |
+| `mise run build` | Builds the site into `dist/` for any static host. There is no race server there, so Bike Race offers computer riders.                         |
+| `mise run test`  | Every test, including the ones that play the games in a headless browser.                                                                     |
+| `mise run check` | Type checks the server, tests and tools, then the browser code.                                                                               |
+| `mise run fmt`   | Formats everything with `bun fmt`.                                                                                                            |
+| `mise run ci`    | Formatting, types and tests: what a pull request has to pass.                                                                                 |
 
 Each task runs `bun install` first. Without mise, the same commands work with Bun on its own: `bun install`,
-`bun server/serve.ts`, `bun test`, `bun check`, `bun fmt`.
+`bun server/serve.ts` (`--dev`, `--https`), `bun test`, `bun check`, `bun fmt`.
 
 ## Layout
 
@@ -34,6 +35,7 @@ server/race.ts           Bike Race rooms and races (the RaceLobby service), with
 tests/*.test.ts          tests that need no browser (game logic, the race server, the rooms on a TestClock)
 tests/browser/*.test.ts  tests that play the real page in a headless browser
 tests/support/browser.ts the in-process server and page helpers the browser tests share
+tests/support/proxy.ts   an https reverse proxy, like Caddy in front of the site, for the hosting tests
 tools/                   scripts run by hand: level checks, the Castle Defender balance bot, the Bike Race card
 ```
 
@@ -59,7 +61,7 @@ wrapping per-frame maths in Effect would cost frame rate and gain nothing. The p
 
 - **Server.** `server/serve.ts` builds `SiteServer`, which is `Bun.serve` held open by a scope, on top of
   `RaceLobby` (`server/race.ts`), which holds the rooms. Bun's callbacks run effects with the services the server
-  was built with. `main` reads `PORT` and `HOST` with `Config`, turns its failures into tagged errors
+  was built with. `main` reads `PORT`, `HOST` and `ALLOWED_HOSTS` with `Config`, turns its failures into tagged errors
   (`ListenError`, `CertificateError`) with plain messages, and runs until Ctrl+C interrupts it.
 - **The race protocol.** `public/js/bike-race-protocol.ts` has every message as a Schema. The server decodes what a
   game sends with it (forgiving a missing name or bike, refusing a pose that makes no sense) and the game decodes
@@ -161,5 +163,20 @@ limits and checks are in [bike-race.md](bike-race.md#connections).
 The page has a Content-Security-Policy, a `<meta>` tag at the top of `public/index.html`: it loads only its own
 scripts, styles, fonts and pictures, and connects only to its own server. Anything new from elsewhere (a font from
 a CDN, say) has to be let in there, and the browser tests fail on anything it blocks (`page.errors`). It also lets in
-the one inline script Bun's development server adds, by its hash; if a Bun upgrade changes that script, `mise run app`
+the one inline script Bun's development server adds, by its hash; if a Bun upgrade changes that script, `mise run dev`
 shows a Content-Security-Policy error in the browser's console with the new hash to put in its place.
+
+## Hosting
+
+The site is at https://minigames.ericbs.dev: `mise run app` on 127.0.0.1:8000, with Caddy in front of it for https.
+The Caddyfile is just:
+
+```
+minigames.ericbs.dev {
+	reverse_proxy 127.0.0.1:8000
+}
+```
+
+The race server only answers to the site's public names in `ALLOWED_HOSTS` (minigames.ericbs.dev unless set) and to
+local ones, and takes each player's address from the `X-Forwarded-For` that Caddy adds. [hosting.md](hosting.md) has
+how to run it, the settings, other proxies, and what the server checks.

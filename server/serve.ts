@@ -1,11 +1,18 @@
 // Serve the Pick a Game site, and run the race server for live Bike Race races. One Bun process does both:
 //
-//   bun server/serve.ts           http on 127.0.0.1:8000 (mise run app). PORT and HOST change it.
+//   bun server/serve.ts           http on 127.0.0.1:8000 (mise run app): on this computer, or for everyone at
+//                                 https://minigames.ericbs.dev behind a reverse proxy such as Caddy, which handles
+//                                 https (docs/hosting.md). PORT and HOST change where it listens.
+//   bun server/serve.ts --dev     the same, rebuilding the page whenever a file changes (mise run dev).
 //   bun server/serve.ts --https   https on every network address, port 8443 (mise run phone), so phones on the
 //                                 same Wi-Fi can use tilt and race each other.
 //
-// The page is public/index.html; Bun bundles its TypeScript and CSS when it is served (and again whenever a file
-// changes, on the http server). Phones only send tilt (motion) events to https pages. --https makes a self-signed
+// The site answers to local names and addresses, and to its public names: ALLOWED_HOSTS, a list separated by
+// commas, which is minigames.ericbs.dev unless set. Over http, a proxy on this computer or a private network says
+// who each player is in X-Forwarded-For.
+//
+// The page is public/index.html; Bun bundles its TypeScript and CSS when the server starts (and again whenever a
+// file changes, with --dev). Phones only send tilt (motion) events to https pages. --https makes a self-signed
 // certificate the first time (it needs the `openssl` command) and keeps it in .cert/. Phones warn that the
 // connection is not private: that is expected for a self-signed certificate on your own network.
 //
@@ -15,10 +22,11 @@
 //
 // In Effect terms: SiteServer is Bun.serve held open by a scope (closing it stops the server), RaceLobby
 // (server/race.ts) holds the rooms, and Bun's callbacks run effects with the services the server was built with.
-// main() reads PORT and HOST with Config, makes the certificate, and runs until Ctrl+C interrupts it.
+// main() reads PORT, HOST and ALLOWED_HOSTS with Config, makes the certificate, and runs until Ctrl+C interrupts it.
 import { createSocket } from 'node:dgram';
 import { X509Certificate } from 'node:crypto';
 import { chmodSync, existsSync, mkdirSync, readFileSync } from 'node:fs';
+import { isIP } from 'node:net';
 import { join } from 'node:path';
 import {
   type Cause,
@@ -49,10 +57,14 @@ const CERT_DAYS = 825; // how long a new certificate is good for
 const RENEW_DAYS = 30; // one that runs out sooner than this is made again
 const LOOPBACK = ['127.0.0.1', 'localhost', '::1', '[::1]'];
 
+/** The names the site is served to everyone at (docs/hosting.md). ALLOWED_HOSTS takes their place when it is set. */
+export const SITE_HOSTS: readonly string[] = ['minigames.ericbs.dev'];
+
 /**
- * Whether the server rebuilds the page as files change (Bun's development server): over http, and only when nothing
- * but this computer can reach it, as the development server has routes of its own (/_bun/...) for the browser on
- * this computer and nobody else. Otherwise the page is bundled once, minified, as for phones.
+ * Whether --dev rebuilds the page as files change (Bun's development server): over http, and only when nothing but
+ * this computer can reach it, as the development server has routes of its own (/_bun/...) for the browser on this
+ * computer and nobody else. It also refuses any Host but its own, so it can't be the site behind a proxy either.
+ * Otherwise the page is bundled once, minified, when the server starts.
  */
 export const rebuildsPage = (https: boolean, hostname: string): boolean =>
   !https && LOOPBACK.includes(hostname.toLowerCase());
@@ -73,6 +85,8 @@ export interface ServerOptions {
   readonly hostname?: string;
   readonly tls?: { readonly cert: string; readonly key: string };
   readonly development?: boolean; // rebuild the page when a file changes and reload it in the browser
+  readonly allowedHosts?: readonly string[]; // the site's public names (SITE_HOSTS unless given)
+  readonly behindProxy?: boolean; // believe X-Forwarded-For from a proxy on this computer or a private network
 }
 
 /** The running server */
@@ -244,11 +258,51 @@ class StreamConn extends RaceConn {
   }
 }
 
-const sameOrigin = (req: Request): boolean => {
+// The name in a Host header (or a name on its own): lower case, without its port or a dot at the end. Null if it
+// isn't one.
+const hostName = (host: string | null): string | null => {
+  if (!host) return null;
+  try {
+    return new URL(`http://${host}`).hostname.toLowerCase().replace(/\.$/, '') || null;
+  } catch {
+    return null;
+  }
+};
+
+/**
+ * The names in ALLOWED_HOSTS, which are separated by commas. A port or a scheme with a name is fine and is left out
+ * (https://minigames.ericbs.dev:443 is minigames.ericbs.dev). Null if something in the list isn't a host name.
+ */
+export function parseHosts(list: string): string[] | null {
+  const names: string[] = [];
+  for (const item of list.split(',')) {
+    const given = item
+      .trim()
+      .replace(/^[a-z][a-z0-9+.-]*:\/\//i, '')
+      .replace(/\/.*$/, '');
+    if (!given) continue;
+    const name = hostName(given);
+    if (!name || !/^[a-z0-9-]+(\.[a-z0-9-]+)*$/.test(name)) return null;
+    names.push(name);
+  }
+  return names;
+}
+
+/**
+ * A race request comes from a page on this site: its Origin is the host the request was for, or one of the site's
+ * public names (a proxy may pass a request on with its own address as the Host, as nginx does unless told not to).
+ * A request with no Origin is not from a browser, and could have sent any Origin it liked.
+ */
+export const sameOrigin = (req: Request, allowed: readonly string[] = SITE_HOSTS): boolean => {
   const origin = req.headers.get('origin');
   if (!origin) return true;
   try {
-    return new URL(origin).host.toLowerCase() === (req.headers.get('host') ?? '').toLowerCase();
+    const url = new URL(origin);
+    if (url.protocol !== 'http:' && url.protocol !== 'https:') return false;
+    return (
+      url.host.toLowerCase() === (req.headers.get('host') ?? '').toLowerCase() ||
+      allowed.includes(url.hostname.toLowerCase())
+    );
   } catch {
     return false;
   }
@@ -256,20 +310,16 @@ const sameOrigin = (req: Request): boolean => {
 
 /**
  * A race request is for this server, not for another site's name that a DNS rebinding attack has pointed at it (a
- * page from that site would pass the Origin check, as its Origin and Host are both the attacker's name). Public
- * names are refused: only an IP address, localhost and the names under it, a name that only means something on a
+ * page from that site would pass the Origin check, as its Origin and Host are both the attacker's name). Other
+ * public names are refused. The Host has to be one of the site's own public names (allowed: SITE_HOSTS, or
+ * ALLOWED_HOSTS when it is set), an IP address, localhost or a name under it, a name that only means something on a
  * local network (one word, or under .local, .lan, .home.arpa or .internal), or the HOST the server listens on.
  */
-export const localHost = (req: Request, listening: string): boolean => {
-  const host = req.headers.get('host');
-  if (!host) return false;
-  let name: string;
-  try {
-    name = new URL(`http://${host}`).hostname.toLowerCase();
-  } catch {
-    return false;
-  }
+export const knownHost = (req: Request, listening: string, allowed: readonly string[] = SITE_HOSTS): boolean => {
+  const name = hostName(req.headers.get('host'));
+  if (!name) return false;
   return (
+    allowed.includes(name) ||
     name === listening.toLowerCase() ||
     name.startsWith('[') ||
     /^\d{1,3}(\.\d{1,3}){3}$/.test(name) ||
@@ -277,6 +327,32 @@ export const localHost = (req: Request, listening: string): boolean => {
     /(^|\.)(localhost|local|lan|home\.arpa|internal)$/.test(name)
   );
 };
+
+/** An address on this computer or a private network: 127/8, 10/8, 172.16/12, 192.168/16, ::1, fc00::/7, fe80::/10 */
+export function privateAddress(address: string): boolean {
+  const v4 = /^(?:::ffff:)?(\d{1,3})\.(\d{1,3})\.\d{1,3}\.\d{1,3}$/i.exec(address);
+  if (v4) {
+    const a = Number(v4[1]);
+    const b = Number(v4[2]);
+    return a === 127 || a === 10 || (a === 172 && b >= 16 && b <= 31) || (a === 192 && b === 168);
+  }
+  const v6 = address.toLowerCase();
+  return v6 === '::1' || /^f[cd][0-9a-f]{2}:/.test(v6) || /^fe[89ab][0-9a-f]:/.test(v6);
+}
+
+/**
+ * The address a request came from (peer is the address that connected). Behind a reverse proxy every request comes
+ * from the proxy, which puts the address it was asked from last in X-Forwarded-For. That is only believed from a
+ * proxy on this computer or a private network: anyone else could write whatever they liked there, and get round the
+ * limits for one device.
+ */
+export function clientAddress(req: Request, peer: string, behindProxy: boolean): string {
+  if (!behindProxy || !privateAddress(peer)) return peer;
+  const last = (req.headers.get('x-forwarded-for') ?? '').split(',').at(-1)!.trim();
+  // some proxies add the port: 203.0.113.5:41234, or [2001:db8::5]:41234
+  const address = /^\[(.+)\](?::\d+)?$/.exec(last)?.[1] ?? /^(\d{1,3}(?:\.\d{1,3}){3}):\d+$/.exec(last)?.[1] ?? last;
+  return isIP(address) ? address : peer;
+}
 
 const parseJson = Schema.decodeUnknownOption(Schema.fromJsonString(Schema.Unknown));
 // A POST carries one message or a list of them
@@ -293,6 +369,9 @@ const makeServer = (opts: ServerOptions) =>
   Effect.gen(function* () {
     const port = opts.port ?? 8000;
     const hostname = opts.hostname ?? '127.0.0.1';
+    const allowed = opts.allowedHosts ?? SITE_HOSTS;
+    // the device a request is from, for its limits
+    const deviceFrom = (req: Request, peer = '') => deviceOf(clientAddress(req, peer, opts.behindProxy ?? false));
     const lobby = yield* RaceLobby;
     const { perDevice } = yield* RaceSettings;
     // Bun calls back outside any fiber; these run effects with the services the server was built with. A fiber runs
@@ -327,8 +406,8 @@ const makeServer = (opts: ServerOptions) =>
 
     // Why a new race connection from this request is refused, if it is
     const refusal = (req: Request, device: string): Response | null => {
-      if (!sameOrigin(req)) return text(403, 'Wrong origin\n');
-      if (!localHost(req, hostname)) return text(403, 'Unknown host\n');
+      if (!sameOrigin(req, allowed)) return text(403, 'Wrong origin\n');
+      if (!knownHost(req, hostname, allowed)) return text(403, 'Unknown host\n');
       if (conns.size >= MAX_CONNECTIONS) return text(503, 'Too many riders\n');
       if ((perDeviceOpen.get(device) ?? 0) >= perDevice) return text(429, 'Too many connections from this device\n');
       return null;
@@ -357,7 +436,7 @@ const makeServer = (opts: ServerOptions) =>
     const posted = (req: Request) =>
       Effect.gen(function* () {
         if (req.method !== 'POST') return text(405, '', { Allow: 'POST' });
-        if (!sameOrigin(req) || !localHost(req, hostname)) return text(403);
+        if (!sameOrigin(req, allowed) || !knownHost(req, hostname, allowed)) return text(403);
         const sid = new URL(req.url).searchParams.get('sid') ?? '';
         const conn = streams.get(sid);
         if (!conn || conn.closed) return text(410, 'That stream is closed\n');
@@ -390,7 +469,7 @@ const makeServer = (opts: ServerOptions) =>
               '/ws': (req, server) => {
                 const upgrade = (req.headers.get('upgrade') ?? '').toLowerCase();
                 if (req.method !== 'GET' || upgrade !== 'websocket') return text(400, 'Expected a WebSocket\n');
-                const device = deviceOf(server.requestIP(req)?.address ?? '');
+                const device = deviceFrom(req, server.requestIP(req)?.address);
                 const refused = refusal(req, device);
                 if (refused) return refused;
                 if (server.upgrade(req, { data: { device, conn: null } })) return undefined;
@@ -399,7 +478,7 @@ const makeServer = (opts: ServerOptions) =>
 
               '/net/events': (req, server) => {
                 if (req.method !== 'GET') return text(405, '', { Allow: 'GET' });
-                const device = deviceOf(server.requestIP(req)?.address ?? '');
+                const device = deviceFrom(req, server.requestIP(req)?.address);
                 const refused = refusal(req, device);
                 if (refused) return refused;
                 server.timeout(req, 0); // the stream stays open; IDLE decides when it has gone quiet for too long
@@ -524,8 +603,13 @@ const fail = (message: string) =>
 
 const main = Effect.gen(function* () {
   const https = process.argv.includes('--https');
+  const dev = process.argv.includes('--dev');
   const port = yield* Config.Port('PORT').pipe(Config.withDefault(https ? 8443 : 8000));
   const hostname = yield* Config.String('HOST').pipe(Config.withDefault(https ? '0.0.0.0' : '127.0.0.1'));
+  const hosts = yield* Config.String('ALLOWED_HOSTS').pipe(Config.withDefault(SITE_HOSTS.join(',')));
+  const allowedHosts = parseHosts(hosts);
+  if (!allowedHosts)
+    return yield* fail('ALLOWED_HOSTS has to be host names separated by commas, such as minigames.ericbs.dev.');
   const everywhere = ['0.0.0.0', '::', ''].includes(hostname);
   const scheme = https ? 'https' : 'http';
   const share = everywhere ? `${scheme}://${yield* lanAddress}:${port}` : '';
@@ -535,7 +619,10 @@ const main = Effect.gen(function* () {
       port,
       hostname,
       tls: https ? { cert: CERT, key: KEY } : undefined,
-      development: rebuildsPage(https, hostname),
+      development: dev && rebuildsPage(https, hostname),
+      allowedHosts,
+      // over http, anyone else reaches the site through a reverse proxy (phones on the Wi-Fi use --https)
+      behindProxy: !https,
     }).pipe(Layer.provide(settingsLayer({ share }))),
   );
   if (https) {
@@ -553,7 +640,10 @@ const main = Effect.gen(function* () {
       ['127.0.0.1', 'localhost'].includes(hostname) || everywhere
         ? `http://localhost:${port}`
         : `http://${hostname}:${port}`;
+    const site = allowedHosts.map((name) => `https://${name}`).join(' or ');
     yield* Console.log(`Pick a Game running at ${local}${share ? ` (on your network: ${share})` : ''}`);
+    if (site && !dev) yield* Console.log(`A reverse proxy such as Caddy can serve it at ${site} (docs/hosting.md).`);
+    if (dev) yield* Console.log('The page is rebuilt whenever a file changes.');
     yield* Console.log('Live Bike Race rooms run here too. For phones, use mise run phone. Ctrl+C stops the server.');
   }
   return yield* Effect.never;

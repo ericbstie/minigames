@@ -8,16 +8,26 @@
 //   expect(page.errors).toEqual([]);
 //
 // Each page gets its own origin (p1.localhost, p2.localhost, ...), so localStorage starts empty for every page the
-// way a fresh browser profile would, and pages never see each other's saves.
+// way a fresh browser profile would, and pages never see each other's saves. The browser also takes the site's public
+// names (minigames.ericbs.dev) to this computer, for the hosting tests.
 import { mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { Layer, ManagedRuntime } from 'effect';
 import type { RaceLimits, RaceTimes } from '../../server/race';
-import { ArrayLog, type ServerOptions, serverLayer, SiteServer, settingsLayer } from '../../server/serve';
+import { ArrayLog, type ServerOptions, serverLayer, SITE_HOSTS, SiteServer, settingsLayer } from '../../server/serve';
 
 export const SHOTS = join(import.meta.dir, '..', '..', '.shots');
 /** Set KEEP_SHOTS=1 to keep screenshots in .shots/ (ignored by git). */
 export const KEEP_SHOTS = !!process.env.KEEP_SHOTS;
+
+// Every page shares one Chrome, started with the first page's flags, so they are the same for every page: test
+// certificates are fine, the site's public names (minigames.ericbs.dev) are this computer, and nothing goes through a
+// proxy server from the environment, which would look those names up itself.
+const CHROME_FLAGS = [
+  '--ignore-certificate-errors',
+  `--host-resolver-rules=${SITE_HOSTS.map((name) => `MAP ${name} 127.0.0.1`).join(', ')}`,
+  '--no-proxy-server',
+];
 
 export interface Site {
   readonly port: number;
@@ -63,6 +73,8 @@ export interface OpenOptions {
   storage?: Record<string, string>;
   /** Console errors that are expected (a refused WebSocket, say) and should not count as page errors */
   ignoreErrors?: RegExp;
+  /** The host name to open the page on, such as minigames.ericbs.dev, instead of a new pN.localhost of its own */
+  host?: string;
 }
 
 // Key codes for the keys the games listen to
@@ -102,12 +114,12 @@ export class Page {
 
   static async open(site: Site, opts: OpenOptions = {}): Promise<Page> {
     const { width = 1000, height = 600, mobile = false, path = '/', storage, ignoreErrors } = opts;
-    const host = `p${++pages}.localhost`;
+    const host = opts.host ?? `p${++pages}.localhost`;
     let page: Page | undefined;
     const view = new Bun.WebView({
       width,
       height,
-      backend: { type: 'chrome', argv: ['--ignore-certificate-errors'] },
+      backend: { type: 'chrome', argv: CHROME_FLAGS },
       console: (type, ...args) => {
         if (type !== 'error' || !page) return;
         const text = args

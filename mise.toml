@@ -6,9 +6,14 @@ description = "Install the packages the site and its tests use"
 run = "bun install --frozen-lockfile"
 
 [tasks.app]
-description = "Serve the Pick a Game site and the Bike Race race server locally (PORT defaults to 8000)"
+description = "Serve the Pick a Game site and the Bike Race race server on 127.0.0.1 (PORT defaults to 8000), for this computer or for a reverse proxy at minigames.ericbs.dev (docs/hosting.md)"
 depends = ["install"]
 run = "bun server/serve.ts"
+
+[tasks.dev]
+description = "Serve the site on this computer like app, rebuilding the page whenever a file changes and reloading it in the browser"
+depends = ["install"]
+run = "bun server/serve.ts --dev"
 
 [tasks.phone]
 description = "Serve the site over https on your Wi-Fi, so Bike Race can use tilt and race other phones (PORT defaults to 8443)"

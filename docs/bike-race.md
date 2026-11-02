@@ -77,7 +77,8 @@ This serves the site over https on your Wi-Fi, with the race server, and prints 
 makes a new one when that one runs out within 30 days, and phones warn again then.)
 That is expected here: tap "Advanced" then "Proceed" on Android, or "Show Details" then "visit this website" on
 iPhone. `mise run app` works too, but it only listens on this computer, and over plain http a phone falls back to
-the lean buttons.
+the lean buttons. At https://minigames.ericbs.dev ([hosting.md](hosting.md)) tilt and live races work on any phone,
+with no certificate warning.
 
 ## Files
 
@@ -278,11 +279,12 @@ A ghost needs its `f`; one saved before ghosts had a `bike` is drawn on Scout.
 
 ## Race server
 
-`server/serve.ts` is one Bun process behind both mise tasks. It serves the page (Bun bundles `public/index.html`
+`server/serve.ts` is one Bun process behind the mise tasks. It serves the page (Bun bundles `public/index.html`
 with its scripts, styles and pictures) and runs the rooms, which live in `server/race.ts`. `bun server/serve.ts`
-listens on 127.0.0.1:8000 and rebuilds the page when a file changes (only while it listens on this computer alone:
-with `HOST` set to a network address it bundles the page once); `--https` listens on every address on port 8443 with
-the certificate in `.cert/`, and bundles the page once. `PORT` and `HOST` change either. It prints a
+(`mise run app`) listens on 127.0.0.1:8000 and bundles the page once; `--dev` (`mise run dev`) rebuilds it when a
+file changes (only while it listens on this computer alone: with `HOST` set to a network address it bundles the page
+once); `--https` listens on every address on port 8443 with the certificate in `.cert/`, and bundles the page once.
+`PORT` and `HOST` change any of them. It prints a
 line for each room opened, joined and closed, each race and its results.
 
 The server only keeps rooms and passes messages on. Every phone runs its own bike in its own simulation, sends
@@ -302,11 +304,12 @@ The game connects when Multiplayer opens, and drops the connection when you leav
   (`reconnectSchedule`), and then it is offline. `welcome` hands out a key, kept in sessionStorage, and `hello`
   sends it back, so the server gives the rider their place back if they return within 45 s (`AWAY`). The same key
   from a second connection takes over and the first gets `replaced`.
-- The server refuses a WebSocket or stream from a page on another site (the Origin must match the Host), and one
-  asked for by a public host name (the Host must be an IP address, `localhost`, a local network name or `HOST`), so
-  a website using DNS rebinding can't race either.
+- The server refuses a WebSocket or stream from a page on another site (the Origin must match the Host, or be one of
+  the site's public names in `ALLOWED_HOSTS`), and one asked for by any other public host name (the Host must be one
+  of `ALLOWED_HOSTS`, an IP address, `localhost`, a local network name or `HOST`), so a website using DNS rebinding
+  can't race either. [hosting.md](hosting.md) has more.
 - Limits, so one device can't spoil it for the others: 300 connections in all and 16 from one device (an IPv6
-  address counts by its first 64 bits), 1000 riders kept in all and 16 from one device (a dropped rider counts until
+  address counts by its first 64 bits; behind a proxy such as Caddy, the address the proxy puts in `X-Forwarded-For`), 1000 riders kept in all and 16 from one device (a dropped rider counts until
   their 45 s are up), 200 rooms, and 90 messages a second from a connection, of which 20 may be something other than
   a pose. A connection over its limit is refused (429), a rider over theirs gets an `error` saying so, and messages over
   a connection's limit are dropped. The tests change the per-device limit with the `perDevice` option of

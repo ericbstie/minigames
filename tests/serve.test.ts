@@ -1,5 +1,6 @@
 // The parts of server/serve.ts around the race server: the https certificate that `mise run phone` keeps in .cert/,
-// and when the page is rebuilt as files change (Bun's development server). tests/race-server.test.ts has the rest.
+// when the page is rebuilt as files change (Bun's development server), and the server as `mise run app` and
+// `mise run dev` start it, asked for by minigames.ericbs.dev through Caddy. tests/race-server.test.ts has the rest.
 import { afterAll, describe, expect, test } from 'bun:test';
 import { mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -91,4 +92,94 @@ describe("Bun's development server", () => {
       expect(rebuildsPage(false, host)).toBe(false);
     expect(rebuildsPage(true, '127.0.0.1')).toBe(false);
   });
+});
+
+// The server as mise starts it (bun server/serve.ts and its flags), on a free port, once it says it is running
+const running: Bun.Subprocess[] = [];
+afterAll(() => {
+  for (const proc of running) proc.kill();
+});
+async function launch(flags: string[] = [], env: Record<string, string> = {}) {
+  const probe = Bun.serve({ port: 0, hostname: '127.0.0.1', fetch: () => new Response() });
+  const port = probe.port!;
+  await probe.stop(true);
+  const proc = Bun.spawn([process.execPath, join(import.meta.dir, '..', 'server', 'serve.ts'), ...flags], {
+    env: { ...process.env, PORT: String(port), ...env },
+    stdout: 'pipe',
+    stderr: 'pipe',
+  });
+  running.push(proc);
+  const reader = proc.stdout.getReader();
+  let out = '';
+  while (!out.includes('Ctrl+C')) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    out += new TextDecoder().decode(value);
+  }
+  reader.releaseLock();
+  return { proc, out, base: `http://127.0.0.1:${port}` };
+}
+
+// What Caddy sends on: the Host as the browser asked for it, and who asked
+const caddy = { Host: 'minigames.ericbs.dev', 'X-Forwarded-For': '203.0.113.5', 'X-Forwarded-Proto': 'https' };
+// Bun's WebSocket takes headers too, which the DOM's WebSocket type (the tsconfig has the DOM's types) doesn't know
+const BunWebSocket = WebSocket as unknown as new (url: string, options: Bun.WebSocketOptions) => WebSocket;
+
+describe('mise run app at minigames.ericbs.dev, behind Caddy', () => {
+  let app: Awaited<ReturnType<typeof launch>>;
+
+  test('starts, and says a proxy can serve it there', async () => {
+    app = await launch();
+    expect(app.out).toContain('https://minigames.ericbs.dev');
+  }, 30_000);
+
+  test('serves the page to minigames.ericbs.dev (not the development server, which refuses that name)', async () => {
+    const res = await fetch(app.base + '/', { headers: caddy });
+    expect(res.status).toBe(200);
+    expect(await res.text()).toContain('<title>Pick a Game</title>');
+  });
+
+  test('its race server takes a WebSocket from the page there, which the browser opened over wss', async () => {
+    const headers = { ...caddy, Origin: 'https://minigames.ericbs.dev' };
+    const ws = new BunWebSocket(app.base.replace('http', 'ws') + '/ws', { headers });
+    const welcome = await new Promise<{ t: string }>((resolve, reject) => {
+      ws.onopen = () => ws.send(JSON.stringify({ t: 'hello', name: 'Eric' }));
+      ws.onmessage = (e) => resolve(JSON.parse(e.data as string));
+      ws.onerror = reject;
+    });
+    expect(welcome.t).toBe('welcome');
+    ws.close();
+  });
+
+  test("but not one for another site's name", async () => {
+    const headers = {
+      Host: 'evil.example',
+      Origin: 'http://evil.example',
+      Upgrade: 'websocket',
+      Connection: 'Upgrade',
+    };
+    expect((await fetch(app.base + '/ws', { headers })).status).toBe(403);
+  });
+});
+
+describe('mise run dev', () => {
+  test('is the development server, which answers this computer and refuses minigames.ericbs.dev', async () => {
+    const dev = await launch(['--dev']);
+    expect(dev.out).toContain('rebuilt whenever a file changes');
+    expect((await fetch(dev.base + '/')).status).toBe(200);
+    expect((await fetch(dev.base + '/', { headers: caddy })).status).not.toBe(200);
+  }, 30_000);
+});
+
+describe('ALLOWED_HOSTS', () => {
+  test('that is not a list of names stops the server, saying why', async () => {
+    const proc = Bun.spawn([process.execPath, join(import.meta.dir, '..', 'server', 'serve.ts')], {
+      env: { ...process.env, PORT: '8000', ALLOWED_HOSTS: '*.ericbs.dev' },
+      stdout: 'ignore',
+      stderr: 'pipe',
+    });
+    running.push(proc);
+    expect(await proc.exited).toBe(1);
+    expect(await new Response(proc.stderr).text()).toContain('ALLOWED_HOSTS has to be host names');
+  }, 30_000);
 });
