@@ -2,6 +2,11 @@
 // and spend them on pads to grow an army, towers, walls, cannons and weapons.
 // The world has no edge: outposts on the border push it out, enemy camps the
 // border reaches are cleared, and the enemy falls back further out, tougher.
+//
+// The game is a Game for the hub (`game` at the end): it opens in a scope while the player is on its screen, and
+// what it sets up there (the input listeners, the frame loop, the game-over panel's delay) stops when they leave.
+// The rules, the world and the drawing are plain functions the frame loop calls.
+import { Effect, FiberSet, Schema } from 'effect';
 import * as THREE from 'three';
 import {
   BIOME,
@@ -33,7 +38,8 @@ import {
   type RoadPoint,
   type XZ,
 } from './castle-defender-world';
-import { GameHub } from './hub';
+import { GameHub, type Game as HubGame } from './hub';
+import { animate, listen, load, type PageServices, run, save } from './page';
 
 // ---------------------------------------------------------------- tuning ----
 const HX = 14,
@@ -2251,9 +2257,7 @@ interface UI {
   lastCoins?: number;
 }
 
-let started = false,
-  running = false,
-  raf = 0;
+let started = false; // the renderer and the world are made (the first time the game opens)
 let renderer: THREE.WebGLRenderer,
   scene: THREE.Scene,
   camera: THREE.PerspectiveCamera,
@@ -2275,6 +2279,8 @@ const SCR_R = { x: Math.SQRT1_2, z: -Math.SQRT1_2 },
   SCR_U = { x: -Math.SQRT1_2, z: -Math.SQRT1_2 };
 let G: Game; // live game state (none until the first game starts)
 let world: World; // static/shared scene objects
+// The pads' labels are drawn in Lilita One. It starts loading with the renderer, and the game waits for it when it
+// opens (game.open), so the first game draws them in it.
 let fontReady: Promise<unknown> = Promise.resolve();
 
 function initRenderer() {
@@ -2294,7 +2300,7 @@ function initRenderer() {
   sun.shadow.bias = -0.0008;
   sun.shadow.normalBias = 0.04;
   scene.add(sun, sun.target);
-  fontReady = document.fonts ? document.fonts.load('80px "Lilita One"').catch(() => {}) : Promise.resolve();
+  fontReady = document.fonts ? document.fonts.load('80px "Lilita One"') : Promise.resolve();
 }
 
 function smoothLine(g: Ctx, t: number[][]): void {
@@ -6263,34 +6269,55 @@ function gameOver(): void {
   const cs = G.castle;
   for (let i = 0; i < 4; i++)
     puff(cs.x + (Math.random() - 0.5) * 3, 2 + i, cs.z + (Math.random() - 0.5) * 3, '#d8d0c4', 8);
-  let best = 0;
-  try {
-    best = +(localStorage.getItem('castle.bestTime') || 0);
-    if (G.t > best) localStorage.setItem('castle.bestTime', String(Math.floor(G.t)));
-  } catch (e) {}
+  // the clock goes on behind the panel: the time held is the time it fell
+  const g = G,
+    t = G.t;
+  fork(
+    Effect.gen(function* () {
+      const best = yield* load(BEST_TIME, BestTime, () => 0);
+      if (t > best) yield* save(BEST_TIME, BestTime, Math.floor(t));
+      ui.overText.textContent = overText(g, t, best);
+      // the castle falls first, then the panel comes up (unless a new game has started by then)
+      yield* Effect.sleep('1.4 seconds');
+      if (G.over) ui.over.hidden = false;
+    }),
+  );
+}
+// The longest the castle has held, in whole seconds, saved as plain text such as 123. Anything else there (junk)
+// counts as no best time.
+const BEST_TIME = 'castle.bestTime';
+const BestTime = Schema.Finite;
+function overText(g: Game, t: number, best: number): string {
   const held =
-    G.t > best
-      ? `You held out for ${clock(G.t)}, your longest yet.`
-      : `You held out for ${clock(G.t)}. Your longest is ${clock(best)}.`;
-  ui.overText.textContent = G.outposts
-    ? `${held} Your border reached ${Math.round(G.reach)} paces out, with ${G.outposts} outpost${G.outposts > 1 ? 's' : ''}.`
+    t > best
+      ? `You held out for ${clock(t)}, your longest yet.`
+      : `You held out for ${clock(t)}. Your longest is ${clock(best)}.`;
+  return g.outposts
+    ? `${held} Your border reached ${Math.round(g.reach)} paces out, with ${g.outposts} outpost${g.outposts > 1 ? 's' : ''}.`
     : held;
-  setTimeout(() => {
-    if (G.over) ui.over.hidden = false;
-  }, 1400);
 }
 
 // -------------------------------------------------------------------- input ----
 const keys = new Set<string>();
-let idleJoystick: (on: boolean) => void = () => {};
-function initInput(): void {
+// before the first move the stick waits in the bottom-right corner, like a resting thumb
+function idleJoystick(on: boolean): void {
+  const joy = ui.joy;
+  joy.classList.toggle('idle', on);
+  joy.hidden = !on;
+  joy.style.left = '';
+  joy.style.top = '';
+  ui.knob.style.transform = 'translate(-50%,-50%)';
+}
+// The stick (drag anywhere on the ground) and the keys, while the game is open. Leaving lets go of both: a key or
+// a drag let go of behind the menu is never heard, and the king would ride off on his own when the player came back.
+const input = Effect.gen(function* () {
   const joy = ui.joy,
     knob = ui.knob;
   let pid: number | null = null,
     ox = 0,
     oy = 0;
   const R = 56;
-  canvas.addEventListener('pointerdown', (e) => {
+  yield* listen(canvas, 'pointerdown', (e) => {
     if (pid !== null || !G || G.over) return;
     pid = e.pointerId;
     ox = e.clientX;
@@ -6303,7 +6330,7 @@ function initInput(): void {
     canvas.setPointerCapture(pid);
     joy.classList.remove('idle');
   });
-  canvas.addEventListener('pointermove', (e) => {
+  yield* listen(canvas, 'pointermove', (e) => {
     if (e.pointerId !== pid) return;
     let dx = e.clientX - ox,
       dy = e.clientY - oy;
@@ -6318,24 +6345,17 @@ function initInput(): void {
     G.input.x = jx * SCR_R.x + jy * SCR_U.x;
     G.input.z = jx * SCR_R.z + jy * SCR_U.z;
   });
-  const end = (e: PointerEvent) => {
-    if (e.pointerId !== pid) return;
+  const letGo = () => {
     pid = null;
     joy.hidden = true;
     G.input.x = G.input.z = 0;
   };
-  // before the first move the stick waits in the bottom-right corner, like a resting thumb
-  idleJoystick = (on) => {
-    joy.classList.toggle('idle', on);
-    joy.hidden = !on;
-    joy.style.left = '';
-    joy.style.top = '';
-    knob.style.transform = 'translate(-50%,-50%)';
+  const end = (e: PointerEvent) => {
+    if (e.pointerId === pid) letGo();
   };
-  canvas.addEventListener('pointerup', end);
-  canvas.addEventListener('pointercancel', end);
-  window.addEventListener('keydown', (e) => {
-    if (!running) return;
+  yield* listen(canvas, 'pointerup', end);
+  yield* listen(canvas, 'pointercancel', end);
+  yield* listen(window, 'keydown', (e) => {
     const k = e.key.toLowerCase();
     if (['w', 'a', 's', 'd', 'arrowup', 'arrowdown', 'arrowleft', 'arrowright'].includes(k)) {
       keys.add(k);
@@ -6344,8 +6364,16 @@ function initInput(): void {
     }
     if (k === 'escape') togglePause();
   });
-  window.addEventListener('keyup', (e) => keys.delete(e.key.toLowerCase()));
-}
+  yield* listen(window, 'keyup', (e) => {
+    keys.delete(e.key.toLowerCase());
+  });
+  yield* Effect.addFinalizer(() =>
+    Effect.sync(() => {
+      keys.clear();
+      if (pid !== null) letGo();
+    }),
+  );
+});
 let keysWereDown = false;
 function keyInput(): void {
   if (G.over) return;
@@ -6402,11 +6430,8 @@ function step(dt: number): void {
   G.stats.maxEnemies = Math.max(G.stats.maxEnemies, G.enemies.length);
   updateFx(dt);
 }
-let last = 0;
-function frame(now: number): void {
-  raf = requestAnimationFrame(frame);
-  const dt = Math.max(0, Math.min(0.05, (now - last) / 1000 || 0));
-  last = Math.max(last, now);
+// a frame on screen (page.ts's animate gives the seconds since the last one, at most 0.05)
+function frame(dt: number): void {
   if (!G.paused) step(dt);
   syncScene(G.paused ? 0 : dt);
   updateHud();
@@ -6425,6 +6450,8 @@ function resize(): void {
 }
 
 // ------------------------------------------------------------------ public ----
+// The renderer and the world are made the first time the game opens and kept for the page, with the game in them:
+// coming back finds it where it was left.
 function setup(): void {
   ui = {
     root: document.getElementById('cd-app')!,
@@ -6438,21 +6465,6 @@ function setup(): void {
   };
   initRenderer();
   buildWorld();
-  initInput();
-  document.getElementById('cd-pause-btn')!.onclick = () => togglePause(true);
-  document.getElementById('cd-resume')!.onclick = () => togglePause(false);
-  document.getElementById('cd-restart')!.onclick = () => {
-    ui.pause.hidden = true;
-    startGame();
-  };
-  document.getElementById('cd-retry')!.onclick = () => {
-    ui.over.hidden = true;
-    startGame();
-  };
-  for (const id of ['cd-menu1', 'cd-menu2']) document.getElementById(id)!.onclick = () => GameHub.menu();
-  window.addEventListener('resize', () => {
-    if (running) resize();
-  });
   started = true;
 }
 function startGame(): void {
@@ -6464,26 +6476,64 @@ function startGame(): void {
   idleJoystick(true);
   if (ui.toast) ui.toast.classList.remove('show');
 }
-export async function show(): Promise<void> {
-  if (!started) setup();
-  await fontReady;
+// The player arrives: the first time a game starts; after that the one they left is there, still paused under the
+// pause panel.
+function arrive(): void {
   if (!G) startGame();
   else resize();
-  if (G && !G.over) G.paused = !ui.pause.hidden;
-  if (!running) {
-    running = true;
-    last = performance.now();
-    raf = requestAnimationFrame(frame);
-  }
+  if (!G.over) G.paused = !ui.pause.hidden;
 }
-export function hide(): void {
-  running = false;
-  cancelAnimationFrame(raf);
-  if (G && !G.over) {
+// The player leaves (for the menu or another game): a game still going pauses under the pause panel. A fallen
+// castle's panel comes up now, in case they left before its delay was over.
+function leave(): void {
+  if (!G) return;
+  if (G.over) ui.over.hidden = false;
+  else {
     G.paused = true;
     ui.pause.hidden = false;
   }
 }
+// The buttons on the screen and its panels
+const buttons = Effect.gen(function* () {
+  const click = (id: string, fn: () => void) => listen(document.getElementById(id)!, 'click', fn);
+  yield* click('cd-pause-btn', () => togglePause(true));
+  yield* click('cd-resume', () => togglePause(false));
+  yield* click('cd-restart', () => {
+    ui.pause.hidden = true;
+    startGame();
+  });
+  yield* click('cd-retry', () => {
+    ui.over.hidden = true;
+    startGame();
+  });
+  for (const id of ['cd-menu1', 'cd-menu2']) yield* click(id, () => GameHub.menu());
+});
+
+type PageEffect = Effect.Effect<void, never, PageServices>;
+const onPage = (effect: PageEffect) => void run(effect);
+// The effects the game's plain code starts (saving the best time, the game-over panel's delay) run in the open
+// game's fibers, so leaving stops them. With the game closed (a test stepping it by hand) they run on the page.
+let fork: (effect: PageEffect) => void = onPage;
+
+export const game: HubGame = {
+  open: Effect.gen(function* () {
+    if (!started) yield* Effect.sync(setup);
+    // a font that won't load leaves the labels in the fallback font, as before
+    yield* Effect.tryPromise(() => fontReady).pipe(Effect.ignore);
+    yield* Effect.acquireRelease(Effect.sync(arrive), () => Effect.sync(leave));
+    const runFork = yield* FiberSet.makeRuntime<PageServices>();
+    fork = (effect) => void runFork(effect);
+    yield* Effect.addFinalizer(() =>
+      Effect.sync(() => {
+        fork = onPage;
+      }),
+    );
+    yield* input;
+    yield* buttons;
+    yield* listen(window, 'resize', () => resize());
+    yield* animate(frame);
+  }),
+};
 // for tests/browser/castle-defender.test.ts and tools/play-castle-defender.ts
 function debug() {
   return {
@@ -6549,4 +6599,4 @@ function debug() {
   };
 }
 export type CastleDebug = ReturnType<typeof debug>;
-window.CastleDefender = { show, hide, _debug: debug };
+window.CastleDefender = { _debug: debug };
