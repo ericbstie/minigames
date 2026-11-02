@@ -364,6 +364,34 @@ describe('The border moves out', () => {
   test("the new camp sends its own enemies, in its biome's colours", () => {
     expect(after.some(([x, z, th]) => Math.hypot(x - E.x, z - E.z) < 1.5 && th === E.theme)).toBe(true);
   });
+  test('the outpost is a new center: a camp rises past the border beside it, its road runs past the outpost', async () => {
+    const c = await dbg(
+      page,
+      (d, id) => {
+        const f = d.G.fronts.find((f) => f.id === 'o' + id.slice('outpost'.length))!,
+          t = d.G.towers.find((t) => 'outpost' + t.idx === id)!;
+        const near = (x: number, z: number) =>
+          Math.min(...f.road.map(([rx, rz], i) => (i ? Math.hypot(rx - x, rz - z) : 1e9)));
+        return {
+          open: f?.open,
+          border: d.borderDist(f.camp.x, f.camp.z),
+          fromOutpost: Math.hypot(f.camp.x - t.x, f.camp.z - t.z),
+          pastOutpost: near(t.x, t.z),
+          end: f.road[f.road.length - 1],
+          roads: d.terrain().roads,
+          sent: d.G.enemies.filter((e) => e.route === f.road).length,
+        };
+      },
+      east.id,
+    );
+    expect(c.open).toBe(true);
+    expect(c.border).toBeGreaterThan(12);
+    expect(c.fromOutpost).toBeLessThan(90);
+    expect(c.pastOutpost).toBeLessThan(6);
+    expect(c.end).toEqual([-5.5, -4.5]);
+    expect(c.roads).toContain('front-o' + east.id.slice('outpost'.length) + '-0');
+    expect(c.sent).toBeGreaterThan(0);
+  });
   test('the next outpost spot on the east road is out at the new border', async () => {
     sites = await dbg(page, (d) => d.sites());
     expect(sites.some((s) => s.x > east.x + 20 && s.border < -3)).toBe(true);
@@ -627,7 +655,7 @@ const everything = (page: Page) =>
       buildings: sort(G.buildings.map((b) => [b.x, b.z, b.lv, b.fn.name, b.h])),
       towers: sort(G.towers.map((t) => [t.x, t.z, t.up, t.outer, t.built, t.level, t.built && t.outer ? t.idx : -1])),
       cannons: G.cannons.map((c) => [c.x, c.z, c.side, c.field ?? false, c.built, c.level, c.cost0, c.yaw]),
-      gold: [G.gold.built, G.gold.lv, G.gold.boys.map((b) => [b.x, b.z, b.load, b.home])],
+      gold: [G.gold.built, G.gold.lv, G.outpostBoys, sort(G.gold.boys.map((b) => [b.x, b.z, b.load, b.home]))],
       walls: G.segs.map((s) => [s.hp, s.alive, s.tier, s.max]),
       wallsUp: G.wallsUp,
       claims: d.claims(),
@@ -722,6 +750,7 @@ describe('The game is saved, and a reload carries on with it', () => {
       if (field >= 0) d.buy('cannon' + field);
       d.buy('gold');
       d.buy('gold');
+      d.buy('goldboy' + east.id.slice('outpost'.length));
       d.teleport(4, 2);
       G.free = false;
       G.coins = 321;
@@ -733,6 +762,7 @@ describe('The game is saved, and a reload carries on with it', () => {
       return {
         enemies: G.enemies.length,
         outposts: G.outposts,
+        outpostBoys: G.gold.boys.filter((b) => b.home !== 'home').length,
         field,
         ruins: G.ruins.length,
         ground: G.coinsOnGround.length,
@@ -740,6 +770,7 @@ describe('The game is saved, and a reload carries on with it', () => {
       };
     });
     expect(got.outposts).toBe(1);
+    expect(got.outpostBoys).toBe(1);
     expect(got.field).toBeGreaterThanOrEqual(3);
     expect(got.ruins).toBeGreaterThanOrEqual(1);
     expect(got.enemies).toBeGreaterThan(0);
@@ -826,6 +857,10 @@ describe('A saved game the game cannot carry on from', () => {
         JSON.stringify({ ...saved, enemies: [{ ...saved.enemies[0], route: 99 }] }),
       ],
       ['a castle already fallen', JSON.stringify({ ...saved, castle: 0 })],
+      [
+        'a camp for an outpost there is none of',
+        JSON.stringify({ ...saved, fronts: [...saved.fronts, { ...saved.fronts[0], id: 'o7' }] }),
+      ],
       ['a wall tower at a level there is none of', JSON.stringify({ ...saved, towers: [9, 0, 0, 0, 0, 0] })],
     ];
     expect(saved.enemies.length).toBeGreaterThan(0);
@@ -1188,6 +1223,106 @@ describe('Gold boys', () => {
     expect(got.coins).toBe(120);
   });
 
+  test('each outpost has a pad beside it that sells a gold boy of its own', async () => {
+    const got = await dbg(gold, (d) => {
+      const t = d.G.towers.find((o) => o.outer && o.built)!,
+        pad = d.pads().find((p) => p.id === 'goldboy' + t.idx);
+      return {
+        pad,
+        from: pad ? Math.hypot(pad.x - t.x, pad.z - t.z) : -1,
+        border: pad ? d.borderDist(pad.x, pad.z) : 0,
+      };
+    });
+    expect(got.pad?.cost).toBe(2000);
+    expect(got.from).toBeLessThan(5);
+    expect(got.border).toBeLessThan(-3);
+  });
+
+  test("the outpost's boy waits at it, picks up the coins around it and hands them in: the king gets them", async () => {
+    const got = await dbg(gold, (d) => {
+      const G = d.G,
+        t = G.towers.find((o) => o.outer && o.built)!,
+        l = Math.hypot(t.x, t.z);
+      d.buy('goldboy' + t.idx);
+      const b = G.gold.boys.find((b) => b.home === 'outpost' + t.idx)!;
+      G.coins = 0;
+      G.coinsOnGround.length = G.flying.length = 0;
+      G.coinsOnGround.push({
+        x: t.x + (t.x / l) * 14,
+        z: t.z + (t.z / l) * 14 + 4,
+        y: 0,
+        vx: 0,
+        vz: 0,
+        vy: 0,
+        v: 9,
+        spin: 0,
+        rest: true,
+        age: 1,
+        gone: false,
+        claimed: null,
+      });
+      let carried = 0,
+        at: number[] = [],
+        dest: string | null = null;
+      for (let i = 0; i < 30 * 30 && !at.length; i++) {
+        const load = b.load;
+        dest = b.dest ?? dest;
+        G.enemies.length = G.spawnQueue.length = 0;
+        d.advance(1 / 30, 1 / 30);
+        carried = Math.max(carried, b.load);
+        if (load > 0 && b.load === 0) at = [b.x, b.z];
+      }
+      return {
+        boys: G.gold.boys.map((b) => b.home),
+        pad: d.pads().some((p) => p.id === 'goldboy' + t.idx),
+        carried,
+        dest,
+        outpost: 'outpost' + t.idx,
+        from: Math.hypot(at[0]! - t.x, at[1]! - t.z),
+        coins: G.coins,
+      };
+    });
+    expect(got.boys).toEqual(['home', got.outpost]);
+    expect(got.pad).toBe(false);
+    expect(got.carried).toBe(90);
+    expect(got.dest).toBe(got.outpost);
+    expect(got.from).toBeLessThan(3);
+    expect(got.coins).toBe(90);
+  });
+
+  test('he leaves the coins far from his outpost to others, and stays by it', async () => {
+    const got = await dbg(gold, (d) => {
+      const G = d.G,
+        t = G.towers.find((o) => o.outer && o.built)!,
+        b = G.gold.boys.find((b) => b.home === 'outpost' + t.idx)!;
+      G.coinsOnGround.length = G.flying.length = 0;
+      G.coinsOnGround.push({
+        x: -4,
+        z: 22,
+        y: 0,
+        vx: 0,
+        vz: 0,
+        vy: 0,
+        v: 5,
+        spin: 0,
+        rest: true,
+        age: 1,
+        gone: false,
+        claimed: null,
+      });
+      let far = 0;
+      for (let i = 0; i < 30 * 4; i++) {
+        G.enemies.length = G.spawnQueue.length = 0;
+        d.advance(1 / 30, 1 / 30);
+        far = Math.max(far, Math.hypot(b.x - t.x, b.z - t.z));
+      }
+      return { far, target: b.target, coinFrom: Math.hypot(-4 - t.x, 22 - t.z) };
+    });
+    expect(got.coinFrom).toBeGreaterThan(50);
+    expect(got.target).toBeNull();
+    expect(got.far).toBeLessThan(8);
+  });
+
   test('the king carries a green bill for every thousand coins, and the coins left over on top', async () => {
     const stack = await dbg(gold, (d) =>
       [3140, 999, 40_000].map((n) => {
@@ -1211,8 +1346,17 @@ describe('Gold boys', () => {
     expect(saved.gold.plot).toBeUndefined();
     expect(saved.gold.lv).toBe(1);
     const old = await open({ storage: { [WORLD]: JSON.stringify({ ...saved, gold: { ...saved.gold, plot: 250 } }) } });
-    const back = await dbg(old, (d) => ({ coins: d.G.coins, boys: d.G.gold.boys.length, paused: d.G.paused }));
-    expect(back).toEqual({ coins: saved.coins + 250, boys: 1, paused: true });
+    const back = await dbg(old, (d) => ({
+      coins: d.G.coins,
+      boys: d.G.gold.boys.map((b) => b.home).sort(),
+      paused: d.G.paused,
+    }));
+    // the base's boy, and the outpost's from the tests above
+    expect(back).toEqual({
+      coins: saved.coins + 250,
+      boys: ['home', 'outpost' + saved.outposts.find((o: { boy?: unknown }) => o.boy).idx],
+      paused: true,
+    });
     expect(old.errors).toEqual([]);
     old.close();
   });

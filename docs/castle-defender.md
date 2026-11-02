@@ -76,6 +76,14 @@ that stretch plus the old road, so its march gets longer, through the king's lan
 keep the road they started on. `tests/castle-defender-world.test.ts` checks that nearly every outpost built on a
 front's road clears that front's camp.
 
+**Outposts are new centers.** Each outpost built brings a camp of its own (`campBeyond`): it goes up past the border
+off to one side of the way out from home (`campAround`, alternating sides, 14 past the border and clear of the wall,
+the mesas and the other camps), and its road runs in to the outpost and on down the road the outpost stands by
+(`roadFrom`), to the castle. So every outpost is a crossroads where two camps' roads meet, and the first thing their
+enemies pass is its tower and field cannon. These fronts are `o` and the outpost's idx; they come after the five
+first ones in `G.fronts`, take turns sending groups on one timer of their own (`G.centerT`, as often as the north
+road's), get outpost spots on their roads where they cross the border, and fall back like any camp.
+
 ## Bosses
 
 Every 3 minutes of play (`BOSS_EVERY`, from when the last one came) a boss marches on the castle from one of the
@@ -101,6 +109,13 @@ boy takes his load to the nearest base, `goldBases()`: the walled base, at the h
 tower. He hands it in there and it goes straight to the king. Outside the walls a boy goes round the base
 (`steer`); in and out of it he goes through the east or south gate (`GOLD_GATES`, the ones with a clear way to the
 hut's door), whichever makes the shorter way, and the gate opens for him as it does for the king.
+
+**An outpost's own gold boy.** Each outpost built has a pad of its own beside its tower, on the side away from the
+road (`outpostGoldPad`), that sells it a gold boy: 2000 coins for the first and 1.3 times more for each one after
+(`OUTPOST_BOY_COST`, `OUTPOST_BOY_GROW`), and it doesn't need the hut. He belongs to that outpost (his `home` is
+`outpost` and its idx), waits by it, and keeps to the coins within 44 paces of it (`OUTPOST_BOY.range`), so he works
+the ground its camp's enemies fall on, which the base's boys seldom get out to. He carries what a second-level boy
+does (800 coins, at his speed) and hands it in at the nearest base, which is nearly always his own outpost.
 
 **Bills.** The king carries his coins as a stack on his back: a green bill for every thousand (`BILL`) at the
 bottom, and a coin for each one left over on top (at most 300 bills and 400 coins are drawn). A boy handing in a
@@ -131,21 +146,23 @@ falls the save is removed, so the next visit starts a new game.
 `snapshot` saves what the game needs to carry on, as plain data: the clock, coins and kills, the king, the troop
 (recruits still running to someone count as his rank), each building's level (barracks, forge and weapon, wall
 towers, cannons and their aim, the gold hut and its boys), each stretch of wall's hit points, the claims, every
-front (its road, the stretches added as it fell back, whether and when it opened, its timers and its camp), the
+front (its road, the stretches added as it fell back, whether and when it opened, its timers and its camp, the
+outposts' camps after the first five, and their timer), the
 ruins, the outposts and their field cannons, the coins paid into pads, the enemies (each with the road it walks,
 stored once for all who share it, a boss among them) and the groups about to set off, when the next boss comes (and
 from where, once its warning is up), and the coins on the ground. Arrows, cannon balls,
 dust and floating numbers start again empty. Coins flying to the king are added to his, and coins paid into a spot
 for an outpost go back to him: `refreshFrontier` works the spots out again from the border, in the same places.
-Each gold boy is saved with what he carries, and works out again which base to take it to. Saves from before the
+Each gold boy is saved with what he carries, and works out again which base to take it to; an outpost's boy is
+saved with his outpost, with where its pad stands (saves from before work it out, on the side away from the roads). Saves from before the
 boys took their coins home have a `gold.plot`, the coins left on the plot where they used to drop them (the king
 had to fetch them): the king gets those.
 
 `restoreGame` starts a new game and sets it up as saved, putting each building up at its level straight away (no
 dust, no celebration) through the same helpers the purchases use (`makeForge`, `makeCannon`, `makeGoldHut`,
 `outpostPad`). The `SavedWorld` Schema checks every field and that the save fits this game (six wall towers,
-every stretch of wall, the five fronts in order, enemies on roads that are there, looks their kind has, one boss at
-most). A game saved before there were bosses meets its first a minute after it carries on. A save that
+every stretch of wall, the five first fronts in order and then only camps of outposts that stand, enemies on roads
+that are there, looks their kind has, one boss at most). A game saved before there were bosses meets its first a minute after it carries on. A save that
 doesn't fit starts a new game, and `castle.bestTime` is a key of its own, so it is kept either way. A save that
 fits but still can't be set up (a mistake in this code) is reported, removed, and a new game starts.
 
@@ -165,6 +182,13 @@ against 12:22, 11 and 113 just before (one run each, before the bosses came), an
 With bosses the bot held 11:21, 11:48 and 11:11 (12:19 and 11:01 without them, the same day) and beat every boss that
 came, three a game, without the castle losing hit points to one: the 3:00 boss falls at the walls within about a
 minute of coming, most of it the walk in, and its 900 or so coins buy the next weapon early.
+
+With the outposts as new centers (a camp beside each, and a gold boy for each), the bot held 11:08, 11:02, 11:59 and
+10:48, against 11:56, 12:16, 11:48 and 12:15 just before, the same day: about 50 seconds less, with 8 to 9 more camps
+on the field by the end. The outposts' camps don't add to how many enemies are out (300 at most, reached by 6 minutes
+either way), and sending their groups less often (8 s instead of 5.5 s at the start) made no difference (10:50,
+11:36, 10:49); what they add is tougher enemies, as they stand out past the border. The outposts' gold boys about
+double the coins the bot ends with, which it has nothing left to spend on by then.
 
 ## Checks
 
